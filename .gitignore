@@ -1,0 +1,12 @@
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+test-results/
+playwright-report/
+*.log
+assets/unlicensed/
