@@ -268,8 +268,8 @@ def build(source, enhanced):
                               QUAY_NOISE + "void main(){vec4 tex=texture2D(uTex,vUV);")
         for lamp in ("l0", "l2"):
             half_vector = f"normalize({lamp})+eye"
-            source = replace_once(source, f"dot(n,{half_vector})",
-                                  f"dot(n,normalize({half_vector}))")
+            source = source.replace(f"dot(n,{half_vector})",
+                                    f"dot(n,normalize({half_vector}))")
         source = replace_once(source, "float dist=length(vPos-uEye);",
                               QUAY_SHADING + "float dist=length(vPos-uEye);")
         source = replace_once(source, "const RENDERGROUPS=[];",
