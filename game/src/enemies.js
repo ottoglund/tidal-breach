@@ -264,7 +264,7 @@ function poseAlive(g, st, dt) {
 
   // ---- rifle: patrol low-ready (anchored to the chest) -> shouldered (anchored to the eye)
   const ch = s.mm[BI.chest];
-  _m.compose(_a.set(0.0, -0.1, -0.21), qE(-0.62, 0.5, 0.3, _q), UNIT);
+  _m.compose(_a.set(0.0, -0.08, -0.22), qE(-0.42, 0.85, 0.35, _q), UNIT);
   _m2.multiplyMatrices(ch, _m);
   const pLow = _pLow.setFromMatrixPosition(_m2), qLow = _qLow.setFromRotationMatrix(_m2);
   const qAim = qE(0.012 * breath + kick * 0.06 + hit * 0.25, 0.01 * Math.sin(t * 0.9 + s.seed), 0, _qAim);
@@ -279,7 +279,7 @@ function poseAlive(g, st, dt) {
     const hq = _q2.multiplyQuaternions(rq, R ? HAND_R_Q : HAND_L_Q);
     const grip = _a.copy(R ? GRIP_R : GRIP_L).applyMatrix4(g.rifle.matrix);
     const wrist = grip.sub(_b.copy(R ? GRIP_IN_HAND_R : GRIP_IN_HAND_L).applyQuaternion(hq));
-    const pole = R ? _d.set(0.55 + 0.4 * A, -1 + 0.55 * A, 0.35) : _d.set(-0.35 - 0.2 * A, -1, 0.1);
+    const pole = R ? _d.set(0.55 + 0.3 * A, -1 + 0.3 * A, 0.3) : _d.set(-0.35 - 0.2 * A, -1, 0.1);
     twoBone(g, R ? BI.uarmR : BI.uarmL, R ? BI.farmR : BI.farmL, LEN.upper, LEN.fore, wrist, pole, 1);
     setModelRot(g, R ? BI.handR : BI.handL, hq);
   }
@@ -356,16 +356,12 @@ function poseDeath(g, st) {
 /** Pose a guard. st: {walk, speed(0..1), aim(0..1), flash, hit, dead (0 alive, then s/0.9), fallDir} */
 export function poseGuard(g, st) {
   const s = g.s;
-  const DBG = globalThis.__GUARD_DEBUG__; // TEMP QA hook
-  if (DBG) { st = { ...st, ...DBG }; if (DBG.rate !== undefined) s.rateOverride = DBG.rate; if (DBG.facing !== undefined) g.root.rotation.y = DBG.facing; }
   const now = performance.now() / 1000;
   const dt = s.t ? clamp(now - s.t, 0, 0.1) : 0.016;
   s.t = now; s.time += dt;
   if (s.ph === null) s.ph = st.walk;
   if (dt > 1e-4) s.rate += (clamp((st.walk - s.ph) / dt, 0, 14) - s.rate) * Math.min(1, dt * 8);
   s.ph = st.walk;
-  if (DBG && DBG.rate !== undefined) s.rate = DBG.rate;
-  if (DBG && DBG.time !== undefined) s.time = DBG.time;
 
   g.flash.intensity = st.flash > 0 ? 18 : 0;
   g.flashMesh.visible = st.flash > 0;
