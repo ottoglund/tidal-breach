@@ -65,7 +65,7 @@ def game(browser, request, previews):
             url = url.replace("/?qa=1", "/quay.html?qa=1")
         # A touch-enabled headless context avoids pointer-lock permissions.
         context = browser.new_context(
-            viewport={"width": 1280, "height": 720},
+            viewport={"width": 854, "height": 480},
             has_touch=True
         )
         page = context.new_page()
@@ -108,8 +108,10 @@ def test_weapon_and_pause(game):
     assert state(page)["ammo"] == 29
     page.evaluate("window.__TIDAL_QA__.resume()")
     page.evaluate("window.__TIDAL_QA__.reload()")
+    # Reload advances on capped simulation frames. SwiftShader can take
+    # substantially longer than 1.65 seconds of wall-clock time.
     page.wait_for_function(
-        "window.__TIDAL_QA__.state().ammo === 30", timeout=6000
+        "window.__TIDAL_QA__.state().ammo === 30", timeout=60000
     )
     assert state(page)["reserve"] == 149
     assert not errors
