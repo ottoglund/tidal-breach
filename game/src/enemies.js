@@ -12,7 +12,7 @@ let shared = null;
 function materials() {
   if (shared) return shared;
   shared = {
-    uniform: mat('camo_emr', { tile: 0.42 }),
+    uniform: mat('camo_emr', { tile: 0.42, color: 0x9a9a92 }),
     vest: mat('ratnik_green', { tile: 0.35 }),
     glove: mat('fabric_glove', { tile: 0.2 }),
     boot: plainMat(0x121211, 0.5),
@@ -114,9 +114,9 @@ export function createGuard(variant = 'ak74') {
   // arms
   const arm = (side) => {
     const sh = new THREE.Group(); sh.position.set(side * 0.23, 0.5, 0); torso.add(sh);
-    const up = limb(0.3, 0.06, 0.05, S.uniform); sh.add(up);
+    const up = limb(0.3, 0.068, 0.058, S.uniform); sh.add(up);
     const el = new THREE.Group(); el.position.y = -0.3; up.add(el);
-    const fo = limb(0.27, 0.05, 0.042, S.uniform); el.add(fo);
+    const fo = limb(0.27, 0.058, 0.046, S.uniform); el.add(fo);
     const hand = new THREE.Mesh(box(0.07, 0.1, 0.05, 0.022), S.glove); hand.position.y = -0.31; hand.castShadow = true; fo.add(hand);
     return { sh, el };
   };
@@ -124,9 +124,9 @@ export function createGuard(variant = 'ak74') {
   // legs
   const leg = (side) => {
     const hip = new THREE.Group(); hip.position.set(side * 0.1, 0, 0); body.add(hip);
-    const th = limb(0.45, 0.085, 0.065, S.uniform); hip.add(th);
+    const th = limb(0.45, 0.1, 0.078, S.uniform); hip.add(th);
     const knee = new THREE.Group(); knee.position.y = -0.45; th.add(knee);
-    const sh = limb(0.44, 0.065, 0.05, S.uniform); knee.add(sh);
+    const sh = limb(0.44, 0.078, 0.06, S.uniform); knee.add(sh);
     const boot = new THREE.Mesh(M([[box(0.115, 0.11, 0.29, 0.045), xform(0, -0.48, -0.05)], [box(0.12, 0.03, 0.3, 0.012), xform(0, -0.53, -0.05)]]), S.boot); boot.castShadow = true; sh.add(boot);
     return { hip, knee };
   };

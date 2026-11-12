@@ -74,9 +74,7 @@ export class Weapon {
       [rcyl(0.014, 0.14, 0.003, 20), xform(0, rx - 0.008, 0.17, 0, ALONG_Z)],
       [box(0.012, 0.016, 0.03, 0.003), xform(0, rx - 0.028, 0.12)],
       // Aimpoint-style red dot: 30 mm tube, objective/ocular bells, turrets, flip caps, QR mount
-      [rcyl(0.0165, 0.1, 0.003, 32), xform(0, 0, -0.03, 0, ALONG_Z)],
-      [rcyl(0.019, 0.022, 0.004, 32), xform(0, 0, -0.085, 0, ALONG_Z)],
-      [rcyl(0.019, 0.022, 0.004, 32), xform(0, 0, 0.025, 0, ALONG_Z)],
+
       [rcyl(0.009, 0.014, 0.002, 20), xform(0, 0.02, -0.035)],
       [rcyl(0.009, 0.014, 0.002, 20), xform(0.02, 0, -0.035, 0, 0, Math.PI / 2)],
       [rcyl(0.007, 0.012, 0.002, 16), xform(-0.019, 0, -0.035, 0, 0, Math.PI / 2)],
@@ -84,10 +82,17 @@ export class Weapon {
       [box(0.038, 0.01, 0.05, 0.003), xform(0, rail + 0.004, -0.03)],
       [rcyl(0.0045, 0.024, 0.0015, 12), xform(0.024, rail + 0.0055, -0.03, 0, 0, Math.PI / 2)],
     ], steel);
-    // flip-up lens covers (open), polymer
+    // see-through optic tube: hollow lathe (outer wall + inner wall + rounded rims)
+    const tubeProfile = [];
+    const R = 0.0165, Rin = 0.0135, Rb = 0.0195, z0 = -0.09, z1 = 0.03;
+    for (const [r, z] of [[Rin, z0], [Rb - 0.0015, z0 - 0.001], [Rb, z0 + 0.003], [Rb, z0 + 0.018], [R, z0 + 0.026], [R, z1 - 0.026], [Rb, z1 - 0.018], [Rb, z1 - 0.003], [Rb - 0.0015, z1 + 0.001], [Rin, z1]]) tubeProfile.push(new THREE.Vector2(r, z));
+    const tubeG = new THREE.LatheGeometry(tubeProfile, 48);
+    tubeG.rotateX(Math.PI / 2); // lathe axis Y -> Z (profile y = z)
+    const tubeIn = new THREE.LatheGeometry([new THREE.Vector2(Rin, z1), new THREE.Vector2(Rin, z0)], 48); tubeIn.rotateX(Math.PI / 2);
+    const optic = new THREE.Mesh(M([[tubeG, null], [tubeIn, null]]), steel.clone());
+    optic.material.side = THREE.DoubleSide;
+    this.gun.add(optic);
     add([
-      [box(0.036, 0.004, 0.034, 0.0015), xform(0, 0.022, -0.1, 0, 0.0, 0).multiply(xform(0, 0.017, 0, 0, -1.2))],
-      [box(0.036, 0.004, 0.034, 0.0015), xform(0, -0.022, 0.04, 0, 0).multiply(xform(0, -0.017, 0, 0, -1.25))],
       // pistol grip with finger grooves (approximated with two bevelled blocks)
       [box(0.03, 0.1, 0.045, 0.01), xform(0, rx - 0.09, 0.045, 0, 0.3)],
       [box(0.031, 0.03, 0.04, 0.009), xform(0, rx - 0.15, 0.072, 0, 0.3)],
@@ -96,13 +101,13 @@ export class Weapon {
       [box(0.044, 0.11, 0.025, 0.01), xform(0, rx - 0.03, 0.31)],
       [box(0.02, 0.04, 0.09, 0.008), xform(0, rx + 0.025, 0.25)],
     ], poly);
-    // sling (khaki webbing) from the front sling swivel down out of view
-    add([[box(0.03, 0.003, 0.3, 0.0012), xform(-0.03, bore - 0.04, -0.06, 0.15, 0.9)], [box(0.032, 0.012, 0.035, 0.004), xform(-0.025, bore - 0.02, -0.2)]], webbing);
+    // sling swivel + short run of khaki webbing at the front sling point
+    add([[box(0.006, 0.026, 0.06, 0.002), xform(-0.027, bore - 0.03, -0.15)]], webbing);
     // red-dot lens and reticle
     const lens = new THREE.Mesh(new THREE.CircleGeometry(0.016, 32), new THREE.MeshPhysicalMaterial({ color: 0x3a4a52, roughness: 0.02, metalness: 0.0, transparent: true, opacity: 0.22, envMapIntensity: 2 }));
-    lens.position.set(0, 0, -0.078); this.gun.add(lens);
+    lens.position.set(0, 0, -0.07); this.gun.add(lens);
     const dot = new THREE.Mesh(new THREE.CircleGeometry(0.00075, 16), new THREE.MeshBasicMaterial({ color: new THREE.Color(12, 0.3, 0.2), toneMapped: false }));
-    dot.position.set(0, 0, -0.077); this.gun.add(dot);
+    dot.position.set(0, 0, -0.069); this.gun.add(dot);
     this.dot = dot;
 
     // STANAG magazine (separate for the reload) – slight curve
@@ -168,8 +173,8 @@ export class Weapon {
 
     this.ads = 0; this.recoil = 0; this.recoilV = 0; this.kickRot = 0; this.swayX = 0; this.swayY = 0; this.flashT = 0; this.sprint = 0;
     // hip: low right; ADS: red-dot centred on the camera axis, tube ~9 cm in front of the eye
-    this.hip = new THREE.Vector3(0.1, -0.1, -0.16);
-    this.aim = new THREE.Vector3(0, 0, -0.165);
+    this.hip = new THREE.Vector3(0.125, -0.125, -0.25);
+    this.aim = new THREE.Vector3(0, 0, -0.2);
   }
 
   fire() {
