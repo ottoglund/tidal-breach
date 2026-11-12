@@ -153,7 +153,9 @@ async function boot() {
         hold: (on) => { hold = !!on; },
         ads: (v) => { game.player.ads = v; weapon.ads = v; },
         layer: (name, on) => { ({ rain, splashes, water })[name].visible = !!on; },
-        fx: (on) => { pipe.camera.layers[on ? 'enable' : 'disable'](3); },
+        fx: (on) => { pipe.camera.layers[on ? "enable" : "disable"](3); pipe.camera.layers[on ? "enable" : "disable"](5); },
+        weapon: (on) => { pipe.weaponScene.visible = !!on; },
+        debug: () => { const out = []; pipe.weaponScene.traverse(o => { if (o.isMesh && o.visible) { const m = o.material; out.push([o.geometry.type, m.type, m.map ? 'map' : 'nomap', m.color && m.color.getHexString(), o.getWorldPosition(new THREE.Vector3()).toArray().map(v => v.toFixed(2)).join(',')]); } }); return out; },
         renderFrame: (t = 10) => { const t0 = performance.now(); renderAt(t, 0.016); renderer.getContext().finish(); return performance.now() - t0; },
       }), configurable: false,
     });

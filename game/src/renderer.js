@@ -8,7 +8,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { WET } from './materials.js';
 
-export const LAYER = { WORLD: 0, GROUND: 1, WEAPON: 2, FX: 3, RAIN: 4 };
+export const LAYER = { WORLD: 0, GROUND: 1, WEAPON: 2, FX: 3, RAIN: 4, SHAFTS: 5 };
 
 const FinalShader = {
   uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uHit: { value: 0 }, uGrain: { value: 0.045 }, uRes: { value: new THREE.Vector2(1, 1) } },
@@ -54,7 +54,7 @@ export class Pipeline {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.05, 900);
     this.camera.rotation.order = 'YXZ';
-    this.camera.layers.enable(LAYER.GROUND); this.camera.layers.enable(LAYER.FX); this.camera.layers.enable(LAYER.RAIN);
+    this.camera.layers.enable(LAYER.GROUND); this.camera.layers.enable(LAYER.FX); this.camera.layers.enable(LAYER.RAIN); this.camera.layers.enable(LAYER.SHAFTS);
     this.weaponScene = new THREE.Scene();
     this.weaponCamera = new THREE.PerspectiveCamera(54, innerWidth / innerHeight, 0.01, 10);
 

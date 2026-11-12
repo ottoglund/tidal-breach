@@ -236,6 +236,7 @@ function addWet(material, mode, ground) {
                   + textureLod(tRefl, ruv - vec2(0.0, sp), lod).rgb * 0.2
                   + textureLod(tRefl, ruv + vec2(0.0, sp * 2.2), lod + 1.0).rgb * 0.1
                   + textureLod(tRefl, ruv - vec2(0.0, sp * 2.2), lod + 1.0).rgb * 0.1;
+        refl = min(refl, vec3(6.0)); // keep lamp reflections as crisp streaks instead of blooming blobs
         float NdV = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
         float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
         float rw = F * wet * mix(0.35, 1.0, puddle) * (1.0 - clamp(roughnessFactor, 0.0, 1.0) * 0.85);

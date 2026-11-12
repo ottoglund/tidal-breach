@@ -185,7 +185,7 @@ export function lightCone(pos, dir, length, angle, color, strength = 0.05) {
   }));
   m.position.copy(pos);
   m.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.clone().normalize());
-  m.layers.set(3);
+  m.layers.set(5); // light shafts: main view only, never mirrored into puddles
   m.renderOrder = 5;
   return m;
 }
