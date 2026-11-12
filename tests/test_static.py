@@ -44,4 +44,7 @@ class PreviewGeneratorChecks(unittest.TestCase):
         self.assertIn("function createRussianEnemy()", generator)
         self.assertIn("createRussianCamoTexture();", generator)
         self.assertIn("operatorFabric", generator)
+        self.assertIn("AIMPOINT", generator)
+        self.assertIn("steel.box(x,opticY,-.174", generator)
+
 
