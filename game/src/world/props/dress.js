@@ -188,7 +188,7 @@ export function dressPort(ctx) {
   [16, -1, -19, -40, -62, -76].forEach((z, i) => paint('A0' + (i + 1), 2.6, 1.3, -23.3, z, HALF_PI));
   [15, -4, -23, -42, -62, -77].forEach((z, i) => paint('B0' + (i + 1), 2.6, 1.3, 23.3, z, -HALF_PI));
   [[-12, -7], [-12, -27], [13, -18], [13, -51]].forEach(([x, z], i) => paint('C0' + (i + 1), 2.2, 1.1, x, z + 7.4, 0));
-  for (const [x, z, ry] of [[-3.3, 12.5, 0], [3.4, 2.0, Math.PI], [-3.3, -24, 0], [3.4, -31, Math.PI], [-3.3, -58, 0]]) paint('arrow', 1.3, 2.6, x, z, ry);
+  for (const [x, z, ry] of [[-3.3, 9.0, 0], [3.4, 2.0, Math.PI], [-3.3, -24, 0], [3.4, -31, Math.PI], [-3.3, -58, 0]]) paint('arrow', 1.3, 2.6, x, z, ry);
   paint('slow', 2.2, 1.1, -3.3, 17.0, 0);
   paint('slow', 2.2, 1.1, 3.4, -2.5, Math.PI);
   paint('stop', 2.4, 1.2, -3.2, 28.0, Math.PI);
