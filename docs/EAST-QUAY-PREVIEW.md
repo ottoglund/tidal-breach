@@ -27,3 +27,8 @@ Inspect [the first-person model](http://127.0.0.1:8000/quay.html?reference=opera
 
 Validate the captured renders visually and complete the mission on a desktop GPU and on physical iOS hardware in landscape. Record the browser, hardware, render resolution, FPS and memory before selecting the production renderer. The current preview uses procedural WebGL1 shading. glTF, a full PBR material pipeline and scene shadows remain part of the milestone.
 
+
+
+## Opposing force uniform
+
+Enemy models use a separate Russian-inspired digital woodland pattern in muted forest green, charcoal and grey olive, with darker face covering and low-visibility kit. The texture is procedurally generated and contains no imported military insignia. This gives the opposing force a clear silhouette and palette contrast against the player's Swedish M90 sleeves. The enemy texture is tiled across jacket, trousers and sleeves.
