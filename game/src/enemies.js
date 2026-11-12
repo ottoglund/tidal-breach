@@ -118,15 +118,21 @@ export function createGuard(variant = 'ak74') {
     const el = new THREE.Group(); el.position.y = -0.3; up.add(el);
     const fo = limb(0.27, 0.058, 0.046, S.uniform); el.add(fo);
     const hand = new THREE.Mesh(box(0.07, 0.1, 0.05, 0.022), S.glove); hand.position.y = -0.31; hand.castShadow = true; fo.add(hand);
-    return { sh, el };
+    return { sh, el, base: sh.position.clone(), side };
   };
   const armR = arm(1), armL = arm(-1);
+  // clothing volume: jacket hem, belt with pouches, shoulder straps, radio
+  add(torso, M([[box(0.4, 0.1, 0.27, 0.04), xform(0, -0.02, 0)]]), S.uniform);
+  add(torso, M([[box(0.41, 0.05, 0.28, 0.015), xform(0, 0.07, 0)], [box(0.08, 0.1, 0.06, 0.015), xform(0.16, 0.04, 0.12)], [box(0.08, 0.1, 0.06, 0.015), xform(-0.16, 0.04, 0.12)], [box(0.06, 0.16, 0.05, 0.012), xform(-0.12, 0.42, 0.2)]]), S.vest);
   // legs
   const leg = (side) => {
     const hip = new THREE.Group(); hip.position.set(side * 0.1, 0, 0); body.add(hip);
     const th = limb(0.45, 0.1, 0.078, S.uniform); hip.add(th);
     const knee = new THREE.Group(); knee.position.y = -0.45; th.add(knee);
     const sh = limb(0.44, 0.078, 0.06, S.uniform); knee.add(sh);
+    // cargo pocket and knee pad
+    const pocket = new THREE.Mesh(box(0.05, 0.16, 0.13, 0.02), S.uniform); pocket.position.set(side * 0.085, -0.25, 0); pocket.castShadow = true; th.add(pocket);
+    const pad = new THREE.Mesh(box(0.11, 0.12, 0.05, 0.02), S.vest); pad.position.set(0, -0.03, -0.065); pad.castShadow = true; sh.add(pad);
     const boot = new THREE.Mesh(M([[box(0.115, 0.11, 0.29, 0.045), xform(0, -0.48, -0.05)], [box(0.12, 0.03, 0.3, 0.012), xform(0, -0.53, -0.05)]]), S.boot); boot.castShadow = true; sh.add(boot);
     return { hip, knee };
   };
@@ -155,12 +161,12 @@ export function poseGuard(g, st) {
   g.torso.rotation.x = -0.05 - st.aim * 0.08 + st.hit * 0.35;
   // arms hold the rifle: patrol low-ready vs aiming
   const a = st.aim;
-  g.armR.sh.rotation.set(-0.5 - a * 0.9, -0.1 - a * 0.25, -0.25);
-  g.armR.el.rotation.set(-1.1 + a * 0.6, 0, 0);
-  g.armL.sh.rotation.set(-0.9 - a * 0.65, 0.5 + a * 0.15, 0.3);
-  g.armL.el.rotation.set(-0.9 + a * 0.4, 0, 0);
-  g.rifle.position.set(0.06, 0.3 + a * 0.13, -0.3 - a * 0.05);
-  g.rifle.rotation.set(0.35 * (1 - a) + st.hit * 0.3, 0.25 * (1 - a), 0);
+  g.rifle.position.set(0.07 - a * 0.02, 0.27 + a * 0.2, -0.2 - a * 0.06);
+  g.rifle.rotation.set(0.45 * (1 - a) + st.hit * 0.3, 0.3 * (1 - a), 0);
+  g.rifle.updateMatrix();
+  // two-bone IK: right hand on the pistol grip, left hand on the handguard
+  reach(g.armR, _v1.set(0, -0.07, 0.1).applyMatrix4(g.rifle.matrix), _pR);
+  reach(g.armL, _v2.set(0, -0.01, -0.27).applyMatrix4(g.rifle.matrix), _pL);
   g.head.rotation.x = a * 0.12;
   g.flash.intensity = st.flash > 0 ? 18 : 0;
   g.flashMesh.visible = st.flash > 0;
@@ -173,7 +179,28 @@ export function poseGuard(g, st) {
     g.root.rotation.x = e * 1.45 * st.fallDir;
     g.root.rotation.z = e * 0.2;
     g.torso.rotation.x = -e * 0.3;
-    g.armR.sh.rotation.x = g.armL.sh.rotation.x = -0.4 - e * 1.6;
-    g.rifle.visible = d < 0.6;
+      g.rifle.visible = d < 0.6;
   } else { g.root.rotation.x = 0; g.root.rotation.z = 0; g.rifle.visible = true; }
+}
+
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
+const _pR = new THREE.Vector3(0.7, -1, 0.35), _pL = new THREE.Vector3(-0.8, -1, 0.1);
+const DOWN = new THREE.Vector3(0, -1, 0);
+const UPPER = 0.3, FORE = 0.29;
+const _u = new THREE.Vector3(), _w = new THREE.Vector3(), _e = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
+/** Analytic two-bone IK in torso space; limbs point along -Y in their local frames. */
+function reach(arm, target, pole) {
+  const S = arm.base;
+  _u.copy(target).sub(S);
+  let d = _u.length();
+  d = Math.min(Math.max(d, 0.08), UPPER + FORE - 0.002);
+  _u.normalize();
+  const cosA = (UPPER * UPPER + d * d - FORE * FORE) / (2 * UPPER * d);
+  const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  _w.copy(pole).addScaledVector(_u, -pole.dot(_u)).normalize();
+  _e.copy(S).addScaledVector(_u, UPPER * cosA).addScaledVector(_w, UPPER * sinA);
+  arm.sh.quaternion.setFromUnitVectors(DOWN, _d.copy(_e).sub(S).normalize());
+  _q.copy(arm.sh.quaternion).invert();
+  _d.copy(target).sub(_e).normalize().applyQuaternion(_q);
+  arm.el.quaternion.setFromUnitVectors(DOWN, _d);
 }

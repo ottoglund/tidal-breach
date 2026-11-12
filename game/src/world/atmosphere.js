@@ -275,7 +275,7 @@ void main(){
   float cycle = floor(t); vLife = fract(t);
   vec2 rnd = fract(sin(vec2(cycle * 12.9898 + aSeed.x * 78.2, cycle * 39.34 + aSeed.y * 11.1)) * 43758.5453);
   vec3 p = vec3(uCam.x + (rnd.x - 0.5) * 18.0, 0.02, uCam.z + (rnd.y - 0.5) * 18.0);
-  float s = 0.05 + 0.11 * vLife;
+  float s = 0.03 + 0.06 * vLife;
   vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
   vec3 wp = p + right * (position.x - 0.5) * s * 2.0 + vec3(0.0, 1.0, 0.0) * position.y * s * 1.3;
   vUv = position.xy;
@@ -284,9 +284,9 @@ void main(){
 const SPLASH_FRAG = /* glsl */`
 uniform vec3 uColor; varying vec2 vUv; varying float vLife;
 void main(){
-  vec2 d = vUv - vec2(0.5, 0.0);
-  float crown = smoothstep(0.5, 0.2, length(d * vec2(1.0, 1.6))) * smoothstep(0.0, 0.25, abs(d.x) + vUv.y * 0.5);
-  float a = crown * (1.0 - vLife) * (1.0 - vLife);
+  // thin upward spray: narrow at the base, fading with height and age
+  float x = (vUv.x - 0.5) * (5.0 - vUv.y * 2.5);
+  float a = exp(-x * x * 4.0) * (1.0 - vUv.y) * (1.0 - vLife) * (1.0 - vLife);
   gl_FragColor = vec4(uColor * a, 1.0);
 }`;
 export function createSplashes(count) {
@@ -298,7 +298,7 @@ export function createSplashes(count) {
   base.instanceCount = count;
   const m = new THREE.Mesh(base, new THREE.ShaderMaterial({
     vertexShader: SPLASH_VERT, fragmentShader: SPLASH_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    uniforms: { uTime: WET.uTime, uCam: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0.25, 0.24, 0.22) } },
+    uniforms: { uTime: WET.uTime, uCam: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0.06, 0.06, 0.055) } },
   }));
   m.frustumCulled = false;
   m.layers.set(3);
