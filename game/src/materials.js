@@ -224,6 +224,15 @@ function addWet(material, mode, ground) {
       `)
       .replace('#include <opaque_fragment>', `
       #ifdef WET_GROUND
+      // Standing water is near-perfectly smooth: a punctual-light GGX lobe would read as a soft,
+      // blown-out blob. Let the mirrored scene provide the lamp image instead, and keep only a
+      // clamped glint (low preset has no mirror pass, so it keeps more of the glint).
+      {
+        vec3 ds = reflectedLight.directSpecular;
+        float keep = uReflOn > 0.5 ? 0.12 : 0.35;
+        outgoingLight -= ds * puddle;
+        outgoingLight = max(outgoingLight, vec3(0.0)) + min(ds, vec3(1.5)) * puddle * keep;
+      }
       if (uReflOn > 0.5) {
         vec4 rc = uReflMatrix * vec4(vWetPos, 1.0);
         vec2 ruv = rc.xy / rc.w;

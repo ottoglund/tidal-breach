@@ -55,12 +55,10 @@ export function bakeEnvironment(renderer, lamps) {
   const sky = createSky();
   sky.material.uniforms.uEnv.value = 3.0;
   envScene.add(sky);
-  const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 4.2, 2.6) });
-  for (const l of lamps) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(1.8, 8, 6), glowMat);
-    s.position.copy(l).multiplyScalar(0.5);
-    envScene.add(s);
-  }
+  // Lamps are deliberately NOT baked into the environment: an infinitely distant IBL
+  // would mirror them in puddles at the wrong place (ghost highlights). Real lamp
+  // reflections come from the planar reflection pass and analytic light speculars.
+  void lamps;
   // dim ground plane so reflections from below are not black
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshBasicMaterial({ color: 0x07080a }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -1;

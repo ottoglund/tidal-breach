@@ -112,7 +112,7 @@ async function boot() {
     if (hold) { requestAnimationFrame(frame); return; }
     const now = nowMs / 1000;
     const rawDt = now - last; last = now;
-    const dt = Math.min(0.05, rawDt);
+    const dt = Math.min(0.05, Math.max(0, rawDt));
     try {
       renderAt(now, dt);
     } catch (err) {
@@ -155,6 +155,9 @@ async function boot() {
         layer: (name, on) => { ({ rain, splashes, water })[name].visible = !!on; },
         fx: (on) => { pipe.camera.layers[on ? "enable" : "disable"](3); pipe.camera.layers[on ? "enable" : "disable"](5); },
         weapon: (on) => { pipe.weaponScene.visible = !!on; },
+        guards: (on) => { for (const g of game.guardPool) g.root.traverse(o => { if (o.isMesh || o.isLight) o.visible = !!on; }); },
+        pick: (x, y) => { const rc = new THREE.Raycaster(); rc.layers.enableAll(); rc.setFromCamera(new THREE.Vector2(x, y), pipe.camera); return rc.intersectObjects(scene.children, true).slice(0, 4).map(h => [h.object.type, h.object.material?.type, h.object.material?.name || '', h.distance.toFixed(2), h.point.toArray().map(v => v.toFixed(2)).join(','), h.object.parent?.type]); },
+        state2: () => ({ flashT: weapon.flashT, flashVis: weapon.flash.visible, fx: game.fx.items.length, fxLight: game.fx.light.intensity, decals: game.fx.decals.length, keys: Object.keys(game.keys).filter(k => game.keys[k]), touch: game.touch }),
         debug: () => { const out = []; pipe.weaponScene.traverse(o => { if (o.isMesh && o.visible) { const m = o.material; out.push([o.geometry.type, m.type, m.map ? 'map' : 'nomap', m.color && m.color.getHexString(), o.getWorldPosition(new THREE.Vector3()).toArray().map(v => v.toFixed(2)).join(',')]); } }); return out; },
         renderFrame: (t = 10) => { const t0 = performance.now(); renderAt(t, 0.016); renderer.getContext().finish(); return performance.now() - t0; },
       }), configurable: false,
