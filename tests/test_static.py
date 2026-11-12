@@ -31,5 +31,32 @@ class GameSourceChecks(unittest.TestCase):
         self.assertIn("get('qa')==='1'", HTML)
         self.assertIn("Object.defineProperty(window,'__TIDAL_QA__'", HTML)
 
+    def test_asphalt_aggregate_and_aged_cracks(self):
+        self.assertIn("Pebbled aggregate", HTML)
+        self.assertIn("Thin branching cracks", HTML)
+        self.assertIn("g.ellipse(x,y,rx,ry", HTML)
+
+    def test_recoil_moves_weapon_and_bullet_together(self):
+        self.assertIn("recoilPitch", HTML)
+        self.assertIn("pitch+rr(-spread,spread)+shotKick", HTML)
+        self.assertIn("shotKick=Math.min(.24,recoil*(player.ads?.88:1.15))", HTML)
+        self.assertIn("recoil*=Math.exp", HTML)
+        self.assertIn("Math.min(.24,recoil+(player.ads?.042:.062))", HTML)
+
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class PreviewGeneratorChecks(unittest.TestCase):
+    def test_preview_has_distinct_procedural_enemy_camouflage(self):
+        generator = (Path(__file__).resolve().parents[1] /
+                     "tools" / "build_quay_preview.py").read_text()
+        self.assertIn("function createRussianCamoTexture()", generator)
+        self.assertIn("function createRussianEnemy()", generator)
+        self.assertIn("createRussianCamoTexture();", generator)
+        self.assertIn("operatorFabric", generator)
+        self.assertIn("AIMPOINT", generator)
+        self.assertIn("steel.box(x,opticY,-.174", generator)
+
+
