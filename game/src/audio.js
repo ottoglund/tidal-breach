@@ -17,7 +17,7 @@ const rnd = Math.random;
 const rr = (a, b) => a + (b - a) * rnd();
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const pick = a => a[(rnd() * a.length) | 0];
+const pick = a => (a && a.length ? a[(rnd() * a.length) | 0] : null);
 const wall = () => performance.now() / 1000;
 const MOBILE = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 const LOW = 22050; // sample rate for dark / low-frequency material (halves generation cost)
@@ -411,8 +411,8 @@ function genHiss(sr, sec) {                                                     
     const a = white(n); for (let i = 0; i < n; i++) a[i] *= 0.3;
     const cl = new Float32Array(n);
     for (let k = 0, nc = Math.floor(sec * 1600); k < nc; k++) {
-      const i0 = (rnd() * (n - 200)) | 0, amp = Math.pow(rnd(), 3), dec = rr(0.0003, 0.0015) * sr;
-      for (let j = 0; j < dec * 5; j++) cl[i0 + j] += (rnd() * 2 - 1) * amp * Math.exp(-j / dec);
+      const i0 = (rnd() * (n - 400)) | 0, dec = rr(0.0003, 0.0015) * sr, m = Math.exp(-1 / dec);
+      for (let j = 0, e = rnd() * rnd() * rnd(); j < dec * 5; j++, e *= m) cl[i0 + j] += (rnd() * 2 - 1) * e;
     }
     mix(a, cl, 0, 0.9);
     biquad(a, 'hp', 1300, 0.7, sr); biquad(a, 'lp', 9500, 0.7, sr);
@@ -593,7 +593,8 @@ export class Audio {
       this.buildCore();
       this.dirPan = [0, 0.75, 0, -0.75].map(p => { const n = this.panNode(p); n.connect(this.master); return n; });
       this.ready = true;
-      if (opts.ambience !== false) { if (opts.ctx) this.buildAmbience(); else setTimeout(() => this.buildAmbience(), 40); }
+      this.wantAmb = opts.ambience !== false;
+      if (opts.ctx) this.buildDeferred(true); else setTimeout(() => this.buildDeferred(false), 40);
       if (opts.timers !== false) {
         this.timer = setInterval(() => this.tick(), 100);
         document.addEventListener('visibilitychange', () => {
@@ -611,43 +612,51 @@ export class Audio {
   buildCore() {
     const sr = this.ctx.sampleRate, b = (a, rate = sr) => this.buf([a], rate), b2 = (chs, rate = sr) => this.buf(chs, rate);
     const n = (k, f) => Array.from({ length: k }, f);
-    this.verb.buffer = b2(genIR(sr));
+    // only what the first seconds of play need; everything else follows in buildDeferred()
     this.B = {
-      rifle: n(4, () => b(genRifle(sr))),
-      ak74: n(3, () => b(genRifle(sr, { len: 0.45, heavy: 0.25, mech: 0, crack: 0.3 }))),
-      akm: n(3, () => b(genRifle(sr, { len: 0.45, heavy: 0.6, mech: 0, crack: 0.3 }))),
-      echoNear: b(genEcho(sr, 3500)), echoFar: b(genEcho(sr, 1100)),
-      roll: n(2, () => b2(genRoll(sr))),
+      rifle: n(3, () => b(genRifle(sr))),
       casing: n(6, () => b(genCasing(sr))),
       snap: n(3, () => b(genSnap(sr))),
       step: n(8, () => b(genStep(sr))),
       gear: n(5, () => b(genGear(sr))),
       release: b(genReload(sr, 'release')), magOut: b(genReload(sr, 'out')), pouch: b(genReload(sr, 'pouch')),
       magIn: b(genReload(sr, 'in')), bolt: b(genReload(sr, 'bolt')), dry: b(genReload(sr, 'dry')),
-      hitMetal: n(3, () => b(genImpact(sr, 'metal'))), hitGround: n(3, () => b(genImpact(sr, 'ground'))), hitFlesh: n(2, () => b(genImpact(sr, 'flesh'))),
-      rico: n(2, () => b(genRicochet(sr))),
       tick: [b(genTick(sr, false)), b(genTick(sr, true))],
-      thud: n(3, () => b(genThud(sr))),
-      grunt: n(4, () => b(genGrunt(LOW), LOW)),
-      inhale: n(3, () => b(genBreath(LOW, true, 0), LOW)), exhale: n(3, () => b(genBreath(LOW, false, 0.6), LOW)),
-      heart: b(genHeart(LOW), LOW),
-      power: b(genPowerDown(LOW), LOW),
     };
+    void b2;
+  }
+
+  /** Remaining buffers, generated in small steps after start so the start-button handler stays short. */
+  buildDeferred(sync) {
+    const c = this.ctx, sr = c.sampleRate, B = this.B, n = (k, f) => Array.from({ length: k }, f);
+    const b = a => this.buf([a], sr);
+    const steps = [
+      () => { B.echoNear = b(genEcho(sr, 3500)); B.echoFar = b(genEcho(sr, 1100)); this.verb.buffer = this.buf(genIR(sr), sr); },
+      () => { B.roll = n(2, () => this.buf(genRoll(sr), sr)); },
+      () => { B.ak74 = n(3, () => b(genRifle(sr, { len: 0.45, heavy: 0.25, mech: 0, crack: 0.3 }))); B.akm = n(3, () => b(genRifle(sr, { len: 0.45, heavy: 0.6, mech: 0, crack: 0.3 }))); },
+      () => { B.hitMetal = n(3, () => b(genImpact(sr, 'metal'))); B.hitGround = n(3, () => b(genImpact(sr, 'ground'))); B.hitFlesh = n(2, () => b(genImpact(sr, 'flesh'))); B.rico = n(2, () => b(genRicochet(sr))); B.thud = n(3, () => b(genThud(sr))); B.rifle.push(b(genRifle(sr))); },
+      () => { B.grunt = n(4, () => this.buf([genGrunt(LOW)], LOW)); B.heart = this.buf([genHeart(LOW)], LOW); },
+      () => { B.inhale = n(3, () => this.buf([genBreath(LOW, true, 0)], LOW)); B.exhale = n(3, () => this.buf([genBreath(LOW, false, 0.6)], LOW)); },
+      () => { B.power = this.buf([genPowerDown(LOW)], LOW); },
+      () => { B.roarBuf = this.buf(genRoar(LOW, 10), LOW); },
+      () => { B.hissBuf = this.buf(genHiss(sr, 9.3), sr); },
+      () => { B.dropBuf = this.buf(genDrops(sr, 11.7), sr); },
+      () => { B.lapBuf = this.buf(genLapping(LOW, 13.1), LOW); },
+      () => { B.engBuf = this.buf([genEngine(LOW)], LOW); B.creak = [0, 1, 2].map(() => this.buf([genCreak(LOW)], LOW)); },
+      () => { B.clang = [0, 1].map(() => this.buf([genClang(LOW)], LOW)); B.drip = [0, 1, 2, 3, 4, 5].map(() => this.buf([genDrip(sr)], sr)); },
+      () => { B.boat = this.buf([genBoat(LOW)], LOW); B.radio = this.buf([genRadio(LOW)], LOW); B.ring = this.buf([genRing(sr)], sr); },
+    ];
+    const run = i => {
+      if (i < steps.length) { try { steps[i](); } catch (e) { console.warn('[audio] step', i, e); } if (sync) run(i + 1); else setTimeout(() => run(i + 1), i < 4 ? 10 : 60); }
+      else if (this.wantAmb) this.buildAmbience();
+    };
+    run(0);
   }
 
   buildAmbience() {
-    if (this.ambOn || !this.ready) return;
+    if (this.ambOn || !this.ready || !this.B.drip) return;
     try {
-      const c = this.ctx, sr = c.sampleRate, B = this.B;
-      B.roarBuf = this.buf(genRoar(LOW, 10), LOW);
-      B.hissBuf = this.buf(genHiss(sr, 9.3), sr);
-      B.dropBuf = this.buf(genDrops(sr, 11.7), sr);
-      B.lapBuf = this.buf(genLapping(LOW, 13.1), LOW);
-      B.engBuf = this.buf([genEngine(LOW)], LOW);
-      B.creak = [0, 1, 2].map(() => this.buf([genCreak(LOW)], LOW));
-      B.clang = [0, 1].map(() => this.buf([genClang(LOW)], LOW));
-      B.drip = [0, 1, 2, 3, 4, 5].map(() => this.buf([genDrip(sr)], sr));
-      B.boat = this.buf([genBoat(LOW)], LOW); B.radio = this.buf([genRadio(LOW)], LOW); B.ring = this.buf([genRing(sr)], sr);
+      const c = this.ctx, B = this.B;
       const loop = (buf, gain, rate = 1, filt) => {
         const s = c.createBufferSource(), g = c.createGain(); s.buffer = buf; s.loop = true; s.playbackRate.value = rate; g.gain.value = gain;
         let n = s; if (filt) { s.connect(filt); n = filt; } n.connect(g); g.connect(this.amb);
@@ -896,13 +905,13 @@ export class Audio {
     const lv = live && tt - (this.lhAt || 0) < 0.35 ? this.lh : 0;
     const fc = lv > 0.02 ? lerp(16000, 3200, Math.pow(lv, 1.4)) : (this.endLP || 20000);
     if (Math.abs(fc - this._fc) > 50) { this.tone.frequency.setTargetAtTime(fc, ct, 0.3); this._fc = fc; }
-    if (lv > 0.05 && tt >= (this._nb || 0)) {
+    if (lv > 0.05 && B.inhale && tt >= (this._nb || 0)) {
       const inh = pick(B.inhale);
       this.play(inh, { at: ct, gain: lerp(0.04, 0.13, lv) });
       this.play(pick(B.exhale), { at: ct + inh.duration + rr(0.03, 0.1), gain: lerp(0.05, 0.15, lv) });
       this._nb = tt + lerp(2.6, 1.2, lv) * rr(0.9, 1.1);
     }
-    if (lv > 0.45 && tt >= (this._nh || 0)) {
+    if (lv > 0.45 && B.heart && tt >= (this._nh || 0)) {
       const hg = 0.3 * (lv - 0.3);
       this.play(B.heart, { at: ct, gain: hg }); this.play(B.heart, { at: ct + 0.27, gain: hg * 0.7 });
       this._nh = tt + lerp(0.9, 0.55, lv);
