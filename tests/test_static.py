@@ -33,3 +33,15 @@ class GameSourceChecks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class PreviewGeneratorChecks(unittest.TestCase):
+    def test_preview_has_distinct_procedural_enemy_camouflage(self):
+        generator = (Path(__file__).resolve().parents[1] /
+                     "tools" / "build_quay_preview.py").read_text()
+        self.assertIn("function createRussianCamoTexture()", generator)
+        self.assertIn("function createRussianEnemy()", generator)
+        self.assertIn("createRussianCamoTexture();", generator)
+        self.assertIn("operatorFabric", generator)
+
