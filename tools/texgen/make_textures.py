@@ -72,7 +72,7 @@ def asphalt(n=2048, seed=11):
     cf1, cf2, _ = voronoi(n, 5, r, 0.9)
     wx, wy = fbm(n, r, 2.4, lo=3, hi=60), fbm(n, r, 2.4, lo=3, hi=60)
     edge = warp(cf2 - cf1, wx, wy, 26)
-    crack_sel = smoothstep(0.15, 0.6, warp(norm01(fbm(n, r, 2.6, lo=1, hi=8)), wx, wy, 10))
+    crack_sel = smoothstep(0.42, 0.8, warp(norm01(fbm(n, r, 2.6, lo=1, hi=8)), wx, wy, 10))
     crack = smoothstep(0.022, 0.0, edge) * crack_sel
     seal = smoothstep(0.08, 0.0, edge) * crack_sel * 0.9   # bitumen crack sealant band
     # height
