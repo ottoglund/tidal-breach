@@ -4,6 +4,9 @@ The QA interface only moves the player and invokes original gameplay actions;
 this is not a replacement for manual desktop/mobile playthroughs.
 """
 from contextlib import contextmanager
+import os
+from subprocess import run
+import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -15,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @contextmanager
-def serve():
+def serve(directory=ROOT):
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(ROOT), **kwargs)
+            super().__init__(*args, directory=str(directory), **kwargs)
 
         def log_message(self, *args):
             return
@@ -47,12 +50,22 @@ def browser():
             b.close()
 
 
-@pytest.fixture
-def game(browser):
-    with serve() as url:
+@pytest.fixture(scope="session")
+def previews(tmp_path_factory):
+    output = tmp_path_factory.mktemp("quay-preview")
+    run([sys.executable, str(ROOT / "tools/build_quay_preview.py"), str(output)], check=True)
+    return output
+
+
+@pytest.fixture(params=["baseline", "quay"])
+def game(browser, request, previews):
+    preview = request.param == "quay"
+    with serve(previews if preview else ROOT) as url:
+        if preview:
+            url = url.replace("/?qa=1", "/quay.html?qa=1")
         # A touch-enabled headless context avoids pointer-lock permissions.
         context = browser.new_context(
-            viewport={"width": 1280, "height": 720},
+            viewport={"width": 854, "height": 480},
             has_touch=True
         )
         page = context.new_page()
@@ -95,8 +108,10 @@ def test_weapon_and_pause(game):
     assert state(page)["ammo"] == 29
     page.evaluate("window.__TIDAL_QA__.resume()")
     page.evaluate("window.__TIDAL_QA__.reload()")
+    # Reload advances on capped simulation frames. SwiftShader can take
+    # substantially longer than 1.65 seconds of wall-clock time.
     page.wait_for_function(
-        "window.__TIDAL_QA__.state().ammo === 30", timeout=6000
+        "window.__TIDAL_QA__.state().ammo === 30", timeout=60000
     )
     assert state(page)["reserve"] == 149
     assert not errors
@@ -130,3 +145,40 @@ def test_damage_to_failure(game):
     assert state(page)["mode"] == "end"
     assert "FAILED" in page.locator("#endTitle").inner_text()
     assert not errors
+
+
+
+@pytest.mark.parametrize("viewport,touch", [((1280, 720), False), ((844, 390), True)])
+def test_quay_reference_renders(browser, previews, tmp_path, viewport, touch):
+    width, height = viewport
+    capture_dir = Path(os.environ.get("TIDAL_CAPTURES", tmp_path))
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    with serve(previews) as url:
+        context = browser.new_context(
+            viewport={"width": width, "height": height}, has_touch=touch
+        )
+        try:
+            page = context.new_page()
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("console", lambda message: errors.append(message.text)
+                    if message.type == "error" else None)
+            def capture(variant, reference, name):
+                page.goto(url.replace("/?qa=1", f"/{variant}.html?qa=1&reference={reference}"))
+                page.wait_for_function("""window.__TIDAL_QA__ &&
+                    getComputedStyle(document.querySelector('#menu')).display === 'none'""")
+                page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                return page.screenshot(path=capture_dir / f"{width}x{height}-{name}.png")
+
+            baseline = capture("baseline", "1", "baseline")
+            quay = capture("quay", "1", "quay")
+            assert baseline != quay
+            if not touch:
+                operator = capture("quay", "operator", "operator")
+                aimed = capture("quay", "operator-ads", "operator-ads")
+                assert operator != quay
+                assert aimed != operator
+            assert not errors
+        finally:
+            context.close()
+
