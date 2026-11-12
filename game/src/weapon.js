@@ -1,190 +1,220 @@
-// First-person carbine + gloved hands, modelled at real scale (overall ~0.78 m).
-// Animation: aim-down-sights, sway, bob, recoil spring, sprint pose, magazine-change reload.
+// First-person Ak 5C-style carbine with an Aimpoint-style tube red-dot,
+// green gloves and M90-camouflage sleeves. Real-scale (~0.84 m overall).
+// Animation: aim-down-sights, sway, bob, recoil spring, sprint pose, magazine change.
 import * as THREE from 'three';
-import { box, cyl, tube, xform } from './geo.js';
+import { box, cyl, rcyl, tube, xform } from './geo.js';
 import { mat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 function M(list) {
   return mergeGeometries(list.map(([g, m]) => { const x = g.index ? g.toNonIndexed() : g.clone(); if (m) x.applyMatrix4(m); for (const k of Object.keys(x.attributes)) if (!['position', 'normal', 'uv'].includes(k)) x.deleteAttribute(k); return x; }));
 }
-function mesh(list, material) { const m = new THREE.Mesh(M(list), material); m.layers.set(0); return m; }
+const ALONG_Z = Math.PI / 2; // rotate Y-axis primitives to lie along Z
+
+// Smooth tapered limb along +Z from a to b (forearm with wrist taper).
+function limbGeo(a, b, r0, r1) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), len = A.distanceTo(B);
+  const pts = [];
+  for (let i = 0; i <= 5; i++) { const t = -Math.PI / 2 + i / 5 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(t) * r0, Math.sin(t) * r0)); }
+  pts.push(new THREE.Vector2(r0 * 1.06, len * 0.35));
+  pts.push(new THREE.Vector2(r1 * 1.0, len * 0.9));
+  pts.push(new THREE.Vector2(r1 * 0.95, len));
+  const g = new THREE.LatheGeometry(pts, 20);
+  g.scale(1, 1, 0.82);
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize());
+  g.applyMatrix4(new THREE.Matrix4().compose(A, q, new THREE.Vector3(1, 1, 1)));
+  return g;
+}
 
 export class Weapon {
   constructor(scene) {
     this.scene = scene;
-    const metal = mat('gunmetal', { wet: 'none' });
+    const steel = mat('gunmetal', { wet: 'none' });
     const poly = mat('polymer', { wet: 'none' });
-    const glove = mat('fabric_glove', { wet: 'none', tile: 0.12 });
-    const sleeve = mat('fabric_uniform', { wet: 'none', tile: 0.25 });
-    this.root = new THREE.Group();      // follows camera
-    this.gun = new THREE.Group();       // animated weapon pivot (at grip)
+    const glove = mat('glove_green', { wet: 'none', tile: 0.12 });
+    const sleeve = mat('camo_m90', { wet: 'none', tile: 0.45 });
+    const webbing = mat('khaki_webbing', { wet: 'none', tile: 0.15 });
+    this.root = new THREE.Group();
+    this.gun = new THREE.Group();
     this.root.add(this.gun);
     scene.add(this.root);
+    const add = (list, m) => { const o = new THREE.Mesh(M(list), m); this.gun.add(o); return o; };
 
-    // ---- weapon body; origin = sight line, barrel toward -Z ----
-    const rx = 0, ry = -0.062; // receiver centre below sight line
-    const parts = [
-      [box(0.034, 0.05, 0.25), xform(rx, ry, -0.02)],            // upper receiver
-      [box(0.022, 0.012, 0.36), xform(rx, ry + 0.031, -0.12)],   // top rail
-      [box(0.03, 0.045, 0.19), xform(rx, ry - 0.045, 0.0)],      // lower receiver
-      [box(0.036, 0.05, 0.05), xform(rx, ry - 0.05, -0.065)],    // mag well
-      [box(0.012, 0.012, 0.03), xform(rx + 0.019, ry + 0.005, 0.02)], // forward assist
-      [box(0.002, 0.03, 0.07), xform(rx + 0.018, ry, -0.02)],    // ejection port cover
-      [box(0.03, 0.012, 0.05), xform(rx, ry + 0.022, 0.115)],    // charging handle
-      [cyl(0.009, 0.009, 0.32, 12), xform(rx, ry + 0.005, -0.41, 0, Math.PI / 2)], // barrel
-      [cyl(0.012, 0.012, 0.055, 12), xform(rx, ry + 0.005, -0.585, 0, Math.PI / 2)], // flash hider
-      [box(0.014, 0.004, 0.008), xform(rx, ry + 0.035, -0.29)],  // front sight base
-      [cyl(0.014, 0.014, 0.04, 14), xform(rx, ry - 0.015, 0.18, 0, Math.PI / 2)], // buffer tube
-      [box(0.012, 0.03, 0.02), xform(rx, ry - 0.06, 0.01)],      // trigger guard
-      [box(0.006, 0.006, 0.12), xform(rx + 0.03, ry, -0.24)],    // flashlight mount
-      [cyl(0.014, 0.014, 0.11, 14), xform(rx + 0.036, ry - 0.004, -0.27, 0, Math.PI / 2)], // flashlight
-    ];
-    // octagonal free-float handguard with slots
-    const hg = cyl(0.026, 0.026, 0.27, 8);
-    parts.push([hg, xform(rx, ry - 0.002, -0.27, Math.PI / 8, Math.PI / 2)]);
-    for (let i = 0; i < 6; i++) for (const s of [-1, 1]) parts.push([box(0.004, 0.012, 0.025), xform(rx + s * 0.025, ry - 0.004, -0.17 - i * 0.04)]);
-    // red-dot sight on a riser
-    parts.push([box(0.024, 0.02, 0.04), xform(0, ry + 0.045, -0.05)]);
-    parts.push([cyl(0.019, 0.019, 0.06, 18, true), xform(0, ry + 0.072, -0.05, 0, Math.PI / 2)]);
-    parts.push([cyl(0.006, 0.006, 0.012, 10), xform(0.022, ry + 0.072, -0.05, 0, 0, Math.PI / 2)]);
-    this.gun.add(mesh(parts, metal));
-    const polyParts = [
-      [box(0.028, 0.09, 0.045), xform(rx, ry - 0.095, 0.045, 0, 0.32)],  // pistol grip
-      [box(0.04, 0.07, 0.17), xform(rx, ry - 0.03, 0.25)],              // stock
-      [box(0.036, 0.03, 0.06), xform(rx, ry - 0.06, 0.31, 0, -0.15)],   // stock lower
-      [box(0.045, 0.072, 0.02), xform(rx, ry - 0.026, 0.335)],          // butt pad
-      [box(0.022, 0.07, 0.03), xform(rx, ry - 0.06, -0.33, 0, -0.1)],   // angled foregrip
-    ];
-    this.gun.add(mesh(polyParts, poly));
-    // red dot lens + emissive dot (visible in ADS)
-    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.0175, 24), new THREE.MeshPhysicalMaterial({ color: 0x223322, roughness: 0.05, metalness: 0, transmission: 0, transparent: true, opacity: 0.18 }));
-    lens.position.set(0, ry + 0.072, -0.03); this.gun.add(lens);
-    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.0011, 12), new THREE.MeshBasicMaterial({ color: new THREE.Color(8, 0.4, 0.3) }));
-    dot.position.set(0, ry + 0.072, -0.079); this.gun.add(dot);
+    // Origin = sight line (centre of the red-dot tube). Barrel toward -Z.
+    const rail = -0.047;          // top of the receiver rail
+    const bore = -0.068;          // barrel axis
+    const rx = -0.083;            // receiver centre
+    add([
+      // upper receiver + top rail with cross slots
+      [box(0.036, 0.042, 0.26, 0.005), xform(0, rx + 0.004, -0.02)],
+      [box(0.022, 0.008, 0.25, 0.002), xform(0, rail - 0.004, -0.02)],
+      ...Array.from({ length: 16 }, (_, i) => [box(0.0225, 0.0035, 0.006, 0), xform(0, rail - 0.0005, 0.1 - i * 0.0155)]),
+      // lower receiver, magazine well, trigger guard
+      [box(0.032, 0.04, 0.2, 0.006), xform(0, rx - 0.036, 0.0)],
+      [box(0.034, 0.046, 0.07, 0.006), xform(0, rx - 0.055, -0.06)],
+      [box(0.012, 0.004, 0.065, 0.0015), xform(0, rx - 0.08, 0.02)],
+      [box(0.006, 0.022, 0.006, 0.002), xform(0, rx - 0.07, 0.05)],
+      // FNC-style charging handle on the right side + ejection port
+      [box(0.018, 0.012, 0.022, 0.004), xform(0.027, rx + 0.006, -0.02)],
+      [box(0.0025, 0.016, 0.07, 0.001), xform(0.0185, rx + 0.0, 0.03)],
+      // fire selector
+      [rcyl(0.007, 0.004, 0.0015, 16), xform(-0.017, rx - 0.03, 0.06, 0, 0, Math.PI / 2)],
+      // barrel, gas block, front sight post, flash hider
+      [rcyl(0.0095, 0.36, 0.002, 20), xform(0, bore, -0.33, 0, ALONG_Z)],
+      [box(0.03, 0.03, 0.035, 0.005), xform(0, bore + 0.008, -0.36)],
+      [box(0.004, 0.035, 0.004, 0.001), xform(0, bore + 0.035, -0.36)],
+      [rcyl(0.0125, 0.06, 0.003, 20), xform(0, bore, -0.535, 0, ALONG_Z)],
+      ...Array.from({ length: 4 }, (_, i) => [box(0.003, 0.026, 0.035, 0), xform(0, bore, -0.55, 0, 0, i * Math.PI / 4)]),
+      // rail handguard (quad rail with heat shield look)
+      [box(0.046, 0.046, 0.25, 0.008), xform(0, bore - 0.004, -0.205)],
+      ...Array.from({ length: 13 }, (_, i) => [box(0.05, 0.006, 0.008, 0.001), xform(0, bore + 0.02, -0.095 - i * 0.018)]),
+      ...Array.from({ length: 13 }, (_, i) => [box(0.006, 0.05, 0.008, 0.001), xform(0.024, bore - 0.004, -0.095 - i * 0.018)]),
+      ...Array.from({ length: 13 }, (_, i) => [box(0.006, 0.05, 0.008, 0.001), xform(-0.024, bore - 0.004, -0.095 - i * 0.018)]),
+      // telescopic stock tube + latch
+      [rcyl(0.014, 0.14, 0.003, 20), xform(0, rx - 0.008, 0.17, 0, ALONG_Z)],
+      [box(0.012, 0.016, 0.03, 0.003), xform(0, rx - 0.028, 0.12)],
+      // Aimpoint-style red dot: 30 mm tube, objective/ocular bells, turrets, flip caps, QR mount
+      [rcyl(0.0165, 0.1, 0.003, 32), xform(0, 0, -0.03, 0, ALONG_Z)],
+      [rcyl(0.019, 0.022, 0.004, 32), xform(0, 0, -0.085, 0, ALONG_Z)],
+      [rcyl(0.019, 0.022, 0.004, 32), xform(0, 0, 0.025, 0, ALONG_Z)],
+      [rcyl(0.009, 0.014, 0.002, 20), xform(0, 0.02, -0.035)],
+      [rcyl(0.009, 0.014, 0.002, 20), xform(0.02, 0, -0.035, 0, 0, Math.PI / 2)],
+      [rcyl(0.007, 0.012, 0.002, 16), xform(-0.019, 0, -0.035, 0, 0, Math.PI / 2)],
+      [box(0.03, 0.03, 0.05, 0.005), xform(0, -0.026, -0.03)],
+      [box(0.038, 0.01, 0.05, 0.003), xform(0, rail + 0.004, -0.03)],
+      [rcyl(0.0045, 0.024, 0.0015, 12), xform(0.024, rail + 0.0055, -0.03, 0, 0, Math.PI / 2)],
+    ], steel);
+    // flip-up lens covers (open), polymer
+    add([
+      [box(0.036, 0.004, 0.034, 0.0015), xform(0, 0.022, -0.1, 0, 0.0, 0).multiply(xform(0, 0.017, 0, 0, -1.2))],
+      [box(0.036, 0.004, 0.034, 0.0015), xform(0, -0.022, 0.04, 0, 0).multiply(xform(0, -0.017, 0, 0, -1.25))],
+      // pistol grip with finger grooves (approximated with two bevelled blocks)
+      [box(0.03, 0.1, 0.045, 0.01), xform(0, rx - 0.09, 0.045, 0, 0.3)],
+      [box(0.031, 0.03, 0.04, 0.009), xform(0, rx - 0.15, 0.072, 0, 0.3)],
+      // collapsible buttstock
+      [box(0.04, 0.075, 0.12, 0.012), xform(0, rx - 0.018, 0.25)],
+      [box(0.044, 0.11, 0.025, 0.01), xform(0, rx - 0.03, 0.31)],
+      [box(0.02, 0.04, 0.09, 0.008), xform(0, rx + 0.025, 0.25)],
+    ], poly);
+    // sling (khaki webbing) from the front sling swivel down out of view
+    add([[box(0.03, 0.003, 0.3, 0.0012), xform(-0.03, bore - 0.04, -0.06, 0.15, 0.9)], [box(0.032, 0.012, 0.035, 0.004), xform(-0.025, bore - 0.02, -0.2)]], webbing);
+    // red-dot lens and reticle
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.016, 32), new THREE.MeshPhysicalMaterial({ color: 0x3a4a52, roughness: 0.02, metalness: 0.0, transparent: true, opacity: 0.22, envMapIntensity: 2 }));
+    lens.position.set(0, 0, -0.078); this.gun.add(lens);
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.00075, 16), new THREE.MeshBasicMaterial({ color: new THREE.Color(12, 0.3, 0.2), toneMapped: false }));
+    dot.position.set(0, 0, -0.077); this.gun.add(dot);
     this.dot = dot;
-    // magazine (separate so the reload can animate it)
+
+    // STANAG magazine (separate for the reload) – slight curve
     this.mag = new THREE.Group();
-    this.mag.add(mesh([
-      [box(0.026, 0.09, 0.062), xform(0, -0.045, 0, 0, 0.0)],
-      [box(0.026, 0.07, 0.06), xform(0, -0.11, -0.01, 0, 0.22)],
-      [box(0.03, 0.012, 0.07), xform(0, -0.148, -0.022, 0, 0.22)],
-    ], poly));
-    this.mag.position.set(rx, ry - 0.07, -0.068);
+    this.mag.add(new THREE.Mesh(M([
+      [box(0.022, 0.07, 0.062, 0.004), xform(0, -0.035, 0)],
+      [box(0.022, 0.07, 0.06, 0.004), xform(0, -0.1, -0.008, 0, 0.14)],
+      [box(0.026, 0.012, 0.066, 0.004), xform(0, -0.138, -0.016, 0, 0.18)],
+    ]), steel));
+    this.mag.position.set(0, rx - 0.07, -0.062);
     this.magHome = this.mag.position.clone();
     this.gun.add(this.mag);
 
-    // ---- hands & forearms (gun space) ----
-    const fingers = (x, y, z, curl, side) => {
-      const g = [];
-      for (let i = 0; i < 4; i++) g.push([box(0.017, 0.019, 0.05), xform(x + side * 0.004, y - 0.012 - i * 0.019, z, 0, 0, 0).multiply(xform(0, 0, 0, side * curl))]);
-      return g;
-    };
-    // right hand wraps the pistol grip, forearm runs back/down/right to the elbow off-screen
-    const gripP = [0.004, ry - 0.09, 0.05];
+    // ---- right hand on the pistol grip, forearm back to the elbow ----
     const right = new THREE.Group();
-    right.add(mesh([
-      [box(0.05, 0.085, 0.07), xform(gripP[0] + 0.022, gripP[1], gripP[2] + 0.005, 0, 0.32)],   // palm around grip
-      ...fingers(gripP[0] - 0.012, gripP[1] + 0.03, gripP[2] - 0.035, 0.3, -1),
-      [box(0.02, 0.022, 0.055), xform(gripP[0] - 0.02, gripP[1] + 0.045, gripP[2] - 0.0, 0.4)],     // thumb over the selector
-    ], glove));
-    right.add(mesh([[tube([gripP[0] + 0.035, gripP[1] - 0.02, gripP[2] + 0.04], [0.15, gripP[1] - 0.2, 0.36], 0.038, 12)]], sleeve));
-    right.add(mesh([[tube([0.15, gripP[1] - 0.2, 0.36], [0.2, gripP[1] - 0.26, 0.55], 0.05, 12)]], sleeve));
+    const g = [0.0, rx - 0.1, 0.05];
+    right.add(new THREE.Mesh(M([
+      [box(0.052, 0.06, 0.085, 0.022), xform(g[0] + 0.026, g[1] + 0.005, g[2] + 0.012, 0, 0.3)],              // back of hand
+      ...[0, 1, 2, 3].map(i => [box(0.024, 0.02, 0.05, 0.009), xform(g[0] - 0.004, g[1] + 0.03 - i * 0.021, g[2] - 0.028 + i * 0.006, 0.0, 0.3)]), // fingers wrapped round the grip
+      [box(0.022, 0.024, 0.06, 0.01), xform(g[0] - 0.012, g[1] + 0.05, g[2] + 0.01, 0.35, 0.1)],                 // thumb
+      [box(0.02, 0.018, 0.04, 0.008), xform(g[0] - 0.006, g[1] + 0.045, g[2] - 0.035, 0, 0.1)],                 // trigger finger along the receiver
+    ]), glove));
+    right.add(new THREE.Mesh(limbGeo([g[0] + 0.03, g[1] - 0.005, g[2] + 0.05], [0.16, g[1] - 0.17, 0.42], 0.034, 0.048), sleeve));
+    right.add(new THREE.Mesh(limbGeo([0.035, g[1] - 0.012, g[2] + 0.075], [0.04, g[1] - 0.02, g[2] + 0.11], 0.033, 0.036), glove)); // glove cuff
     this.gun.add(right);
-    // left hand under the handguard (C-clamp), forearm angles down-left
-    const hgP = [0.0, ry - 0.035, -0.31];
+    // ---- left hand: C-clamp on the handguard, thumb over the top ----
     const left = new THREE.Group();
-    left.add(mesh([
-      [box(0.03, 0.07, 0.085), xform(hgP[0] - 0.03, hgP[1] - 0.005, hgP[2], 0, 0, 0.25)],          // palm on the left side
-      [box(0.07, 0.022, 0.08), xform(hgP[0] - 0.005, hgP[1] - 0.04, hgP[2])],                    // fingers under
-      [box(0.022, 0.05, 0.075), xform(hgP[0] + 0.03, hgP[1] - 0.012, hgP[2], 0, 0, -0.2)],         // fingertips right side
-      [box(0.02, 0.02, 0.06), xform(hgP[0] - 0.015, hgP[1] + 0.03, hgP[2] - 0.03, 0.3)],          // thumb on top
-    ], glove));
-    left.add(mesh([[tube([hgP[0] - 0.04, hgP[1] - 0.04, hgP[2] + 0.03], [-0.17, hgP[1] - 0.24, -0.05], 0.036, 12)]], sleeve));
-    left.add(mesh([[tube([-0.17, hgP[1] - 0.24, -0.05], [-0.24, hgP[1] - 0.36, 0.25], 0.05, 12)]], sleeve));
+    const h = [0.0, bore - 0.004, -0.27];
+    left.add(new THREE.Mesh(M([
+      [box(0.03, 0.062, 0.09, 0.012), xform(h[0] - 0.035, h[1] - 0.006, h[2], 0, 0, 0.22)],                  // palm, left side
+      ...[0, 1, 2, 3].map(i => [box(0.05, 0.02, 0.022, 0.009), xform(h[0] + 0.002, h[1] - 0.035, h[2] - 0.03 + i * 0.021, 0, 0, -0.15)]), // fingers under
+      ...[0, 1, 2, 3].map(i => [box(0.016, 0.03, 0.02, 0.007), xform(h[0] + 0.03, h[1] - 0.016, h[2] - 0.03 + i * 0.021)]),           // fingertips right side
+      [box(0.024, 0.02, 0.06, 0.009), xform(h[0] - 0.012, h[1] + 0.03, h[2] - 0.035, 0.15)],                        // thumb on top
+    ]), glove));
+    left.add(new THREE.Mesh(limbGeo([h[0] - 0.045, h[1] - 0.03, h[2] + 0.04], [-0.2, h[1] - 0.21, 0.06], 0.033, 0.047), sleeve));
     this.leftHand = left; this.leftHome = left.position.clone();
     this.gun.add(left);
-    this.gun.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+    this.gun.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; o.frustumCulled = false; } });
 
-    // ---- muzzle flash ----
+    // ---- muzzle flash (cross + star sprites, randomised per shot) ----
     const fc = document.createElement('canvas'); fc.width = fc.height = 128;
-    const g = fc.getContext('2d');
-    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-    gr.addColorStop(0, 'rgba(255,250,220,1)'); gr.addColorStop(0.25, 'rgba(255,190,90,0.8)'); gr.addColorStop(1, 'rgba(255,120,20,0)');
-    g.fillStyle = gr;
-    for (let i = 0; i < 5; i++) { g.save(); g.translate(64, 64); g.rotate(i * Math.PI * 2 / 5); g.beginPath(); g.ellipse(0, -22, 9, 30, 0, 0, Math.PI * 2); g.fill(); g.restore(); }
-    g.beginPath(); g.arc(64, 64, 26, 0, Math.PI * 2); g.fill();
-    const ft = new THREE.CanvasTexture(fc);
-    const flashMat = new THREE.MeshBasicMaterial({ map: ft, color: new THREE.Color(4, 3, 2), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const c2 = fc.getContext('2d');
+    const gr = c2.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(255,250,225,1)'); gr.addColorStop(0.2, 'rgba(255,200,110,0.85)'); gr.addColorStop(1, 'rgba(255,120,20,0)');
+    c2.fillStyle = gr;
+    for (let i = 0; i < 4; i++) { c2.save(); c2.translate(64, 64); c2.rotate(i * Math.PI / 2 + 0.3); c2.beginPath(); c2.ellipse(0, -26, 7, 30, 0, 0, Math.PI * 2); c2.fill(); c2.restore(); }
+    c2.beginPath(); c2.arc(64, 64, 20, 0, Math.PI * 2); c2.fill();
+    const flashMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(fc), color: new THREE.Color(5, 3.6, 2.4), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: true });
     this.flash = new THREE.Group();
-    const f1 = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.16), flashMat); this.flash.add(f1);
-    const f2 = new THREE.Mesh(new THREE.PlaneGeometry(0.07, 0.24), flashMat); f2.rotation.y = Math.PI / 2; f2.position.z = -0.08; this.flash.add(f2);
+    const f1 = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.13), flashMat); this.flash.add(f1);
+    const f2 = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.2), flashMat); f2.rotation.y = Math.PI / 2; f2.position.z = -0.07; this.flash.add(f2);
     const f3 = f2.clone(); f3.rotation.set(0, Math.PI / 2, Math.PI / 2); this.flash.add(f3);
-    this.flash.position.set(rx, ry + 0.005, -0.64);
+    this.flash.position.set(0, bore, -0.58);
     this.flash.visible = false;
     this.gun.add(this.flash);
-    this.flashLight = new THREE.PointLight(0xffb060, 0, 4, 2);
-    this.flashLight.position.set(0, ry, -0.65); this.gun.add(this.flashLight);
+    this.flashLight = new THREE.PointLight(0xffb060, 0, 3, 2);
+    this.flashLight.position.set(0, bore, -0.6); this.gun.add(this.flashLight);
 
-    // weapon-scene lighting (follows world light conditions)
-    this.hemi = new THREE.HemisphereLight(0x4a5866, 0x0c0b0a, 0.6); scene.add(this.hemi);
-    this.key = new THREE.DirectionalLight(0xffc28a, 1.5); this.key.position.set(0.6, 1, 0.2); scene.add(this.key);
-    this.rim = new THREE.DirectionalLight(0x9fb8d6, 0.6); this.rim.position.set(-0.8, 0.4, -0.6); scene.add(this.rim);
+    // viewmodel lighting follows the light conditions where the player stands
+    this.hemi = new THREE.HemisphereLight(0x3d4a56, 0x0c0b0a, 0.5); scene.add(this.hemi);
+    this.key = new THREE.DirectionalLight(0xffc28a, 1.0); this.key.position.set(0.5, 1, 0.4); scene.add(this.key);
+    this.rim = new THREE.DirectionalLight(0x9fb8d6, 0.35); this.rim.position.set(-0.8, 0.4, -0.6); scene.add(this.rim);
 
-    // animation state
     this.ads = 0; this.recoil = 0; this.recoilV = 0; this.kickRot = 0; this.swayX = 0; this.swayY = 0; this.flashT = 0; this.sprint = 0;
-    this.hip = new THREE.Vector3(0.105, -0.108, -0.2);
-    this.aim = new THREE.Vector3(0, -0.008, -0.13);
+    // hip: low right; ADS: red-dot centred on the camera axis, tube ~9 cm in front of the eye
+    this.hip = new THREE.Vector3(0.1, -0.1, -0.16);
+    this.aim = new THREE.Vector3(0, 0, -0.165);
   }
 
   fire() {
     this.recoilV += 0.9;
-    this.kickRot += 0.05 + Math.random() * 0.02;
-    this.flashT = 0.045;
+    this.kickRot += 0.045 + Math.random() * 0.02;
+    this.flashT = 0.04;
     this.flash.rotation.z = Math.random() * Math.PI * 2;
-    this.flash.scale.setScalar(0.8 + Math.random() * 0.5);
+    this.flash.scale.setScalar(0.75 + Math.random() * 0.5);
   }
 
   update(dt, s) {
-    // s: {ads, bob, run, moving, lookDX, lookDY, reloading (0..1 progress or -1), time, lightLevel, lightColor}
     this.ads += ((s.ads ? 1 : 0) - this.ads) * Math.min(1, dt * 12);
     this.sprint += ((s.sprinting ? 1 : 0) - this.sprint) * Math.min(1, dt * 8);
-    // recoil spring-damper
     this.recoilV += (-this.recoil * 380 - this.recoilV * 24) * dt;
     this.recoil += this.recoilV * dt;
     this.kickRot *= Math.exp(-dt * 14);
-    // sway lags behind look input
-    this.swayX += (-s.lookDX * 0.0006 - this.swayX) * Math.min(1, dt * 9);
-    this.swayY += (s.lookDY * 0.0006 - this.swayY) * Math.min(1, dt * 9);
+    this.swayX += (-s.lookDX * 0.0005 - this.swayX) * Math.min(1, dt * 9);
+    this.swayY += (s.lookDY * 0.0005 - this.swayY) * Math.min(1, dt * 9);
     const a = this.ads, steady = 1 - a * 0.85;
-    const bobX = Math.sin(s.bob) * 0.012 * (s.moving ? 1 : 0.15) * steady;
-    const bobY = Math.abs(Math.cos(s.bob)) * 0.01 * (s.moving ? 1 : 0.15) * steady;
-    const breathe = Math.sin(s.time * 1.3) * 0.0016 * steady;
+    const bobX = Math.sin(s.bob) * 0.011 * (s.moving ? 1 : 0.15) * steady;
+    const bobY = Math.abs(Math.cos(s.bob)) * 0.009 * (s.moving ? 1 : 0.15) * steady;
+    const breathe = Math.sin(s.time * 1.3) * 0.0012 * steady;
     const p = this.hip.clone().lerp(this.aim, a);
-    this.gun.position.set(p.x + bobX + this.swayX, p.y - bobY + breathe + this.swayY, p.z + this.recoil * 0.035);
-    this.gun.rotation.set(this.kickRot * (1 - a * 0.5) + this.swayY * 4 - this.sprint * 0.55, this.swayX * 3 + this.sprint * 0.6, -bobX * 2 - this.sprint * 0.35);
-    this.gun.position.x += this.sprint * -0.02; this.gun.position.y -= this.sprint * 0.04;
-    // reload: tilt the gun, drop the mag, bring a fresh one in with the support hand
+    this.gun.position.set(p.x + bobX + this.swayX * steady, p.y - bobY + breathe + this.swayY * steady, p.z + this.recoil * 0.03);
+    this.gun.rotation.set(this.kickRot * (1 - a * 0.6) + this.swayY * 3 * steady - this.sprint * 0.5, this.swayX * 3 * steady + this.sprint * 0.55 + (1 - a) * 0.04, -bobX * 2 - this.sprint * 0.3 - (1 - a) * 0.05);
+    this.gun.position.x -= this.sprint * 0.02; this.gun.position.y -= this.sprint * 0.035;
     const r = s.reloading;
     if (r >= 0) {
       const tilt = Math.sin(Math.min(1, r * 1.15) * Math.PI);
-      this.gun.rotation.z += tilt * 0.55; this.gun.rotation.x += tilt * 0.18; this.gun.position.y -= tilt * 0.03;
+      this.gun.rotation.z += tilt * 0.5; this.gun.rotation.x += tilt * 0.15; this.gun.position.y -= tilt * 0.03;
       let my = 0, mz = 0;
-      if (r < 0.3) { my = -(r / 0.3) * 0.35; }
+      if (r < 0.3) my = -(r / 0.3) * 0.35;
       else if (r < 0.55) { my = -0.35 + ((r - 0.3) / 0.25) * 0.33; mz = 0.02; }
-      else if (r < 0.65) { my = -0.02 + ((r - 0.55) / 0.1) * 0.02; }
+      else if (r < 0.65) my = -0.02 + ((r - 0.55) / 0.1) * 0.02;
       this.mag.position.set(this.magHome.x, this.magHome.y + my, this.magHome.z + mz);
       this.mag.visible = !(r > 0.27 && r < 0.33);
-      this.leftHand.position.set(this.leftHome.x, this.leftHome.y + (r > 0.2 && r < 0.68 ? Math.max(my, -0.3) - 0.02 : 0), this.leftHome.z + (r > 0.2 && r < 0.68 ? 0.24 : 0));
+      const reach = r > 0.2 && r < 0.68;
+      this.leftHand.position.set(this.leftHome.x, this.leftHome.y + (reach ? Math.max(my, -0.3) - 0.02 : 0), this.leftHome.z + (reach ? 0.21 : 0));
     } else {
       this.mag.position.copy(this.magHome); this.mag.visible = true; this.leftHand.position.copy(this.leftHome);
     }
-    // flash
     this.flashT -= dt;
     this.flash.visible = this.flashT > 0;
-    this.flashLight.intensity = this.flashT > 0 ? 6 : 0;
-    // light the weapon like the world around the player
-    this.key.intensity = 0.35 + s.lightLevel * 2.2;
+    this.flashLight.intensity = this.flashT > 0 ? 4 : 0;
+    this.key.intensity = 0.25 + Math.min(1.2, s.lightLevel) * 1.4;
     this.key.color.copy(s.lightColor);
     this.dot.visible = a > 0.3;
   }

@@ -169,8 +169,8 @@ export function buildLevel(scene, quality) {
   }
   // water-filled safety barriers along the pier head & east edge (visual reason for the bounds)
   const barrier = merged([[box(1.9, 0.75, 0.46, 0.12), xform(0, 0.375, 0)], [box(1.6, 0.24, 0.3, 0.1), xform(0, 0.84, 0)], [box(0.5, 0.08, 0.06, 0.03), xform(-0.5, 0.97, 0)]]);
-  const barrierMat = plainMat(0xb3361f, 0.45, 0, { wet: 'surface' });
-  const barrierWhite = plainMat(0xc8c8c0, 0.45, 0, { wet: 'surface' });
+  const barrierMat = plainMat(0x8c2a18, 0.5, 0, { wet: 'surface' });
+  const barrierWhite = plainMat(0x8e8d86, 0.5, 0, { wet: 'surface' });
   let flip = 0;
   for (let x = -33; x < 34; x += 2.0) { if (Math.abs(x - EXTRACT.x) < 0.1) continue; B.add(flip++ % 2 ? barrierMat : barrierWhite, barrier, xform(x, 0, 33.0)); }
   for (let z = 30; z > -84; z -= 2.0) B.add(flip++ % 2 ? barrierMat : barrierWhite, barrier, xform(35.4, 0, z, Math.PI / 2));

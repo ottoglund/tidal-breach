@@ -377,6 +377,101 @@ def fabric(name, c1, n=512, seed=151):
 
 
 # ---------------------------------------------------------------------------
+# Camouflage textiles. Colour references: Swedish M90 splinter pattern (player
+# side) and a Russian digital-flora style pattern (opposing force). Patterns are
+# generated procedurally; no reference images are copied.
+# ---------------------------------------------------------------------------
+def weave_and_wear(n, r, base, weave_k=72, dirt=0.25, name='fabric', tile_note=''):
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
+    k = 2 * np.pi * weave_k / n
+    rip = (np.abs(((xs % (n / 24)) - 1)) < 1.2) | (np.abs(((ys % (n / 24)) - 1)) < 1.2)   # ripstop grid
+    weave = np.sin(xs * k) * np.sign(np.sin(ys * k / 2)) * 0.5 + np.sin(ys * k) * np.sign(np.sin(xs * k / 2)) * 0.5
+    fuzz = fbm(n, r, 1.0, lo=60)
+    mid = fbm(n, r, 2.4, lo=2, hi=30)
+    wear = smoothstep(0.8, 2.2, fbm(n, r, 2.2, lo=2, hi=60))   # faded / abraded areas
+    mud = smoothstep(1.0, 2.4, fbm(n, r, 2.6, lo=2, hi=40)) * dirt
+    alb = base * (0.9 + 0.05 * weave[..., None] + 0.05 * mid[..., None] * 0.4 + 0.03 * fuzz[..., None] * 0.3)
+    alb = alb * (1 - 0.02 * rip[..., None])
+    alb = lerp(alb, alb * 0.8 + 0.2 * np.array([0.42, 0.40, 0.33]), wear * 0.5)
+    alb = lerp(alb, col(n, '#3b3226'), mud)
+    h = weave * 0.3 + fuzz * 0.05 + rip * 0.08
+    rough = 0.88 - 0.1 * mud
+    save(name, alb, normal_from_height(h, 1.6), np.stack([ao_from_height(h, 2, 1), np.clip(rough, 0, 1), np.zeros_like(h)], -1))
+
+
+def camo_m90(n=1024, seed=181):
+    """Angular 'splinter' pattern: light olive ground with mid green, dark green and black shards."""
+    r = Rng(seed)
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
+    colors = [srgb('#7b7a55'), srgb('#56653a'), srgb('#36432a'), srgb('#1f211b')]
+    out = np.broadcast_to(colors[0], (n, n, 3)).copy()
+    # random convex polygons with straight edges and sharp angles, wrapped for tiling
+    for layer, (count, size) in enumerate([(26, 190), (22, 160), (20, 120)]):
+        c = colors[layer + 1]
+        for _ in range(count):
+            cx, cy = r.random() * n, r.random() * n
+            k = r.integers(4, 6)
+            ang = np.sort(r.random(k) * 2 * np.pi)
+            rad = size * (0.75 + r.random(k) * 0.4)
+            stretch = 0.6 + r.random() * 0.9
+            rot = r.random() * np.pi
+            px = cx + np.cos(ang + rot) * rad * stretch
+            py = cy + np.sin(ang + rot) * rad / stretch
+            for ox in (-n, 0, n):
+                for oy in (-n, 0, n):
+                    qx, qy = px + ox, py + oy
+                    if qx.max() < 0 or qx.min() > n or qy.max() < 0 or qy.min() > n:
+                        continue
+                    inside = np.ones((n, n), bool)
+                    for i in range(k):
+                        x0, y0, x1, y1 = qx[i], qy[i], qx[(i + 1) % k], qy[(i + 1) % k]
+                        inside &= ((x1 - x0) * (ys - y0) - (y1 - y0) * (xs - x0)) >= 0
+                    out[inside] = c
+    weave_and_wear(n, r, out, name='camo_m90', dirt=0.3)
+
+
+def camo_emr(n=1024, seed=191):
+    """Digital (pixelated) flora pattern: light grey-green ground, olive, brown and black pixel clusters."""
+    r = Rng(seed)
+    colors = [srgb('#878b6a'), srgb('#5c6542'), srgb('#57483a'), srgb('#25261f')]
+    px = 8  # pixel size in texels (~6 mm at 0.4 m tile); must divide n for tiling
+    m = n // px
+    base = np.broadcast_to(colors[0], (n, n, 3)).copy()
+    for layer, (thr, beta) in enumerate([(0.2, 2.4), (0.95, 2.6), (1.35, 2.8)]):
+        f = fbm(m, r, beta, lo=1.5, hi=m / 2.5)
+        mask = np.kron((f > thr).astype(np.float32), np.ones((px, px)))[:n, :n] > 0.5
+        base[mask] = colors[layer + 1]
+    weave_and_wear(n, r, base, name='camo_emr', dirt=0.35)
+
+
+def plain_fabric(name, hexcol, n=512, seed=201, dirt=0.2):
+    r = Rng(seed)
+    weave_and_wear(n, r, np.broadcast_to(srgb(hexcol), (n, n, 3)).copy(), name=name, dirt=dirt)
+
+
+# ---------------------------------------------------------------------------
+# Rifle furniture: AK wood (laminated birch, reddish lacquer) and plum polymer.
+# ---------------------------------------------------------------------------
+def ak_wood(n=512, seed=211):
+    r = Rng(seed)
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
+    grain = fbm(n, r, 1.8, lo=3, hi=300, aniso=(0.05, 1.0))
+    lam = np.sin((ys / n * 40 + grain * 0.6) * np.pi)  # laminate layers
+    alb = lerp(col(n, '#6b2f17'), col(n, '#8a4422'), np.clip(lam * 0.5 + 0.5, 0, 1)) * (0.9 + 0.1 * grain[..., None] * 0.3)
+    dings = lines_mask(n, r, 160, 10, 0.5)
+    alb = lerp(alb, col(n, '#c08a5a'), dings * 0.6)
+    h = grain * 0.05 - dings * 0.3
+    save('ak_wood', alb, normal_from_height(h, 2), np.stack([np.ones_like(h), np.clip(0.38 + 0.3 * dings, 0, 1), np.zeros_like(h)], -1))
+
+
+def plum_polymer(n=256, seed=221):
+    r = Rng(seed)
+    st = fbm(n, r, 0.8, lo=40)
+    alb = col(n, '#3a2622') * (0.92 + 0.08 * fbm(n, r, 2, lo=2, hi=20)[..., None] * 0.4)
+    save('plum_polymer', alb, normal_from_height(st * 0.2, 1.5), np.stack([np.ones_like(st), np.full_like(st, 0.6), np.zeros_like(st)], -1))
+
+
+# ---------------------------------------------------------------------------
 # Worn painted road marking (alpha in albedo luminance used as mask).
 # ---------------------------------------------------------------------------
 def marking(n=512, seed=161):
@@ -413,6 +508,13 @@ SETS = {
     'fabric_uniform': lambda: fabric('fabric_uniform', '#3d4540', seed=151),
     'fabric_vest': lambda: fabric('fabric_vest', '#2a2f2c', seed=152),
     'fabric_glove': lambda: fabric('fabric_glove', '#3a3632', seed=153),
+    'camo_m90': camo_m90, 'camo_emr': camo_emr,
+    'olive_knit': lambda: plain_fabric('olive_knit', '#4d4a33', seed=202),      # balaclava (player side)
+    'glove_green': lambda: plain_fabric('glove_green', '#46502f', seed=203),     # gloves (player side)
+    'khaki_webbing': lambda: plain_fabric('khaki_webbing', '#8a7c58', seed=204), # sling / belt
+    'ratnik_green': lambda: plain_fabric('ratnik_green', '#4c5236', seed=205),   # OPFOR vest / helmet cover
+    'boot_leather': lambda: plain_fabric('boot_leather', '#4a3b2a', seed=206, dirt=0.5),
+    'ak_wood': ak_wood, 'plum_polymer': plum_polymer,
 }
 
 if __name__ == '__main__':

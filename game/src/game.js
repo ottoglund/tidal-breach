@@ -48,7 +48,7 @@ export class Game {
 
   spawnEnemy(x, z, patrolR = 7) {
     let model = this.guardPool.find(g => !g.root.visible && !this.enemies.some(e => e.model === g));
-    if (!model) { model = createGuard(); model.root.rotation.order = 'YXZ'; this.scene.add(model.root); this.guardPool.push(model); }
+    if (!model) { model = createGuard(this.guardPool.length % 3 === 1 ? 'akm' : 'ak74'); model.root.rotation.order = 'YXZ'; this.scene.add(model.root); this.guardPool.push(model); }
     model.root.visible = true;
     this.enemies.push({ x, z, baseX: x, baseZ: z, angle: rr(-3.14, 3.14), alive: true, health: 100, alert: 0, cooldown: rr(0.8, 2.2), phase: rr(0, 10), walk: rr(0, 6), r: patrolR, flash: 0, deathAt: 0, hit: 0, speed: 0, aim: 0, fallDir: 1, model });
   }

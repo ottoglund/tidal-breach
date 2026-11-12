@@ -149,7 +149,7 @@ export function createWater(lamps, y = -2.2) {
 // Light shafts through rain: additive cones with soft edges, fading near the ground.
 // ---------------------------------------------------------------------------
 const CONE_VERT = /* glsl */`
-varying vec3 vN; varying vec3 vV; varying float vT; varying float vY;
+varying vec3 vN; varying vec3 vV; varying float vT; varying float vY; varying float vD;
 uniform float uLen;
 void main(){
   vec4 wp = modelMatrix * vec4(position, 1.0);
@@ -157,18 +157,20 @@ void main(){
   vT = clamp(-position.y / uLen + 0.5, 0.0, 1.0);
   vN = normalize(mat3(modelMatrix) * normal);
   vV = normalize(cameraPosition - wp.xyz);
+  vD = length(cameraPosition - wp.xyz);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 const CONE_FRAG = /* glsl */`
 uniform vec3 uColor; uniform float uTime; uniform float uStrength;
-varying vec3 vN; varying vec3 vV; varying float vT; varying float vY;
+varying vec3 vN; varying vec3 vV; varying float vT; varying float vY; varying float vD;
 float hsh(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 void main(){
   float edge = pow(abs(dot(normalize(vN), normalize(vV))), 2.2);
   float axial = (1.0 - vT); axial = axial * axial * 0.85 + 0.15 * (1.0 - vT);
   float ground = smoothstep(0.0, 3.0, vY);
   float flicker = 0.92 + 0.08 * hsh(vec2(floor(uTime * 30.0), vT));
-  float a = edge * axial * ground * flicker * uStrength;
+  float nearFade = smoothstep(2.0, 12.0, vD); // no milky wash when the camera stands inside a beam
+  float a = edge * axial * ground * flicker * uStrength * nearFade;
   gl_FragColor = vec4(uColor * a, 1.0);
 }`;
 

@@ -32,7 +32,12 @@ third-party imagery and can be regenerated bit-for-bit from the script
 | rubber | albedo, normal, orm | fenders, tyres, cables |
 | rope | albedo, normal, orm | mooring lines |
 | gunmetal, polymer | albedo, normal, orm | weapon |
-| fabric_uniform, fabric_vest, fabric_glove | albedo, normal, orm | guards, player sleeves/gloves |
+| fabric_uniform, fabric_vest, fabric_glove | albedo, normal, orm | spare plain textiles |
+| camo_m90 | albedo, normal, orm | player-side uniform; procedural splinter pattern in the colours of the Swedish M90 (no image copied) |
+| camo_emr | albedo, normal, orm | opposing-force uniform; procedural digital pattern in Russian-style flora colours (no image copied) |
+| olive_knit, glove_green, khaki_webbing | albedo, normal, orm | balaclava, gloves, sling |
+| ratnik_green, boot_leather | albedo, normal, orm | OPFOR vest/helmet cover, boots |
+| ak_wood, plum_polymer | albedo, normal, orm | AK furniture (laminated wood, plum polymer) |
 | water | normal | harbour water ripples |
 | puddles | mask | world-scale puddle / wetness distribution |
 | marking | mask | worn road-paint alpha |

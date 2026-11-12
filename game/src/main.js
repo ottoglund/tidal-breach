@@ -151,6 +151,7 @@ async function boot() {
         quality: quality.name,
         // capture mode: stop the realtime loop and render single frames on demand (slow software GPUs)
         hold: (on) => { hold = !!on; },
+        ads: (v) => { game.player.ads = v; weapon.ads = v; },
         renderFrame: (t = 10) => { const t0 = performance.now(); renderAt(t, 0.016); renderer.getContext().finish(); return performance.now() - t0; },
       }), configurable: false,
     });

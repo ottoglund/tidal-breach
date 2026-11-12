@@ -31,6 +31,15 @@ export const SETS = {
   fabric_uniform: { tile: 0.5, kind: 'dielectric' },
   fabric_vest: { tile: 0.5, kind: 'dielectric' },
   fabric_glove: { tile: 0.3, kind: 'dielectric' },
+  camo_m90: { tile: 0.45, kind: 'dielectric' },
+  camo_emr: { tile: 0.4, kind: 'dielectric' },
+  olive_knit: { tile: 0.2, kind: 'dielectric' },
+  glove_green: { tile: 0.15, kind: 'dielectric' },
+  khaki_webbing: { tile: 0.2, kind: 'dielectric' },
+  ratnik_green: { tile: 0.4, kind: 'dielectric' },
+  boot_leather: { tile: 0.3, kind: 'dielectric' },
+  ak_wood: { tile: 0.3, kind: 'dielectric' },
+  plum_polymer: { tile: 0.2, kind: 'dielectric' },
 };
 const SINGLE = ['water_normal', 'puddles_albedo', 'marking_albedo'];
 

@@ -1,6 +1,6 @@
 // Articulated guard model (~1.8 m) with procedural walk, aim, hit-flinch and death.
 import * as THREE from 'three';
-import { box, cyl, xform } from './geo.js';
+import { box, cyl, rcyl, xform } from './geo.js';
 import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -12,16 +12,58 @@ let shared = null;
 function materials() {
   if (shared) return shared;
   shared = {
-    uniform: mat('fabric_uniform', { tile: 0.4 }),
-    vest: mat('fabric_vest', { tile: 0.35 }),
+    uniform: mat('camo_emr', { tile: 0.42 }),
+    vest: mat('ratnik_green', { tile: 0.35 }),
     glove: mat('fabric_glove', { tile: 0.2 }),
-    boot: plainMat(0x141312, 0.55),
-    helmet: plainMat(0x2b302c, 0.6),
-    skin: plainMat(0x1d1f1e, 0.85), // balaclava
+    boot: plainMat(0x121211, 0.5),
+    helmet: mat('ratnik_green', { tile: 0.3 }),
+    skin: mat('olive_knit', { tile: 0.2, color: 0x6a6a5a }), // dark balaclava
     gun: mat('gunmetal'),
+    wood: mat('ak_wood', { tile: 0.3 }),
+    poly: mat('polymer', { tile: 0.25 }),
+    plum: mat('plum_polymer', { tile: 0.2 }),
     visor: new THREE.MeshStandardMaterial({ color: 0x050505, emissive: new THREE.Color(0.9, 0.25, 0.1), emissiveIntensity: 1.5, roughness: 0.2 }),
   };
   return shared;
+}
+
+// Kalashnikov family at real scale. Barrel toward -Z, origin near the magazine well.
+// variant 'ak74': AK-74M (black polymer, plum magazine, AK-74 muzzle brake)
+// variant 'akm' : AKM/AK-47 pattern (laminated wood furniture, slant brake, steel magazine)
+function kalashnikov(S, variant) {
+  const g = new THREE.Group();
+  const furn = variant === 'akm' ? S.wood : S.poly;
+  const magM = variant === 'akm' ? S.gun : S.plum;
+  const add = (list, m) => { const o = new THREE.Mesh(M(list), m); o.castShadow = true; g.add(o); };
+  const Z = Math.PI / 2;
+  add([
+    [box(0.046, 0.06, 0.25, 0.004), xform(0, 0, 0.02)],                 // stamped receiver
+    [box(0.042, 0.022, 0.23, 0.009), xform(0, 0.038, 0.03)],            // dust cover
+    ...[0, 1, 2].map(i => [box(0.044, 0.004, 0.006, 0.001), xform(0, 0.05, 0.13 - i * 0.012)]),
+    [box(0.03, 0.02, 0.06, 0.004), xform(0, 0.042, -0.12)],             // rear sight block
+    [box(0.026, 0.006, 0.08, 0.002), xform(0, 0.054, -0.11)],           // sight leaf
+    [rcyl(0.009, 0.27, 0.002, 16), xform(0, 0.0, -0.4, 0, Z)],         // barrel
+    [rcyl(0.011, 0.2, 0.002, 16), xform(0, 0.034, -0.27, 0, Z)],       // gas tube
+    [box(0.022, 0.06, 0.03, 0.004), xform(0, 0.02, -0.52)],             // front sight block
+    [box(0.004, 0.03, 0.004, 0.001), xform(0, 0.06, -0.52)],
+    [box(0.006, 0.02, 0.06, 0.002), xform(0.026, 0.005, 0.05)],         // selector lever
+    [box(0.012, 0.03, 0.06, 0.003), xform(0, -0.045, 0.06)],            // trigger guard
+    ...(variant === 'akm'
+      ? [[rcyl(0.011, 0.04, 0.003, 16), xform(0, 0.0, -0.555, 0, Z)]]    // slant brake
+      : [[rcyl(0.0135, 0.085, 0.004, 20), xform(0, 0.0, -0.575, 0, Z)], [box(0.03, 0.006, 0.012, 0.002), xform(0, 0.0, -0.56)]]),
+  ], S.gun);
+  add([
+    [box(0.056, 0.05, 0.2, 0.012), xform(0, -0.006, -0.27)],            // lower handguard
+    [box(0.04, 0.028, 0.17, 0.01), xform(0, 0.036, -0.26)],             // upper handguard over the gas tube
+    [box(0.032, 0.095, 0.042, 0.01), xform(0, -0.075, 0.1, 0, 0.32)],   // pistol grip
+    [box(0.042, 0.06, 0.24, 0.012), xform(0, -0.02, 0.27, 0, -0.08)],   // stock
+    [box(0.046, 0.13, 0.03, 0.012), xform(0, -0.05, 0.39, 0, -0.08)],   // butt
+  ], furn);
+  // curved 30-round magazine: segments rotated progressively
+  const segs = [];
+  for (let i = 0; i < 5; i++) segs.push([box(0.028, 0.045, 0.07 - i * 0.002, 0.005), xform(0, -0.05 - i * 0.04, -0.07 - i * i * 0.007, 0, 0.12 + i * 0.12)]);
+  add(segs, magM);
+  return g;
 }
 
 // Tapered capsule along -Y from the joint (smooth, organic limb shape).
@@ -49,7 +91,7 @@ function limb(len, r0, r1, material) {
   return g;
 }
 
-export function createGuard() {
+export function createGuard(variant = 'ak74') {
   const S = materials();
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body); // pelvis pivot
@@ -90,14 +132,13 @@ export function createGuard() {
   };
   const legR = leg(1), legL = leg(-1);
   // rifle held across the body
-  const rifle = new THREE.Group();
-  add(rifle, M([[box(0.05, 0.08, 0.5), xform(0, 0, 0)], [cyl(0.012, 0.012, 0.3, 8), xform(0, 0.01, -0.4, 0, Math.PI / 2)], [box(0.04, 0.12, 0.05), xform(0, -0.09, -0.06, 0, 0.2)], [box(0.045, 0.08, 0.2), xform(0, -0.02, 0.32)], [box(0.035, 0.05, 0.035), xform(0, -0.09, 0.08, 0, 0.3)]]), S.gun);
+  const rifle = kalashnikov(S, variant);
   rifle.position.set(0.08, 0.32, -0.28);
   torso.add(rifle);
   // muzzle flash
-  const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.02, -0.6); rifle.add(flash);
+  const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.0, -0.66); rifle.add(flash);
   const fl = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.5, 1.5) }));
-  fl.position.set(0, 0.02, -0.6); fl.visible = false; rifle.add(fl);
+  fl.position.set(0, 0.0, -0.66); fl.visible = false; rifle.add(fl);
   root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
   return { root, body, torso, head, armR, armL, legR, legL, rifle, flash, flashMesh: fl };
 }
