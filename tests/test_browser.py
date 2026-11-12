@@ -4,6 +4,9 @@ The QA interface only moves the player and invokes original gameplay actions;
 this is not a replacement for manual desktop/mobile playthroughs.
 """
 from contextlib import contextmanager
+import os
+from subprocess import run
+import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -15,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @contextmanager
-def serve():
+def serve(directory=ROOT):
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(ROOT), **kwargs)
+            super().__init__(*args, directory=str(directory), **kwargs)
 
         def log_message(self, *args):
             return
@@ -47,9 +50,19 @@ def browser():
             b.close()
 
 
-@pytest.fixture
-def game(browser):
-    with serve() as url:
+@pytest.fixture(scope="session")
+def previews(tmp_path_factory):
+    output = tmp_path_factory.mktemp("quay-preview")
+    run([sys.executable, str(ROOT / "tools/build_quay_preview.py"), str(output)], check=True)
+    return output
+
+
+@pytest.fixture(params=["baseline", "quay"])
+def game(browser, request, previews):
+    preview = request.param == "quay"
+    with serve(previews if preview else ROOT) as url:
+        if preview:
+            url = url.replace("/?qa=1", "/quay.html?qa=1")
         # A touch-enabled headless context avoids pointer-lock permissions.
         context = browser.new_context(
             viewport={"width": 1280, "height": 720},
@@ -130,3 +143,32 @@ def test_damage_to_failure(game):
     assert state(page)["mode"] == "end"
     assert "FAILED" in page.locator("#endTitle").inner_text()
     assert not errors
+
+
+
+@pytest.mark.parametrize("viewport,touch", [((1280, 720), False), ((844, 390), True)])
+def test_quay_reference_renders(browser, previews, tmp_path, viewport, touch):
+    width, height = viewport
+    capture_dir = Path(os.environ.get("TIDAL_CAPTURES", tmp_path))
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    with serve(previews) as url:
+        context = browser.new_context(
+            viewport={"width": width, "height": height}, has_touch=touch
+        )
+        try:
+            page = context.new_page()
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("console", lambda message: errors.append(message.text)
+                    if message.type == "error" else None)
+            captures = []
+            for variant in ("baseline", "quay"):
+                page.goto(url.replace("/?qa=1", f"/{variant}.html?qa=1&reference=1"))
+                page.wait_for_function("""window.__TIDAL_QA__ &&
+                    getComputedStyle(document.querySelector('#menu')).display === 'none'""")
+                page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                captures.append(page.screenshot(path=capture_dir / f"{width}x{height}-{variant}.png"))
+            assert not errors
+            assert captures[0] != captures[1]
+        finally:
+            context.close()
