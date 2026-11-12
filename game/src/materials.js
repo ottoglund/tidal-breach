@@ -132,6 +132,7 @@ float wetHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453
 `;
 
 const WET_GROUND_DECL = /* glsl */`
+uniform sampler2D tYard;
 uniform sampler2D tRefl;
 uniform mat4 uReflMatrix;
 uniform float uReflOn;
@@ -156,44 +157,122 @@ vec2 rainRipple(vec2 p, float t){
 }
 `;
 
-function addWet(material, mode, ground) {
-  if (mode === 'none') return;
+// Specular anti-aliasing (Toksvig): mip-filtered normal maps get shorter where the
+// detail they averaged was bumpy; widen the GGX lobe accordingly so fine aggregate,
+// weave and scratches do not sparkle at a distance. Puddles (tbKeep) are exempt.
+const TOKSVIG = /* glsl */`
+  {
+    float tbLen = max(length(mapN), 1e-3);
+    float tbVar = max((1.0 - tbLen) / tbLen - 0.004, 0.0) * dot(normalScale, normalScale) * 0.5;
+    float tbA = roughnessFactor * roughnessFactor;
+    float tbR = sqrt(sqrt(min(tbA * tbA + 2.0 * tbVar, 1.0)));
+    roughnessFactor = mix(tbR, roughnessFactor, tbKeep);
+  }
+  mapN.xy *= normalScale;`;
+
+// Container paint: per-instance, per-1.5 m-band horizontal shift (and mirror) of the
+// 3 m paint tile. Bands follow the vertical corrugation so the cut is not noticed;
+// textureGrad keeps the mip level continuous across band edges.
+const CONTAINER_UV = /* glsl */`
+varying float vTbSeed;
+vec2 tbUv(vec2 uv) {
+  float bw = 0.5;                                  // band width in u (= 1.5 m)
+  float band = floor(uv.x / bw + vTbSeed * 13.0);
+  float h = wetHash(vec2(band, vTbSeed * 71.3));
+  float fl = step(0.5, wetHash(vec2(band + 3.7, vTbSeed * 17.9)));
+  float c = (band - vTbSeed * 13.0 + 0.5) * bw;   // band centre in u
+  float u = mix(uv.x, 2.0 * c - uv.x, fl) + floor(h * 6.0) / 6.0;
+  return vec2(u, uv.y);
+}
+`;
+const TB_SAMPLE = /texture2D\(\s*(map|normalMap|roughnessMap|metalnessMap|aoMap),\s*(vMapUv|vNormalMapUv|vRoughnessMapUv|vMetalnessMapUv|vAoMapUv)\s*\)/g;
+const tbVar = (chunk) => chunk.replace(TB_SAMPLE, 'textureGrad($1, tbUv($2), dFdx($2), dFdy($2))');
+
+function addWet(material, mode, ground, macro) {
+  const wetOn = mode !== 'none';
   const isGround = mode === 'ground';
+  const yard = isGround && macro === 'yard';
+  const cont = macro === 'container';
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, WET);
-    if (isGround) shader.defines = { ...(shader.defines || {}), WET_GROUND: '' };
-    if (ground) shader.defines = { ...(shader.defines || {}), ORM_HEIGHT: '' };
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWetPos;\nvarying vec3 vWetN;')
-      .replace('#include <fog_vertex>', `#include <fog_vertex>
+    const defs = { ...(shader.defines || {}) };
+    if (isGround) defs.WET_GROUND = '';
+    if (ground) defs.ORM_HEIGHT = '';
+    if (yard) defs.YARD_MACRO = '';
+    shader.defines = defs;
+    let vs = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWetPos;\nvarying vec3 vWetN;' + (cont ? '\nvarying float vTbSeed;' : ''));
+    vs = vs.replace('#include <fog_vertex>', `#include <fog_vertex>
       {
         vec4 wp = vec4(transformed, 1.0);
         vec3 on = objectNormal;
+        vec3 seedP = modelMatrix[3].xyz;
         #ifdef USE_INSTANCING
           wp = instanceMatrix * wp; on = mat3(instanceMatrix) * on;
+          seedP += instanceMatrix[3].xyz;
         #endif
         wp = modelMatrix * wp; vWetPos = wp.xyz;
         vWetN = normalize(mat3(modelMatrix) * on);
+        ${cont ? 'vTbSeed = fract(sin(dot(seedP, vec3(12.9898, 78.233, 37.719))) * 43758.5453);' : ''}
       }`);
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\n' + WET_COMMON + (isGround ? WET_GROUND_DECL : ''))
-      .replace('#include <map_fragment>', isGround ? `
+    shader.vertexShader = vs;
+
+    const C = THREE.ShaderChunk;
+    let mapChunk = cont ? tbVar(C.map_fragment) : '#include <map_fragment>';
+    if (isGround) mapChunk = `
       // stochastic two-sample blend breaks up visible texture tiling on large ground areas
       float wBlend = smoothstep(0.38, 0.62, texture2D(tPuddle, vWetPos.xz / 17.0 + 0.5).r);
       vec2 wUv2 = mat2(0.8, -0.6, 0.6, 0.8) * vMapUv * 0.71 + 0.31;
       #ifdef USE_MAP
         diffuseColor *= mix(texture2D(map, vMapUv), texture2D(map, wUv2), wBlend);
       #endif
-      ` : '#include <map_fragment>')
-      .replace('#include <normal_fragment_maps>', isGround
-        ? THREE.ShaderChunk.normal_fragment_maps.replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
-          'vec3 mapN = mix(texture2D( normalMap, vNormalMapUv ).xyz, texture2D( normalMap, mat2(0.8, -0.6, 0.6, 0.8) * vNormalMapUv * 0.71 + 0.31 ).xyz, wBlend) * 2.0 - 1.0;')
-        : '#include <normal_fragment_maps>')
-      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+      // world-scale tone so neighbouring 4 m tiles never match exactly
+      diffuseColor.rgb *= 0.9 + 0.2 * texture2D(tPuddle, vWetPos.xz / 31.0 + 0.13).r;
+      #ifdef YARD_MACRO
+        // repairs, sealed cracks, big stains, wheel paths, ghosted markings (64 m mask)
+        vec3 ym = texture2D(tYard, vWetPos.xz / 64.0 + 0.5).rgb;
+        float yPw = max(fwidth(ym.r), 1e-3);
+        float yPatch = smoothstep(0.5 - yPw, 0.5 + yPw, ym.r);
+        float ySw = max(fwidth(ym.b), 1e-3);
+        float ySeal = smoothstep(0.5 - ySw, 0.5 + ySw, ym.b);
+        float yTone = (ym.g - 0.5) * 2.0;
+        float yEdge = (1.0 - smoothstep(0.0, 0.025 + 2.0 * yPw, abs(ym.r - 0.5))) * step(0.004, ym.r);
+        diffuseColor.rgb *= clamp(1.0 + yTone * 0.9, 0.35, 1.6) * (1.0 - 0.45 * yEdge);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.017, 0.017, 0.018), ySeal * 0.92);
+      #endif
+      `;
+    let fs = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nfloat tbKeep = 0.0;\n' + WET_COMMON + (isGround ? WET_GROUND_DECL : '') + (cont ? CONTAINER_UV : ''))
+      .replace('#include <map_fragment>', mapChunk);
+    if (cont) {
+      fs = fs.replace('#include <roughnessmap_fragment>', tbVar(C.roughnessmap_fragment))
+        .replace('#include <aomap_fragment>', tbVar(C.aomap_fragment));
+    }
+    const metalChunk = cont ? tbVar(C.metalnessmap_fragment) : '#include <metalnessmap_fragment>';
+    let normalChunk = C.normal_fragment_maps;
+    if (isGround) normalChunk = normalChunk.replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+      'vec3 mapN = mix(texture2D( normalMap, vNormalMapUv ).xyz, texture2D( normalMap, mat2(0.8, -0.6, 0.6, 0.8) * vNormalMapUv * 0.71 + 0.31 ).xyz, wBlend) * 2.0 - 1.0;');
+    if (cont) normalChunk = tbVar(normalChunk);
+    normalChunk = normalChunk.replace('mapN.xy *= normalScale;', TOKSVIG);
+    fs = fs.replace('#include <normal_fragment_maps>', normalChunk);
+    if (!wetOn) {
+      fs = fs.replace('#include <metalnessmap_fragment>', metalChunk);
+      shader.fragmentShader = fs;
+      return;
+    }
+    fs = fs.replace('#include <metalnessmap_fragment>', metalChunk + `
       vec3 wN = normalize(vWetN);
       float wUp = smoothstep(0.55, 0.95, wN.y);
       float wet = uWetness;
       float puddle = 0.0;
+      float wMetal = metalnessFactor;
+      // porous rough dielectrics (asphalt, concrete, wood, fabric) darken a lot when soaked,
+      // sealed paint barely; metals keep their specular colour (Lagarde 2013)
+      float porosity = smoothstep(0.35, 0.9, roughnessFactor) * (1.0 - wMetal);
+      float soak = wet * mix(0.55, 1.0, wUp);
+      #ifdef YARD_MACRO
+        roughnessFactor *= clamp(1.0 + yTone * 0.6, 0.5, 1.3);
+        roughnessFactor = mix(roughnessFactor, 0.3, ySeal);
+      #endif
       #ifdef WET_GROUND
         float hgt = 0.5;
         #if defined(ORM_HEIGHT) && defined(USE_ROUGHNESSMAP)
@@ -202,25 +281,29 @@ function addWet(material, mode, ground) {
         float pm = texture2D(tPuddle, vWetPos.xz / 46.0).r;
         float pm2 = texture2D(tPuddle, vWetPos.xz / 9.0 + 0.37).r;
         float level = pm * 0.8 + pm2 * 0.2 + (0.5 - hgt) * 0.18;
+        #ifdef YARD_MACRO
+          level += yPatch * 0.035 - ySeal * 0.03;     // settled repairs hold water, sealant ridges shed it
+        #endif
         puddle = smoothstep(0.56, 0.6, level) * wUp * wet;
         float damp = smoothstep(0.42, 0.56, level) * wUp * wet; // saturated dark film around puddles
-        diffuseColor.rgb *= mix(1.0, 0.8, damp);
+        diffuseColor.rgb *= mix(1.0, 0.82, damp);
         roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.6, damp);
       #else
         // vertical surfaces: rain run-off streaks
         float streak = texture2D(tPuddle, vec2(vWetPos.x * 0.37 + vWetPos.z * 0.37, vWetPos.y * 0.03)).r;
         roughnessFactor = mix(roughnessFactor, roughnessFactor * mix(0.55, 0.9, streak), wet * (1.0 - wUp));
       #endif
-      diffuseColor.rgb *= mix(1.0, 0.68, wet * (0.45 + 0.55 * wUp));
-      roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.62, wet * wUp);
+      diffuseColor.rgb *= mix(1.0, mix(0.9, 0.6, porosity), soak);
+      roughnessFactor = mix(roughnessFactor, roughnessFactor * mix(0.6, 0.85, wMetal), wet * wUp);
       #ifdef WET_GROUND
-        // specular anti-aliasing: fine aggregate normals must not sparkle at distance
+        // floor so distant ground keeps a broad wet sheen instead of noise (Toksvig adds more)
         float nVar = length(fwidth(vWetPos.xz)) * 2.0;
-        roughnessFactor = max(roughnessFactor, clamp(0.3 + nVar, 0.3, 0.6));
+        roughnessFactor = max(roughnessFactor, clamp(0.24 + nVar, 0.24, 0.6));
       #endif
       diffuseColor.rgb *= mix(1.0, 0.7, puddle);
       roughnessFactor = mix(roughnessFactor, 0.02, puddle);
       metalnessFactor = mix(metalnessFactor, 0.0, puddle);
+      tbKeep = puddle;
       `)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       #ifdef WET_GROUND
@@ -263,7 +346,9 @@ function addWet(material, mode, ground) {
       #endif
       #include <opaque_fragment>`);
   };
-  material.customProgramCacheKey = () => 'wet-' + mode + (ground ? '-h' : '');
+    shader.fragmentShader = fs;
+  };
+  material.customProgramCacheKey = () => 'wet-' + mode + (ground ? '-h' : '') + (macro ? '-' + macro : '') + '-v3';
 }
 
 export function updateWet(time) { WET.uTime.value = time; }
