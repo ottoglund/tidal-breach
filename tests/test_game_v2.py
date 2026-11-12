@@ -157,14 +157,14 @@ def test_damage_to_failure(game):
 def test_collision_blocks_containers(game):
     page, errors = game
     qa(page, "peaceful()")
-    # walk forward (−Z) from x=-26 toward the container at (-26,16) using real input
-    qa(page, "view(-26, 25, 0, 0)")
+    # walk forward (-Z) from z=12 toward the cross-placed container at (10,7) (spans z 5.8..8.2)
+    qa(page, "view(10, 12, 0, 0)")
     page.keyboard.down("KeyW")
-    qa(page, "step(4)")
+    qa(page, "step(3)")
     page.keyboard.up("KeyW")
     z = state(page)["z"]
-    assert z > 22.0, f"player walked through a container (z={z})"
-    assert z < 24.0, "forward input should move the player toward -Z"
+    assert z < 11.0, f"forward input should move the player toward -Z (z={z})"
+    assert z > 8.2, f"player walked into a container (z={z})"
     assert not errors
 
 

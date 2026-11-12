@@ -22,7 +22,7 @@ function materials() {
     wood: mat('ak_wood', { tile: 0.3 }),
     poly: mat('polymer', { tile: 0.25 }),
     plum: mat('plum_polymer', { tile: 0.2 }),
-    visor: new THREE.MeshStandardMaterial({ color: 0x050505, emissive: new THREE.Color(0.9, 0.25, 0.1), emissiveIntensity: 1.5, roughness: 0.2 }),
+    visor: new THREE.MeshStandardMaterial({ color: 0x0a0b0b, roughness: 0.08, metalness: 0.3 }), // ballistic goggles
   };
   return shared;
 }
@@ -110,7 +110,7 @@ export function createGuard(variant = 'ak74') {
   const head = new THREE.Group(); head.position.y = 0.62; torso.add(head);
   add(head, M([[cyl(0.06, 0.065, 0.1, 10), xform(0, 0.03, 0)], [new THREE.SphereGeometry(0.11, 24, 18), xform(0, 0.15, 0, 0, 0, 0, 1, 1.12, 1.05)]]), S.skin);
   add(head, M([[new THREE.SphereGeometry(0.135, 28, 14, 0, Math.PI * 2, 0, Math.PI * 0.55), xform(0, 0.19, 0.01)], [box(0.27, 0.025, 0.2), xform(0, 0.15, 0.02)]]), S.helmet);
-  add(head, M([[box(0.16, 0.035, 0.04), xform(0, 0.16, -0.105)]]), S.visor, false); // NVG/visor glint
+  add(head, M([[box(0.17, 0.045, 0.035, 0.015), xform(0, 0.15, -0.1)]]), S.visor, false); // goggles
   // arms
   const arm = (side) => {
     const sh = new THREE.Group(); sh.position.set(side * 0.23, 0.5, 0); torso.add(sh);
