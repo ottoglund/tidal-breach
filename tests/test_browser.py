@@ -163,14 +163,22 @@ def test_quay_reference_renders(browser, previews, tmp_path, viewport, touch):
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("console", lambda message: errors.append(message.text)
                     if message.type == "error" else None)
-            captures = []
-            for variant in ("baseline", "quay"):
-                page.goto(url.replace("/?qa=1", f"/{variant}.html?qa=1&reference=1"))
+            def capture(variant, reference, name):
+                page.goto(url.replace("/?qa=1", f"/{variant}.html?qa=1&reference={reference}"))
                 page.wait_for_function("""window.__TIDAL_QA__ &&
                     getComputedStyle(document.querySelector('#menu')).display === 'none'""")
                 page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-                captures.append(page.screenshot(path=capture_dir / f"{width}x{height}-{variant}.png"))
+                return page.screenshot(path=capture_dir / f"{width}x{height}-{name}.png")
+
+            baseline = capture("baseline", "1", "baseline")
+            quay = capture("quay", "1", "quay")
+            assert baseline != quay
+            if not touch:
+                operator = capture("quay", "operator", "operator")
+                aimed = capture("quay", "operator-ads", "operator-ads")
+                assert operator != quay
+                assert aimed != operator
             assert not errors
-            assert captures[0] != captures[1]
         finally:
             context.close()
+

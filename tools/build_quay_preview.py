@@ -91,11 +91,107 @@ if (uWet > 1.5) {
 }
 """
 
+OPERATOR_MODEL = """
+function createOperatorWeapon() {
+  const meshes = {};
+  const mesh = name => meshes[name] ||= new Builder();
+  const [canvas, paint] = textureCanvas('operator fabric', 256, 256);
+  paint.fillStyle = '#77744e';
+  paint.fillRect(0, 0, 256, 256);
+  const panels = [
+    ['#3a4132', [[0,0],[110,0],[151,61],[78,88],[0,55]]],
+    ['#252a28', [[0,111],[81,86],[128,136],[89,210],[0,178]]],
+    ['#a39566', [[136,0],[221,0],[256,39],[201,74],[158,44]]],
+    ['#414735', [[171,83],[256,52],[256,163],[222,178],[169,142]]],
+    ['#9b8d64', [[108,176],[166,136],[218,188],[180,256],[84,256]]],
+    ['#282d28', [[231,179],[256,168],[256,256],[194,256]]],
+  ];
+  for (const [color, polygon] of panels) {
+    paint.fillStyle = color;
+    paint.beginPath();
+    paint.moveTo(...polygon[0]);
+    for (const point of polygon.slice(1)) paint.lineTo(...point);
+    paint.closePath();
+    paint.fill();
+  }
+  paint.fillStyle = '#ffffff14';
+  for (let y = 0; y < 256; y += 4) paint.fillRect(0, y, 256, 1);
+  makeTex('operatorFabric', canvas);
+
+  const steel = mesh('gun');
+  const fabric = mesh('operatorFabric');
+  const trim = mesh('white');
+  const dark = [.24,.26,.25], edge = [.34,.36,.34], black = [.14,.16,.15];
+  const olive = [.32,.36,.24], strap = [.46,.42,.29], cloth = [.91,.91,.87];
+  const x = .24, opticY = .07;
+
+  // Circular surfaces run along the local Z axis so the optic stays open in ADS.
+  function tube(builder, cx, cy, start, end, outer, inner, color) {
+    const segments = 20;
+    const point = (radius, angle, z) => [cx + radius*Math.cos(angle), cy + radius*Math.sin(angle), z];
+    for (let i = 0; i < segments; i++) {
+      const a = i * 2*Math.PI/segments, b = (i+1) * 2*Math.PI/segments;
+      const mid = (a+b)*.5, normal = [Math.cos(mid),Math.sin(mid),0];
+      builder.quad(point(outer,a,start),point(outer,b,start),point(outer,b,end),point(outer,a,end),normal,color);
+      if (inner > 0) {
+        builder.quad(point(inner,b,start),point(inner,a,start),point(inner,a,end),point(inner,b,end),
+                     normal.map(component => -component),color);
+      }
+      for (const [z, nz] of [[start,1],[end,-1]]) {
+        builder.quad(point(inner,a,z),point(outer,a,z),point(outer,b,z),point(inner,b,z),[0,0,nz],color);
+      }
+    }
+  }
+
+  steel.box(x,-.154,-.17,.166,.185,.63,dark);
+  steel.box(x,-.078,-.20,.135,.058,.61,edge);
+  steel.box(x,-.165,-.70,.145,.148,.51,black);
+  steel.box(x,-.237,-.71,.175,.055,.49,dark);
+  for (const side of [-1,1]) {
+    for (let i = 0; i < 5; i++) {
+      steel.box(x+side*.076,-.148,-.50-i*.086,.015,.026,.052,edge);
+    }
+  }
+  tube(steel,x,-.141,-.93,-1.51,.031,0,dark);
+  tube(steel,x,-.141,-1.45,-1.61,.052,.032,edge);
+  steel.box(x,-.277,.09,.095,.19,.115,black);
+  steel.box(x,-.287,-.24,.109,.24,.15,dark);
+  steel.box(x,-.399,-.24,.12,.032,.165,edge);
+  steel.box(x,-.171,.34,.139,.15,.45,black);
+  steel.box(x,-.188,.574,.154,.195,.06,dark);
+  steel.box(x,-.007,-.23,.089,.092,.112,black);
+  tube(steel,x,opticY,-.125,-.338,.081,.057,dark);
+  tube(steel,x,opticY,-.117,-.155,.093,.058,edge);
+  tube(steel,x,opticY,-.295,-.347,.091,.059,edge);
+  steel.box(x+.09,opticY,-.242,.039,.048,.058,black);
+  steel.box(x,opticY+.084,-.24,.055,.041,.052,black);
+
+  // Cuffs and overlapping glove panels preserve a readable silhouette at night.
+  fabric.box(.47,-.53,.12,.31,.33,.63,cloth,-.22,.28);
+  fabric.box(-.04,-.43,-.23,.28,.30,.70,cloth,.25,.30);
+  fabric.box(.384,-.398,-.13,.193,.194,.147,cloth,-.22,.22);
+  fabric.box(.045,-.327,-.55,.176,.168,.148,cloth,.25,.22);
+  trim.box(.29,-.291,.064,.142,.177,.224,olive,-.19);
+  trim.box(.24,-.249,-.64,.211,.123,.174,olive,.20);
+  for (let i = 0; i < 4; i++) {
+    trim.box(.185+i*.033,-.203,-.70,.028,.056,.089,olive);
+  }
+  trim.box(.309,-.19,-.605,.052,.093,.108,[.40,.43,.30],-.27);
+  trim.beam(.34,-.139,-.85,.39,-.33,-.66,.039,strap);
+  trim.beam(.39,-.33,-.66,.42,-.38,-.40,.039,strap);
+  trim.beam(.42,-.38,-.40,.36,-.23,.33,.039,strap);
+  steel.box(.417,-.362,-.39,.066,.051,.079,black);
+  return modelMesh(meshes);
+}
+"""
+
 REFERENCE_CAMERA = """
-const quayReference = new URLSearchParams(location.search).get('reference') === '1';
+const reference = new URLSearchParams(location.search).get('reference');
+const operatorReference = reference === 'operator' || reference === 'operator-ads';
+const quayReference = reference === '1' || operatorReference;
 if (quayReference) {
   document.body.insertAdjacentHTML('beforeend', '<style>#menu{display:none}</style>');
-  Object.assign(player, {x:32.4, y:1.73, z:21.8, yaw:.24, pitch:-.075});
+  Object.assign(player, {x:32.4, y:1.73, z:21.8, yaw:.24, pitch:-.075, ads:reference === 'operator-ads' ? 1 : 0});
 }
 """
 
@@ -111,8 +207,12 @@ def build(source, enhanced):
     source = replace_once(source, "try{update(dt,now);render(now);}",
                           "try{if(!quayReference)update(dt,now);render(quayReference?8:now);}")
     source = replace_once(source, "for(const geo of gunMesh)drawMesh(",
-                          "if(!quayReference)for(const geo of gunMesh)drawMesh(")
+                          "if(!quayReference || operatorReference)for(const geo of gunMesh)drawMesh(")
     if enhanced:
+        source = replace_once(source, "const gunMesh=createGun();",
+                              OPERATOR_MODEL + "\nconst gunMesh=createOperatorWeapon();")
+        source = replace_once(source, ".115-player.ads*.13", ".115-player.ads*.3214")
+        source = replace_once(source, "-.28+player.ads*.11", "-.28+player.ads*.2198")
         source = replace_once(source, "void main(){vec4 tex=texture2D(uTex,vUV);",
                               QUAY_NOISE + "void main(){vec4 tex=texture2D(uTex,vUV);")
         for lamp in ("l0", "l2"):
@@ -141,3 +241,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
