@@ -35,6 +35,10 @@ Enemy models use a separate Russian-inspired digital woodland pattern in muted f
 
 The operator optic follows the Aimpoint red-dot form, with a tubular housing, capped adjustment controls, side marking and an aligned illuminated dot visible through the aperture when aiming.
 
+## Weapon feel
+
+The baseline game now gives the rifle a capped upward impulse on each shot, with faster recovery while aiming and reduced idle sway in ADS. The shot direction follows the same recoil impulse as the visible weapon. Reload keeps its existing timed animation and ammo flow.
+
 ## Surface response
 
 The WebGL material shader samples neighbouring texels and perturbs the lighting normal using the painted texture and world-space wear variation. Container paint includes fading, chips and rain streaks. Wet asphalt uses irregular puddle masks with moving light reflections. The effect adds no external assets or network dependencies. The asphalt texture also layers small exposed aggregate, branching hairline cracks and worn repair seams into the material canvas to keep close surfaces from reading as uniform pixel noise.
