@@ -112,7 +112,9 @@ async function boot() {
   // ---- loop
   let last = performance.now() / 1000;
   let hold = false;
+  renderer.info.autoReset = false; // count every pass of a frame (scene, reflection, shadows, post)
   function renderAt(now, dt) {
+    renderer.info.reset();
     game.update(dt, now);
     game.syncVisuals(now, dt);
     updateWet(now);
