@@ -4,23 +4,25 @@
 - [x] Preserve the dependency-free playable FPS in `index.html`.
 - [x] Add project docs, coding-agent guidance and automated test scripts.
 - [x] Set up private GitHub repository.
-- [ ] Validate the Chromium test suite in GitHub Actions (do not mark passed until its workflow reports success).
+- [ ] Validate the Chromium test suite in GitHub Actions (do not mark passed until its workflow reports success). *Local headless Chromium (SwiftShader): v0.1 suite 4/4 and v0.2 suite 9/9 passed; CI not yet confirmed.*
 - [ ] Test a full mission manually on desktop and iPhone landscape.
-- [ ] Record measured baseline frame rates.
+- [ ] Record measured baseline frame rates. *Only software-GPU numbers exist (SwiftShader, not representative); in-game overlay (`F9` / `?perf=1`) added for real hardware.*
 
 ## M1 — realistic graphical vertical slice
-- [ ] Choose a 40–60 metre harbour segment and lock a reference camera position.
-- [ ] Model or legally source original modular container, crane, warehouse, quay and vessel assets.
-- [ ] Introduce glTF 2.0 models and PBR textures, water/wet surfaces, atmospheric fog, floodlights and believable shadows.
-- [ ] Benchmark WebGL2 compatibility, fallback, frame rate and memory on desktop/iOS Safari.
-- [ ] Produce real renderer screenshots comparing before/after at the same viewpoint.
+Status: **implemented, partly tested, not accepted** (needs real-device review and FPS evidence).
+- [x] Reference cameras locked in `tools/cameras.json`; vertical slice = pier head to Node A (z ≈ +36 … −14, ~50 m), the rest of the route uses the same assets.
+- [x] Original procedural assets: ISO 40 ft containers (corrugation, doors, locking gear, ID stencils), quay walls, fenders, bollards, high masts, RTG crane, lofted feeder hull with accommodation, warehouse facade (see `docs/ASSETS.md`). Generated in code rather than glTF files.
+- [x] PBR textures (procedural, `tools/texgen`), wet surfaces with puddles, rain ripples and planar reflections, fog, light shafts, floodlight shadows, rain streaks and splashes.
+- [x] Bevelled/filleted geometry everywhere (no hard voxel edges), adaptive detail and background LODs.
+- [ ] Benchmark WebGL2 compatibility, fallback, frame rate and memory on desktop/iOS Safari. *WebGL1 classic kept as fallback; device benchmarks outstanding.*
+- [x] Real renderer screenshots before/after at the same viewpoints: `docs/renders/baseline-v0.1/` vs `docs/renders/v0.2/` (SwiftShader).
 
 **Gate:** visually and measurably improved in-engine scene—not a prerendered illustration.
 
 ## M2 — FPS feel and adversaries
-- [ ] Improve weapon animation, recoil, aiming, reload and sound.
-- [ ] Improve guards' sight lines, patrol navigation and obstacle avoidance.
-- [ ] Verify projectile hits, collisions and damage.
+- [~] Weapon: Ak 5C-style carbine with see-through Aimpoint-style red dot (no HUD crosshair in ADS), recoil spring, sway, bob, sprint pose, magazine-change reload, muzzle flash light, tracers, impacts/decals, synthesized layered audio with reverb. *Implemented; needs hands-on feel review.*
+- [~] Guards: EMR-style digital camo, AK-74M / AKM, two-bone IK grip, walk/aim/flinch/death animation. AI logic unchanged from v0.1 (sight lines and pathing still basic).
+- [x] Projectile hits, collisions and damage covered by `tests/test_game_v2.py` (deterministic `step()` hook).
 
 **Gate:** playable combat and no regression in three-node objective chain.
 
