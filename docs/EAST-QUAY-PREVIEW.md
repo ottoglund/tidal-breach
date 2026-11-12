@@ -34,3 +34,7 @@ Validate the captured renders visually and complete the mission on a desktop GPU
 Enemy models use a separate Russian-inspired digital woodland pattern in muted forest green, charcoal and grey olive, with darker face covering and low-visibility kit. The texture is procedurally generated and contains no imported military insignia. This gives the opposing force a clear silhouette and palette contrast against the player's Swedish M90 sleeves. The enemy texture is tiled across jacket, trousers and sleeves.
 
 The operator optic follows the Aimpoint red-dot form, with a tubular housing, capped adjustment controls, side marking and an aligned illuminated dot visible through the aperture when aiming.
+
+## Surface response
+
+The WebGL material shader samples neighbouring texels and perturbs the lighting normal using the painted texture and world-space wear variation. Container paint includes fading, chips and rain streaks. Wet asphalt uses irregular puddle masks with moving light reflections. The effect adds no external assets or network dependencies.
