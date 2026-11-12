@@ -129,7 +129,7 @@ function createRussianEnemy() {
   kit.box(.59,1.47,-.08,.07,.12,.035,[.72,.76,.68]);
   kit.box(.17,1.13,-.56,.25,.17,.79,[.18,.21,.19]);
   kit.box(.15,1.18,-.91,.12,.11,.87,[.29,.32,.29]);
-  return [...base,...modelMesh({rusCamo:uniform,enemyKit:kit})];
+  return [...base,...modelMesh({rusCamo:uniform,metal:kit})];
 }
 """
 
