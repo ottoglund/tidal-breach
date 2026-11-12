@@ -147,3 +147,141 @@ def lines_mask(n, rng, count, length, width, wobble=0.3):
     if width > 0.6:
         m = np.clip(blur(m, width * 0.5) * width * 2.5, 0, 1)
     return m
+
+
+# ---------------------------------------------------------------------------
+# v0.3 additions: physically scaled normals, sized scatter (aggregate, chips),
+# polyline distance fields (cracks, seal bands, scratches).
+# ---------------------------------------------------------------------------
+def normal_from_height_m(h, px):
+    """Tangent-space normal (+Y, OpenGL) from a height field in METRES.
+
+    px = texel size in metres, so slopes are physically scaled (no arbitrary
+    strength factor; the material's normalScale can still attenuate).
+    """
+    dx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) / (2 * px)
+    dy = (np.roll(h, -1, 0) - np.roll(h, 1, 0)) / (2 * px)
+    nx, ny, nz = -dx, dy, np.ones_like(h)
+    l = np.sqrt(nx * nx + ny * ny + nz * nz)
+    return np.stack([nx / l, ny / l, nz / l], -1).astype(np.float32)
+
+
+def scatter(n, g, rng, rad=(0.3, 0.5), pnorm=(2.0, 2.0), aniso=(1.0, 1.0), jitter=0.8, warp_amp=0.0, warp_noise=None):
+    """Tileable sized-feature scatter (one feature per jittered grid cell).
+
+    Each cell gets a random radius (in cell units), superellipse exponent,
+    elongation and rotation. Returns (d, idx): d = normalised distance to the
+    nearest feature (d < 1 inside a feature), idx = int id of that feature
+    (0..g*g-1) for per-feature random attributes.
+    """
+    pts = 0.5 + (rng.random((g, g, 2)) - 0.5) * jitter
+    R = rng.uniform(rad[0], rad[1], (g, g)).astype(np.float32)
+    P = rng.uniform(pnorm[0], pnorm[1], (g, g)).astype(np.float32)
+    A = rng.uniform(aniso[0], aniso[1], (g, g)).astype(np.float32)
+    T = (rng.random((g, g)) * np.pi).astype(np.float32)
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
+    u = xs / n * g
+    v = ys / n * g
+    if warp_amp and warp_noise is not None:
+        u = u + warp_noise[0] * warp_amp
+        v = v + warp_noise[1] * warp_amp
+    ci = np.floor(u).astype(np.int32)
+    cj = np.floor(v).astype(np.int32)
+    best = np.full((n, n), 1e9, np.float32)
+    idx = np.zeros((n, n), np.int32)
+    for dj in (-1, 0, 1):
+        for di in (-1, 0, 1):
+            cx = ci + di
+            cy = cj + dj
+            wx = cx % g
+            wy = cy % g
+            ddx = u - (cx + pts[wy, wx, 0])
+            ddy = v - (cy + pts[wy, wx, 1])
+            t = T[wy, wx]
+            c, s = np.cos(t), np.sin(t)
+            a = A[wy, wx]
+            rx = (ddx * c + ddy * s) / a
+            ry = (-ddx * s + ddy * c) * a
+            p = P[wy, wx]
+            d = (np.abs(rx) ** p + np.abs(ry) ** p) ** (1.0 / p) / R[wy, wx]
+            closer = d < best
+            best = np.where(closer, d, best)
+            idx = np.where(closer, wy * g + wx, idx)
+    return best, idx
+
+
+def random_walk(rng, x, y, ang, steps, step_len, wobble, n):
+    pts = [(x, y)]
+    for _ in range(steps):
+        ang += rng.normal() * wobble
+        x += np.cos(ang) * step_len
+        y += np.sin(ang) * step_len
+        pts.append((x, y))
+    return pts
+
+
+def polyline_dist(n, polys, maxd, out=None, wrap=True):
+    """Distance (pixels) to a set of polylines, clamped at maxd, tileable.
+
+    polys: list of point lists in pixel coordinates.
+    """
+    if out is None:
+        out = np.full((n, n), float(maxd), np.float32)
+    for pts in polys:
+        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+            offs = [(-n, 0, n)] if wrap else [(0,)]
+            for ox in (-n, 0, n) if wrap else (0,):
+                for oy in (-n, 0, n) if wrap else (0,):
+                    ax, ay, bx, by = x0 + ox, y0 + oy, x1 + ox, y1 + oy
+                    lo_x = int(np.floor(min(ax, bx) - maxd)); hi_x = int(np.ceil(max(ax, bx) + maxd)) + 1
+                    lo_y = int(np.floor(min(ay, by) - maxd)); hi_y = int(np.ceil(max(ay, by) + maxd)) + 1
+                    lo_x, lo_y = max(lo_x, 0), max(lo_y, 0)
+                    hi_x, hi_y = min(hi_x, n), min(hi_y, n)
+                    if lo_x >= hi_x or lo_y >= hi_y:
+                        continue
+                    yy, xx = np.mgrid[lo_y:hi_y, lo_x:hi_x].astype(np.float32)
+                    vx, vy = bx - ax, by - ay
+                    L2 = vx * vx + vy * vy + 1e-9
+                    t = np.clip(((xx - ax) * vx + (yy - ay) * vy) / L2, 0, 1)
+                    d = np.sqrt((xx - ax - t * vx) ** 2 + (yy - ay - t * vy) ** 2)
+                    sub = out[lo_y:hi_y, lo_x:hi_x]
+                    np.minimum(sub, d, out=sub)
+    return out
+
+
+def box_sdf(n, cx, cy, hw, hh, ang=0.0, wrap=True):
+    """Signed distance (pixels) to a rotated rectangle, tileable (min over wraps)."""
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
+    best = np.full((n, n), 1e9, np.float32)
+    c, s = np.cos(ang), np.sin(ang)
+    for ox in (-n, 0, n) if wrap else (0,):
+        for oy in (-n, 0, n) if wrap else (0,):
+            dx = xs - cx - ox
+            dy = ys - cy - oy
+            rx = np.abs(dx * c + dy * s) - hw
+            ry = np.abs(-dx * s + dy * c) - hh
+            out = np.sqrt(np.maximum(rx, 0) ** 2 + np.maximum(ry, 0) ** 2) + np.minimum(np.maximum(rx, ry), 0)
+            best = np.minimum(best, out)
+    return best
+
+
+def blobs(n, rng, count, rmin, rmax, wobble=0.35, warp_n=None):
+    """Soft irregular blobs (stains, splashes): returns 0..1 mask, tileable."""
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
+    m = np.zeros((n, n), np.float32)
+    for _ in range(count):
+        cx, cy = rng.random() * n, rng.random() * n
+        rr = rng.uniform(rmin, rmax)
+        a = rng.uniform(0.5, 1.0)
+        lo_x, hi_x = int(cx - rr * 2), int(cx + rr * 2) + 1
+        lo_y, hi_y = int(cy - rr * 2), int(cy + rr * 2) + 1
+        xi = np.arange(lo_x, hi_x) % n
+        yi = np.arange(lo_y, hi_y) % n
+        yy, xx = np.meshgrid(np.arange(lo_y, hi_y), np.arange(lo_x, hi_x), indexing='ij')
+        d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / rr
+        if warp_n is not None:
+            d = d + warp_n[np.ix_(yi, xi)] * wobble
+        v = np.clip(1.2 - d, 0, 1) ** 0.8 * a
+        sub = m[np.ix_(yi, xi)]
+        m[np.ix_(yi, xi)] = np.maximum(sub, v)
+    return m

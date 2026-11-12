@@ -7,15 +7,17 @@ import * as THREE from 'three';
 const TEX = './assets/textures/';
 
 // set name -> { tile (m), kind: 'metal' (ORM.b = metalness) | 'ground' (ORM.b = height) | 'dielectric' }
+// macro: 'yard' = world-scale repair/stain/crack-seal mask (yardmask, 64 m); 'container' = per-instance/
+// per-band horizontal offset of the paint texture so a 12 m side does not repeat its 3 m tile visibly.
 export const SETS = {
-  asphalt: { tile: 4, kind: 'ground' },
+  asphalt: { tile: 4, kind: 'ground', macro: 'yard' },
   concrete: { tile: 3, kind: 'ground' },
-  container_rust: { tile: 1, kind: 'metal' },
-  container_blue: { tile: 1, kind: 'metal' },
-  container_green: { tile: 1, kind: 'metal' },
-  container_grey: { tile: 1, kind: 'metal' },
-  container_orange: { tile: 1, kind: 'metal' },
-  container_white: { tile: 1, kind: 'metal' },
+  container_rust: { tile: 1, kind: 'metal', macro: 'container' },
+  container_blue: { tile: 1, kind: 'metal', macro: 'container' },
+  container_green: { tile: 1, kind: 'metal', macro: 'container' },
+  container_grey: { tile: 1, kind: 'metal', macro: 'container' },
+  container_orange: { tile: 1, kind: 'metal', macro: 'container' },
+  container_white: { tile: 1, kind: 'metal', macro: 'container' },
   crane_yellow: { tile: 2, kind: 'metal' },
   steel_dark: { tile: 2, kind: 'metal' },
   steel_red: { tile: 2, kind: 'metal' },
@@ -41,13 +43,14 @@ export const SETS = {
   ak_wood: { tile: 0.3, kind: 'dielectric' },
   plum_polymer: { tile: 0.2, kind: 'dielectric' },
 };
-const SINGLE = ['water_normal', 'puddles_albedo', 'marking_albedo'];
+const SINGLE = ['water_normal', 'puddles_albedo', 'marking_albedo', 'yardmask_albedo'];
 
 export const textures = {};
 export const WET = {
   uTime: { value: 0 },
   uWetness: { value: 1 },
   tPuddle: { value: null },
+  tYard: { value: null },
   tRefl: { value: null },
   uReflMatrix: { value: new THREE.Matrix4() },
   uReflOn: { value: 0 },
@@ -63,13 +66,14 @@ export async function loadTextures(renderer, anisotropy, onProgress) {
     loader.load(TEX + key + '.webp', t => {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.anisotropy = anisotropy;
-      if (key.endsWith('_albedo') && key !== 'puddles_albedo' && key !== 'marking_albedo') t.colorSpace = THREE.SRGBColorSpace;
+      if (key.endsWith('_albedo') && key !== 'puddles_albedo' && key !== 'marking_albedo' && key !== 'yardmask_albedo') t.colorSpace = THREE.SRGBColorSpace;
       textures[key] = t;
       done++; onProgress?.(done / jobs.length);
       resolve();
     }, undefined, () => { console.warn('texture failed', key); done++; resolve(); });
   })));
   WET.tPuddle.value = textures.puddles_albedo;
+  WET.tYard.value = textures.yardmask_albedo || textures.puddles_albedo;
 }
 
 function repeatClone(tex, rep) {
@@ -106,7 +110,7 @@ export function mat(set, opts = {}) {
   if (opts.color) params.color = new THREE.Color(opts.color);
   if (opts.side) params.side = opts.side;
   const m = new THREE.MeshStandardMaterial(params);
-  addWet(m, opts.wet ?? 'surface', info.kind === 'ground');
+  addWet(m, opts.wet ?? 'surface', info.kind === 'ground', info.macro);
   cache.set(key, m);
   return m;
 }

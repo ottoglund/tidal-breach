@@ -20,6 +20,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(__file__))
 from noise import (Rng, fbm, blur, blur_dir, voronoi, warp, smoothstep,
                    normal_from_height, ao_from_height, lines_mask, norm01)
+import ground
 
 OUT = os.path.join(os.path.dirname(__file__), '..', '..', 'game', 'assets', 'textures')
 os.makedirs(OUT, exist_ok=True)
@@ -57,82 +58,27 @@ def save(name, albedo=None, normal=None, orm=None, q=88):
 
 
 # ---------------------------------------------------------------------------
-# Ground: wet harbour asphalt. Tile = 4 m.
+# Ground sets live in ground.py (physically scaled asphalt/concrete + yard mask).
 # ---------------------------------------------------------------------------
-def asphalt(n=2048, seed=11):
-    r = Rng(seed)
-    # aggregate: dense small stones in bitumen
-    f1, f2, cid = voronoi(n, 420, r, 1.0)
-    stones = smoothstep(0.62, 0.32, f1)              # stone body
-    stone_top = (f2 - f1)                              # flat tops
-    fine = fbm(n, r, 1.2, lo=200)
-    mid = fbm(n, r, 2.2, lo=6, hi=120)
-    macro = fbm(n, r, 2.8, lo=1, hi=12)
-    # cracks: warped voronoi edges at large scale
-    cf1, cf2, _ = voronoi(n, 5, r, 0.9)
-    wx, wy = fbm(n, r, 2.4, lo=3, hi=60), fbm(n, r, 2.4, lo=3, hi=60)
-    edge = warp(cf2 - cf1, wx, wy, 26)
-    crack_sel = smoothstep(0.42, 0.8, warp(norm01(fbm(n, r, 2.6, lo=1, hi=8)), wx, wy, 10))
-    crack = smoothstep(0.022, 0.0, edge) * crack_sel
-    seal = smoothstep(0.08, 0.0, edge) * crack_sel * 0.9   # bitumen crack sealant band
-    # height
-    h = stones * (0.55 + 0.45 * cid) * 0.6 + stones * stone_top * 0.25 + fine * 0.05 + mid * 0.05
-    h -= crack * 0.8
-    h += macro * 0.12
-    # wear: binder worn away in wheel paths -> more exposed aggregate (macro scale)
-    wear = smoothstep(-0.4, 1.4, macro)
-    # albedo
-    binder = col(n, '#1d1f21')
-    aggregate_light = col(n, '#6f6c66')
-    aggregate_dark = col(n, '#3d3c3a')
-    ag = lerp(aggregate_dark, aggregate_light, (cid ** 1.5))
-    ag *= (0.85 + 0.25 * np.clip(fine[..., None] * 0.5 + 0.5, 0, 1))
-    alb = lerp(binder, ag, np.clip(stones * (0.35 + 0.55 * wear), 0, 1))
-    alb *= (0.82 + 0.18 * np.clip(mid * 0.4 + 0.5, 0, 1))[..., None]
-    # oil / tyre stains
-    stain = smoothstep(0.9, 2.4, fbm(n, r, 3.0, lo=1, hi=16))
-    alb = lerp(alb, alb * 0.55, stain * 0.8)
-    alb = lerp(alb, col(n, '#121314'), seal)
-    alb = lerp(alb, col(n, '#0b0b0b'), crack)
-    # roughness: bitumen ~0.75, stones 0.65, seal and stains glossier
-    rough = 0.82 - 0.14 * stones * wear + 0.06 * fine * 0.3 - 0.25 * seal - 0.18 * stain
-    ao = ao_from_height(h, 2.5, 3.5) * (1 - crack * 0.6)
-    height = norm01(blur(h, 1.0))
-    nrm = normal_from_height(h, 5.0)
-    save('asphalt', alb, nrm, np.stack([ao, np.clip(rough, 0.3, 1), height], -1))
+def save_lossless(name, img):
+    """Lossless RGB mask (no 4:2:0 chroma subsampling, channels stay independent)."""
+    arr = np.clip(img, 0, 1)
+    im = Image.fromarray((arr * 255 + 0.5).astype(np.uint8))
+    p = os.path.join(OUT, f'{name}_albedo.webp')
+    im.save(p, 'WEBP', lossless=True, quality=100, method=6)
+    print('  wrote', os.path.relpath(p), f'{os.path.getsize(p) // 1024} KB')
 
 
-# ---------------------------------------------------------------------------
-# Quay concrete: cast-in-place slabs with broom finish. Tile = 3 m.
-# ---------------------------------------------------------------------------
-def concrete(n=1024, seed=21):
-    r = Rng(seed)
-    f1, f2, cid = voronoi(n, 160, r, 1.0)
-    pores = smoothstep(0.12, 0.02, f1) * (r.random((n, n)) > 0.0)
-    pores *= smoothstep(0.6, 1.0, cid)
-    fine = fbm(n, r, 1.4, lo=120)
-    mid = fbm(n, r, 2.3, lo=4, hi=80)
-    macro = fbm(n, r, 3.0, lo=1, hi=10)
-    broom = fbm(n, r, 1.0, lo=40, aniso=(0.08, 1.0)) * 0.6   # transverse broom marks
-    # joint at tile border (both axes)
-    ys, xs = np.mgrid[0:n, 0:n]
-    dj = np.minimum(np.minimum(xs, n - 1 - xs), np.minimum(ys, n - 1 - ys)).astype(np.float32)
-    joint = smoothstep(5, 1.5, dj)
-    chip = smoothstep(0.6, 1.6, fbm(n, r, 2.0, lo=8, hi=90)) * smoothstep(16, 4, dj)
-    h = fine * 0.08 + mid * 0.1 + broom * 0.12 - pores * 0.6 - joint * 1.2 - chip * 0.5
-    base = col(n, '#8d8a83')
-    alb = base * (0.86 + 0.1 * mid[..., None] * 0.5 + 0.06 * fine[..., None] * 0.4)
-    # efflorescence / grime blotches
-    blot = smoothstep(0.3, 1.8, macro)
-    alb = lerp(alb, alb * np.array([0.72, 0.72, 0.70]), blot)
-    lime = smoothstep(1.2, 2.4, fbm(n, r, 2.6, lo=2, hi=40))
-    alb = lerp(alb, col(n, '#a9a79f'), lime * 0.5)
-    rust_drip = smoothstep(1.6, 2.6, fbm(n, r, 2.4, lo=3, hi=40)) * 0.7
-    alb = lerp(alb, col(n, '#6b4a33'), rust_drip * 0.5)
-    alb = lerp(alb, col(n, '#2a2826'), np.maximum(joint, pores * 0.7))
-    rough = 0.9 - 0.08 * blot - 0.1 * joint
-    ao = ao_from_height(h, 2, 3) * (1 - joint * 0.5)
-    save('concrete', alb, normal_from_height(h, 3.5), np.stack([ao, rough, norm01(blur(h, 1))], -1))
+def asphalt():
+    ground.asphalt(save)
+
+
+def concrete():
+    ground.concrete(save)
+
+
+def yardmask():
+    ground.yardmask(save_lossless)
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +441,7 @@ def puddles(n=512, seed=171):
 SETS = {
     'asphalt': asphalt, 'concrete': concrete, 'hull': hull, 'cladding': cladding, 'wood': wood,
     'rubber': rubber, 'castiron': castiron, 'rope': rope, 'galvanized': galvanized, 'water': water,
-    'gunmetal': gunmetal, 'polymer': polymer, 'marking': marking, 'puddles': puddles,
+    'gunmetal': gunmetal, 'polymer': polymer, 'marking': marking, 'puddles': puddles, 'yardmask': yardmask,
     'container_rust': lambda: container('container_rust', '#7c3420', seed=31, fade=0.1),
     'container_blue': lambda: container('container_blue', '#1f4d6b', seed=32, fade=0.15),
     'container_green': lambda: container('container_green', '#3c5a45', seed=33, fade=0.1),
