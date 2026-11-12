@@ -91,6 +91,48 @@ if (uWet > 1.5) {
 }
 """
 
+RUSSIAN_ENEMY = """
+function createRussianCamoTexture() {
+  const [canvas,ctx]=textureCanvas('Russian digital camouflage',256,256);
+  const colors=['#455044','#303b32','#59604d','#252e2b','#6c6d54'];
+  for(let y=0;y<256;y+=8) for(let x=0;x<256;x+=8) {
+    const n=noise2((x+13)*.31+(y-7)*.79);
+    ctx.fillStyle=colors[Math.floor(n*colors.length)];
+    ctx.fillRect(x,y,8,8);
+  }
+  for(let i=0;i<560;i++) {
+    const x=Math.floor(rr(0,32))*8,y=Math.floor(rr(0,32))*8;
+    ctx.fillStyle=colors[Math.floor(rr(0,colors.length))];
+    ctx.fillRect(x,y,8,rr(8,25));
+  }
+  ctx.fillStyle='#d7d1b01a';
+  for(let y=2;y<256;y+=5)ctx.fillRect(0,y,256,1);
+  makeTex('rusCamo',canvas);
+}
+
+function createRussianEnemy() {
+  const base=createEnemy(),uniform=new Builder(),kit=new Builder();
+  const olive=[.32,.37,.28],dark=[.19,.23,.20],gear=[.25,.29,.27];
+  uniform.box(0,1.18,.035,.80,.91,.455,olive);
+  for(const x of [-.2,.2])uniform.box(x,.49,.035,.285,.81,.355,olive);
+  for(const x of [-.57,.57])uniform.box(x,1.22,-.07,.275,.70,.305,olive,x<0?.15:-.15);
+  uniform.box(0,1.84,.035,.50,.54,.49,dark);
+  for(let i=0;i<12;i++) {
+    const z=-.235+(i%4)*.125,y=.85+Math.floor(i/4)*.25;
+    uniform.box(-.22+(i%2)*.04,y,z,.19,.18,.018,i%3===0?dark:gear);
+    uniform.box(.19-(i%2)*.04,y+.015,z+.035,.18,.17,.018,i%3===1?dark:gear);
+  }
+  kit.box(0,1.86,-.258,.42,.46,.035,dark);
+  kit.box(0,2.09,-.37,.64,.23,.045,gear);
+  kit.box(0,1.89,-.285,.36,.13,.022,dark);
+  kit.box(-.59,1.47,-.08,.07,.12,.035,[.72,.76,.68]);
+  kit.box(.59,1.47,-.08,.07,.12,.035,[.72,.76,.68]);
+  kit.box(.17,1.13,-.56,.25,.17,.79,[.18,.21,.19]);
+  kit.box(.15,1.18,-.91,.12,.11,.87,[.29,.32,.29]);
+  return [...base,...modelMesh({rusCamo:uniform,enemyKit:kit})];
+}
+"""
+
 OPERATOR_MODEL = """
 function createOperatorWeapon() {
   const meshes = {};
@@ -209,6 +251,8 @@ def build(source, enhanced):
     source = replace_once(source, "for(const geo of gunMesh)drawMesh(",
                           "if(!quayReference || operatorReference)for(const geo of gunMesh)drawMesh(")
     if enhanced:
+        source = replace_once(source, "const enemyMesh=createEnemy();",
+                              RUSSIAN_ENEMY + "\ncreateRussianCamoTexture();\nconst enemyMesh=createRussianEnemy();")
         source = replace_once(source, "const gunMesh=createGun();",
                               OPERATOR_MODEL + "\nconst gunMesh=createOperatorWeapon();")
         source = replace_once(source, ".115-player.ads*.13", ".115-player.ads*.3214")
@@ -241,4 +285,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
