@@ -2,7 +2,7 @@
 // overridable with ?q=low|medium|high or the menu buttons (remembered locally).
 export const PRESETS = {
   low: {
-    name: 'low', pixelRatio: 1.0, msaa: 0, shadows: false, shadowSize: 512, shadowLights: 0,
+    name: 'low', pixelRatio: 1.4, msaa: 0, shadows: false, shadowSize: 512, shadowLights: 0,
     reflections: false, reflScale: 0, bloom: true, ao: false, rain: 1400, volumetric: true,
     anisotropy: 2, pointLights: 4, splashes: 60,
   },
