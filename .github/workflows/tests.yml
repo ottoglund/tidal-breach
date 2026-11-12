@@ -23,3 +23,12 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Browser tests
         run: python -m pytest tests/test_browser.py -v
+        env:
+          TIDAL_CAPTURES: ${{ runner.temp }}/tidal-captures
+      - name: Upload fixed-camera renders
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: east-quay-render-comparison
+          path: ${{ runner.temp }}/tidal-captures
+          if-no-files-found: ignore
