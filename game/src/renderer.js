@@ -44,7 +44,8 @@ export class Pipeline {
     const r = this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
     r.setSize(innerWidth, innerHeight);
-    r.toneMapping = THREE.ACESFilmicToneMapping;
+    // ?tm=agx|aces lets us compare tone mapping on real displays
+    r.toneMapping = new URLSearchParams(location.search).get('tm') === 'agx' ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.0;
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.shadowMap.enabled = quality.shadows;

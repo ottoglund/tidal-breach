@@ -86,7 +86,7 @@ async function boot() {
 
   // lamps that light the rain haze (analytic in-scattering in fog.js)
   const fogLamps = [
-    ...level.spots.map(s => ({ pos: s.pos.clone().add(new THREE.Vector3(0, -0.6, 0)), color: s.color, power: 0.06 })),
+    ...level.spots.map(s => ({ pos: s.pos.clone().add(new THREE.Vector3(0, -0.6, 0)), color: s.color, power: 0.045 })),
     ...level.points.map(p => ({ pos: p.pos, color: p.color, power: 0.012 * p.intensity / 1000 })),
     ...game.nodes.map(n => ({ pos: new THREE.Vector3(n.x + 0.45, 4.55, n.z - 0.2), color: new THREE.Color(1, 0.05, 0.02), power: 0.004, node: n })),
   ];
