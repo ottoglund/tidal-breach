@@ -31,6 +31,11 @@ class GameSourceChecks(unittest.TestCase):
         self.assertIn("get('qa')==='1'", HTML)
         self.assertIn("Object.defineProperty(window,'__TIDAL_QA__'", HTML)
 
+    def test_asphalt_aggregate_and_aged_cracks(self):
+        self.assertIn("Pebbled aggregate", HTML)
+        self.assertIn("Thin branching cracks", HTML)
+        self.assertIn("g.ellipse(x,y,rx,ry", HTML)
+
 if __name__ == "__main__":
     unittest.main()
 
