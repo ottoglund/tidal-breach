@@ -352,6 +352,7 @@ export class Game {
       lvl += v; col.r += l.color.r * v; col.g += l.color.g * v; col.b += l.color.b * v;
     }
     if (lvl > 0) col.multiplyScalar(1 / lvl);
+    this.lightLevel = lvl; // used for eye adaptation (auto exposure)
     this.weapon.update(dt, { ads: p.ads > 0.5 && this.mode === 'play', bob: this.bob, moving: this.moving && this.mode === 'play', sprinting: this.sprinting, lookDX: this.lookDX, lookDY: this.lookDY, reloading: p.reloading > 0 ? 1 - p.reloading / 1.65 : -1, time, lightLevel: Math.min(1.5, lvl), lightColor: col });
     this.weapon.root.visible = this.mode === 'play' || this.mode === 'pause';
     // aiming through the red dot: no HUD crosshair at all, only the illuminated dot in the optic

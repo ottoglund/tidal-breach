@@ -116,6 +116,10 @@ async function boot() {
     game.update(dt, now);
     game.syncVisuals(now, dt);
     updateWet(now);
+    // eye adaptation: under a floodlight the eye stops down, in dark lanes it opens up
+    { let lux = 0; const pp = pipe.camera.position;
+      for (const l of lights) lux += l.intensity / (l.position.distanceToSquared(pp) + 4);
+      const target = Math.max(0.5, 1.15 / (1 + lux / 22)); renderer.toneMappingExposure += (target - renderer.toneMappingExposure) * Math.min(1, dt * 1.5 + (hold ? 1 : 0)); }
     if ((fogTick++ % 10) === 0) updateFogLamps(fogLamps.filter(l => !l.node || !l.node.done), pipe.camera.position);
     rain.material.uniforms.uCam.value.copy(pipe.camera.position);
     splashes.material.uniforms.uCam.value.copy(pipe.camera.position);
