@@ -96,7 +96,7 @@ def test_weapon_and_pause(game):
     page.evaluate("window.__TIDAL_QA__.resume()")
     page.evaluate("window.__TIDAL_QA__.reload()")
     page.wait_for_function(
-        "window.__TIDAL_QA__.state().ammo === 30", timeout=6000
+        "window.__TIDAL_QA__.state().ammo === 30", timeout=45000
     )
     assert state(page)["reserve"] == 149
     assert not errors

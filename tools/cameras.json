@@ -1,0 +1,7 @@
+{
+  "_note": "Fixed reference cameras (x, z, yaw, pitch). yaw=0 looks toward -Z; positive yaw turns right. Used for before/after comparisons of the legacy and new renderer.",
+  "vista":   {"x": 0,   "z": 24,  "yaw": 0,     "pitch": -0.04},
+  "closeup": {"x": -21, "z": 25,  "yaw": -0.57, "pitch": -0.15},
+  "node_a":  {"x": 3,   "z": -6,  "yaw": -0.245,"pitch": -0.12},
+  "waterside": {"x": 33, "z": 10, "yaw": 1.03,  "pitch": 0.04}
+}
