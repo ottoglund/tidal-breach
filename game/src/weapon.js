@@ -174,9 +174,9 @@ export class Weapon {
     this.flashLight.position.set(0, bore, -0.6); this.gun.add(this.flashLight);
 
     // viewmodel lighting follows the light conditions where the player stands
-    this.hemi = new THREE.HemisphereLight(0x3d4a56, 0x0c0b0a, 0.5); scene.add(this.hemi);
+    this.hemi = new THREE.HemisphereLight(0x55606c, 0x14120f, 0.9); scene.add(this.hemi);
     this.key = new THREE.DirectionalLight(0xffc28a, 1.0); this.key.position.set(0.5, 1, 0.4); scene.add(this.key);
-    this.rim = new THREE.DirectionalLight(0x9fb8d6, 0.35); this.rim.position.set(-0.8, 0.4, -0.6); scene.add(this.rim);
+    this.rim = new THREE.DirectionalLight(0x9fb8d6, 0.8); this.rim.position.set(-0.8, 0.4, -0.6); scene.add(this.rim);
 
     this.ads = 0; this.recoil = 0; this.recoilV = 0; this.kickRot = 0; this.swayX = 0; this.swayY = 0; this.flashT = 0; this.sprint = 0;
     // hip: low right; ADS: red-dot centred on the camera axis, tube ~9 cm in front of the eye

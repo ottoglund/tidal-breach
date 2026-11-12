@@ -77,7 +77,7 @@ async function boot() {
   // ---- player
   const weapon = new Weapon(pipe.weaponScene);
   pipe.weaponScene.environment = scene.environment;
-  pipe.weaponScene.environmentIntensity = 0.4;
+  pipe.weaponScene.environmentIntensity = 0.9;
   const audio = new Audio();
   const game = new Game({ pipeline: pipe, level, weapon, audio, isTouch, lights });
 
