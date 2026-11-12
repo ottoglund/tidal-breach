@@ -25,7 +25,7 @@ def _pal(colors, idx, rng, weights=None):
 
 
 def _lerp(a, b, t):
-    if np.ndim(t) == 2 and (np.ndim(a) == 3 or np.ndim(b) == 3):
+    if np.ndim(t) == 2 and (np.ndim(a) in (1, 3) or np.ndim(b) in (1, 3)):
         t = t[..., None]
     return a + (b - a) * t
 
@@ -267,7 +267,7 @@ def concrete(save, n=1024, seed=21):
     mm = 1e-3
     ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
     wn = (fbm(n, r, 2.0, lo=6, hi=200), fbm(n, r, 2.0, lo=6, hi=200))
-    wear = smoothstep(-0.6, 1.4, fbm(n, r, 2.4, lo=1.5, hi=40))
+    wear = smoothstep(-1.2, 1.8, fbm(n, r, 2.4, lo=1.5, hi=40))
     # broom finish: transverse grooves ~3-5 mm pitch, smeared, worn off in traffic areas
     br = fbm(n, r, 1.0, lo=60, hi=420, aniso=(0.03, 1.0))
     br = warp(br, wn[0], wn[1], 6)
@@ -293,7 +293,7 @@ def concrete(save, n=1024, seed=21):
     polys = []
     for _ in range(3):
         polys.append(random_walk(r, r.random() * n, r.random() * n, r.random() * 2 * np.pi, 60, 6, 0.3, n))
-    cd = polyline_dist(n, polys, 8)
+    cd = polyline_dist(n, polys, 20)
     crack = smoothstep(1.2, 0.2, cd)
     # height (m)
     h = (fbm(n, r, 2.4, lo=1, hi=20) * 1.5 * mm + broom * 0.35 * mm + agg * 0.6 * mm
@@ -305,9 +305,9 @@ def concrete(save, n=1024, seed=21):
     alb = base * (0.9 + 0.08 * tone + 0.03 * fbm(n, r, 1.0, lo=200))[..., None]
     alb = alb * np.array([1.0, 1.0, 1.0]) * (1 + 0.02 * fbm(n, r, 2.0, lo=2, hi=20))[..., None]
     agg_col = _pal(['#9a968e', '#6e6b66', '#b3aea5', '#7d7268', '#55534f'], iA, r)
-    alb = _lerp(alb, agg_col, np.clip(agg * 1.4, 0, 1) * 0.85)
+    alb = _lerp(alb, agg_col, np.clip(agg * 1.4, 0, 1) * 0.4)
     # traffic grime + darker worn paths
-    grime = smoothstep(-0.3, 1.6, fbm(n, r, 2.2, lo=2, hi=40)) * 0.35 + wear * 0.15
+    grime = smoothstep(-0.3, 1.8, fbm(n, r, 2.0, lo=3, hi=80)) * 0.25 + wear * 0.08
     alb = _lerp(alb, alb * 0.68, grime)
     # efflorescence: chalky white crust along joints and cracks
     eff_src = np.maximum(smoothstep(30, 3, dj), smoothstep(14, 1, cd))

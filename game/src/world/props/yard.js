@@ -22,7 +22,7 @@ export function palletGeometry() {
   if (_pallet) return _pallet;
   const L = [];
   for (const z of [-0.35, 0, 0.35]) L.push([box(1.2, 0.022, z ? 0.1 : 0.145, 0), T(0, 0.011, z)]);
-  for (const x of [-0.5275, 0, 0.5275]) for (const z of [-0.35, 0, 0.35]) L.push([box(0.145, 0.078, z ? 0.1 : 0.145, 0.004), T(x, 0.061, z)]);
+  for (const x of [-0.5275, 0, 0.5275]) for (const z of [-0.35, 0, 0.35]) L.push([box(0.145, 0.078, z ? 0.1 : 0.145, 0), T(x, 0.061, z)]);
   for (const x of [-0.5275, 0, 0.5275]) L.push([box(0.145, 0.022, 0.8, 0), T(x, 0.111, 0)]);
   for (const z of [-0.3275, -0.165, 0, 0.165, 0.3275]) L.push([box(1.2, 0.022, Math.abs(z) > 0.3 ? 0.145 : 0.1, 0), T(0, 0.133, z)]);
   _pallet = mergeList(L);

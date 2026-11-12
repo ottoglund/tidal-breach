@@ -86,7 +86,7 @@ export function containerGeometry(lod = 0) {
 
 export const CONTAINER_COLORS = ['container_rust', 'container_blue', 'container_green', 'container_grey', 'container_orange', 'container_white'];
 
-/** Places all containers as instanced meshes. list: [{x,y,z,ry,color}] */
+/** Places all containers as instanced meshes. list: [{x,y,z,ry,color, m?}] (m: optional full Matrix4, e.g. a tilted trailer load) */
 export function buildContainers(parent, list, lod = 0) {
   const geo = containerGeometry(lod);
   const byColor = new Map();
@@ -98,7 +98,7 @@ export function buildContainers(parent, list, lod = 0) {
   const meshes = [];
   for (const [k, items] of byColor) {
     const m = new THREE.InstancedMesh(geo.paint, mat(k, { wet: 'surface' }), items.length);
-    items.forEach((c, i) => m.setMatrixAt(i, xform(c.x, c.y, c.z, c.ry || 0)));
+    items.forEach((c, i) => m.setMatrixAt(i, c.m || xform(c.x, c.y, c.z, c.ry || 0)));
     m.castShadow = m.receiveShadow = true;
     m.computeBoundingSphere();
     parent.add(m); meshes.push(m);
@@ -118,7 +118,7 @@ export function buildContainers(parent, list, lod = 0) {
   let di = 0;
   for (const c of list) {
     const cell = Math.floor(Math.abs(Math.sin(c.x * 12.9 + c.z * 78.2 + c.y * 3.1)) * 16) % 16;
-    const base = xform(c.x, c.y, c.z, c.ry || 0);
+    const base = c.m ? c.m.clone() : xform(c.x, c.y, c.z, c.ry || 0);
     const col = lightPaint.has(CONTAINER_COLORS[c.color % CONTAINER_COLORS.length]) ? new THREE.Color(0.05, 0.05, 0.05) : new THREE.Color(0.85, 0.85, 0.82);
     for (const t of [xform(-0.55, H - 0.5, L / 2 + 0.03, 0, 0, 0, 0.9, 0.9, 1), xform(W / 2 + 0.008, H - 0.48, L / 2 - 1.3, Math.PI / 2, 0, 0, 1.3, 1.3, 1), xform(-W / 2 - 0.008, H - 0.48, -L / 2 + 1.3, -Math.PI / 2, 0, 0, 1.3, 1.3, 1)]) {
       decals.setMatrixAt(di, base.clone().multiply(t));
@@ -131,7 +131,7 @@ export function buildContainers(parent, list, lod = 0) {
   decals.computeBoundingSphere();
   parent.add(decals); meshes.push(decals);
   const g = new THREE.InstancedMesh(geo.galv, mat('galvanized'), list.length);
-  list.forEach((c, i) => g.setMatrixAt(i, xform(c.x, c.y, c.z, c.ry || 0)));
+  list.forEach((c, i) => g.setMatrixAt(i, c.m || xform(c.x, c.y, c.z, c.ry || 0)));
   g.castShadow = true; g.receiveShadow = true; g.computeBoundingSphere();
   parent.add(g); meshes.push(g);
   return meshes;

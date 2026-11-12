@@ -9,7 +9,7 @@
 //
 // All geometry is original procedural work (no imported assets).
 import * as THREE from 'three';
-import { box, rcyl } from '../geo.js';
+import { box, rcyl, cyl } from '../geo.js';
 
 // name, parent, rest position in model space (metres)
 export const BONE_DEFS = [
@@ -198,7 +198,7 @@ function torso(B) {
     [1.54, 0.004, 0.004, 0.004, 0.012, 2, [[neck, 1]]],
   ];
   const rings = T.map(([y, rx, rf, rb, cz, p, w]) => ring(V(0, y, cz), rx, rf, rb, w, p));
-  B.tube('camo', rings, 28, (i, a, pt, r) => {
+  B.tube('camo', rings, 24, (i, a, pt, r) => {
     // shoulders follow the clavicles a little; trouser seat follows the thighs a little
     const w = r.w.map(x => x.slice());
     const side = Math.cos(a);
@@ -236,7 +236,7 @@ function head(B) {
     [1.84, 0.004, 0.004, 0.004, 0.0, [[hd, 1]]],
   ];
   const rings = H.map(([y, rx, rf, rb, cz, w]) => ring(V(0, y, cz), rx, rf, rb, w, 2));
-  B.tube('knit', rings, 28, null, (pt, i, a) => {
+  B.tube('knit', rings, 24, null, (pt, i, a) => {
     const s = Math.sin(a), c = Math.cos(a);
     if (s > 0) return; // back of head
     const front = Math.pow(Math.max(0, -s), 6);
@@ -275,14 +275,14 @@ function arm(B, side) {
   const rings = A.map(([dy, rx, rf, rb, w]) => ring(V(x0, y0 + dy, 0), rx, rf, rb, w, 2));
   // deltoid dome sits slightly outboard
   rings.slice(0, 3).forEach(r => (r.c.x += side * 0.01));
-  B.tube('camo', rings, 18, null, (pt, i, a, r) => {
+  B.tube('camo', rings, 16, null, (pt, i, a, r) => {
     // shoulder pocket bulge on the upper sleeve (outer side)
     const c = Math.cos(a) * side;
     if (pt.y < y0 - 0.06 && pt.y > y0 - 0.2 && c > 0.4) pt.x += side * 0.008 * sstep(0.4, 0.8, c);
   });
   // sleeve pocket flap + velcro patch, rigid on the upper arm
   B.rigid('camo', box(0.012, 0.13, 0.1, 0.004), xf(x0 + side * 0.078, y0 - 0.13, -0.004, 0, 0, side * -0.02), ua);
-  B.rigid('web', box(0.006, 0.05, 0.07, 0.002), xf(x0 + side * 0.086, y0 - 0.1, -0.004), ua);
+  B.rigid('web', box(0.006, 0.05, 0.07), xf(x0 + side * 0.086, y0 - 0.1, -0.004), ua);
 }
 
 function hand(B, side) {
@@ -328,7 +328,7 @@ function hand(B, side) {
   }
   tmp.tube('black', tr, 8);
   // knuckle armour strip on the back of the glove
-  tmp.rigid('black', box(0.012, 0.03, 0.07, 0.005), xf(side * 0.018, -0.07, 0), hb);
+  tmp.rigid('black', box(0.012, 0.03, 0.07), xf(side * 0.018, -0.07, 0), hb);
   const g = tmp.build();
   B.rigidSkinned('black', g, new THREE.Matrix4().makeTranslation(o.x, o.y, o.z));
 }
@@ -371,7 +371,7 @@ function leg(B, side) {
     [-0.79, 0.004, 0.004, 0.004, 0.002, [[sh, 1]]],
   ];
   const rings = L.map(([dy, rx, rf, rb, cx, w]) => ring(V(x0 + cx * side, y0 + dy, 0), rx, rf, rb, w, 2.1));
-  B.tube('camo', rings, 20, null, (pt, i, a) => {
+  B.tube('camo', rings, 18, null, (pt, i, a) => {
     // inner-thigh flattening so the legs don't interpenetrate at the crotch
     const c = Math.cos(a) * side;
     if (c < -0.5 && pt.y > 0.72) pt.x += side * 0.012 * sstep(0.5, 1, -c) * sstep(0.72, 0.9, pt.y);
@@ -409,24 +409,24 @@ function leg(B, side) {
   B.tube('boot', F.map(([z, rx, top, bot, cy]) => ring(V(x0, cy, z - 0.035), rx, top, bot, [[ft, 1]], 2.6, AX, PY)), 18);
   // sole with heel block (black rubber) and lace strip
   B.rigid('black', box(0.112, 0.022, 0.3, 0.008), xf(x0, 0.011, -0.065), ft);
-  B.rigid('black', box(0.09, 0.012, 0.085, 0.004), xf(x0, 0.026, 0.02), ft);
-  B.rigid('black', box(0.034, 0.008, 0.11, 0.003), xf(x0, 0.1, -0.035, 0, 0.75), ft); // lacing
+  B.rigid('black', box(0.09, 0.012, 0.085), xf(x0, 0.026, 0.02), ft);
+  B.rigid('black', box(0.034, 0.008, 0.11), xf(x0, 0.1, -0.035, 0, 0.75), ft); // lacing
 }
 
 function rig(B) {
   const { chest, spine, hips, head: hd } = BI;
   // shoulder harness straps (front / back / over the shoulder)
   for (const s of [-1, 1]) {
-    B.rigid('web', box(0.048, 0.33, 0.012, 0.005), xf(s * 0.1, 1.3, -0.14, 0, 0.12, s * 0.06), chest);
-    B.rigid('web', box(0.048, 0.36, 0.012, 0.005), xf(s * 0.095, 1.28, 0.137, 0, -0.08, -s * 0.08), chest);
-    B.rigid('web', box(0.05, 0.014, 0.27, 0.006), xf(s * 0.115, 1.476, 0.0, 0, 0, -s * 0.38), chest);
+    B.rigid('web', box(0.048, 0.33, 0.012), xf(s * 0.1, 1.3, -0.14, 0, 0.12, s * 0.06), chest);
+    B.rigid('web', box(0.048, 0.36, 0.012), xf(s * 0.095, 1.28, 0.137, 0, -0.08, -s * 0.08), chest);
+    B.rigid('web', box(0.05, 0.014, 0.27), xf(s * 0.115, 1.476, 0.0, 0, 0, -s * 0.38), chest);
     // strap adjusters
-    B.rigid('black', box(0.04, 0.012, 0.008, 0.002), xf(s * 0.103, 1.4, -0.13, 0, 0.12, s * 0.06), chest);
+    B.rigid('black', box(0.04, 0.012, 0.008), xf(s * 0.103, 1.4, -0.13, 0, 0.12, s * 0.06), chest);
   }
   // flat admin / map panel with flap, zip seam and pen loops
   B.rigid('web', box(0.24, 0.2, 0.038, 0.012), xf(0, 1.255, -0.158, 0, 0.06), chest);
   B.rigid('web', box(0.236, 0.05, 0.02, 0.008), xf(0, 1.33, -0.18, 0, 0.12), chest);
-  B.rigid('black', box(0.21, 0.004, 0.004, 0.001), xf(0, 1.2, -0.178, 0, 0.06), chest);
+  B.rigid('black', box(0.21, 0.004, 0.004), xf(0, 1.2, -0.178, 0, 0.06), chest);
   // padded belt as a skinned band around the waist (follows lumbar/hip blend)
   const band = [[1.025, 0.0], [1.03, 0.016], [1.085, 0.016], [1.09, 0.0]].map(([y, d]) => {
     const rx = 0.172 + (y - 1.05) * -0.05, w = y < 1.05 ? [[hips, 0.3], [spine, 0.7]] : [[spine, 0.92], [hips, 0.08]];
@@ -437,7 +437,7 @@ function rig(B) {
   for (const x of [-0.09, 0, 0.09]) {
     B.rigid('web', box(0.082, 0.17, 0.066, 0.014), xf(x, 1.05, -0.158, 0, 0.04), spine);
     B.rigid('web', box(0.086, 0.06, 0.072, 0.012), xf(x, 1.135, -0.16, 0, 0.18), spine);
-    B.rigid('black', box(0.03, 0.025, 0.004, 0.001), xf(x, 1.1, -0.197, 0, 0.18), spine); // fastex buckle
+    B.rigid('black', box(0.03, 0.025, 0.004), xf(x, 1.1, -0.197, 0, 0.18), spine); // fastex buckle
   }
   // bulky side utility pouches
   for (const s of [-1, 1]) {
@@ -446,16 +446,16 @@ function rig(B) {
   }
   // canteen pouch (back left) and small dump/radio pouch (back right)
   B.rigid('web', box(0.13, 0.17, 0.075, 0.035), xf(-0.11, 1.03, 0.155, 0, -0.04), spine);
-  B.rigid('black', rcyl(0.018, 0.02, 0.004, 12), xf(-0.11, 1.125, 0.155), spine);
+  B.rigid('black', cyl(0.018, 0.018, 0.02, 12), xf(-0.11, 1.125, 0.155), spine);
   B.rigid('web', box(0.1, 0.13, 0.06, 0.025), xf(0.11, 1.05, 0.145, 0, -0.04), spine);
 
   // electronic hearing protection: oval cups, cushions, headband over the crown
   for (const s of [-1, 1]) {
     B.rigid('web', rcyl(0.043, 0.032, 0.012, 16), xf(s * 0.103, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.18), hd);
     B.rigid('black', new THREE.CylinderGeometry(0.04, 0.04, 0.016, 16, 1), xf(s * 0.083, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.15), hd);
-    B.rigid('black', box(0.012, 0.016, 0.02, 0.003), xf(s * 0.12, 1.705, -0.02), hd); // volume knob
+    B.rigid('black', box(0.012, 0.016, 0.02), xf(s * 0.12, 1.705, -0.02), hd); // volume knob
     // yoke from cup to band
-    B.rigid('web', box(0.012, 0.05, 0.016, 0.004), xf(s * 0.103, 1.765, 0.0), hd);
+    B.rigid('web', box(0.012, 0.05, 0.016), xf(s * 0.103, 1.765, 0.0), hd);
   }
   const bandPts = [];
   for (let k = 0; k <= 16; k++) { const t = Math.PI * k / 16; bandPts.push(V(Math.cos(t) * 0.1, 1.775 + Math.sin(t) * 0.078, 0.0)); }
@@ -483,7 +483,7 @@ function rig(B) {
   lens.setAttribute('uv', new THREE.Float32BufferAttribute(lu, 2));
   lens.setIndex(li);
   B.rigid('lens', lens, null, hd);
-  for (const s of [-1, 1]) B.rigid('black', box(0.006, 0.008, 0.1, 0.002), xf(s * 0.084, 1.748, 0.02, s * 0.05), hd);
+  for (const s of [-1, 1]) B.rigid('black', box(0.006, 0.008, 0.1), xf(s * 0.084, 1.748, 0.02, s * 0.05), hd);
 }
 
 let cachedGeo = null;

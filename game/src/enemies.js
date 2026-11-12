@@ -1,8 +1,16 @@
-// Articulated guard model (~1.8 m) with procedural walk, aim, hit-flinch and death.
+// Guard: one continuous skinned body (see characters/soldier.js) with rigid gear,
+// a detailed Kalashnikov and a procedural animation layer:
+//  - foot-planted walk/run (stride derived from speed and phase rate, so feet do not skate)
+//  - pelvis bob/sway/twist with counter-rotating chest, idle breathing and weight shift
+//  - rifle carried at patrol low-ready, raised to a shouldered aim with cheek weld
+//  - two-bone IK keeps the right hand on the pistol grip and the left on the handguard
+//  - head stabilises its gaze, scans while patrolling, looks down the sights when aiming
+//  - hit flinch, recoil, and a keyed death (knees buckle, torso twists, fall, settle)
 import * as THREE from 'three';
-import { box, cyl, rcyl, xform } from './geo.js';
+import { box, rcyl, cyl, xform } from './geo.js';
 import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createSoldierMesh, BONE_DEFS, BI, LEN } from './characters/soldier.js';
 
 function M(list) {
   return mergeGeometries(list.map(([g, m]) => { const x = g.index ? g.toNonIndexed() : g.clone(); if (m) x.applyMatrix4(m); for (const k of Object.keys(x.attributes)) if (!['position', 'normal', 'uv'].includes(k)) x.deleteAttribute(k); return x; }));
@@ -14,214 +22,374 @@ function materials() {
   shared = {
     uniform: mat('camo_emr', { tile: 0.42, color: 0x9a9a92 }),
     vest: mat('ratnik_green', { tile: 0.35 }),
-    glove: plainMat(0x161616, 0.75),
-    boot: plainMat(0x121211, 0.5),
-    helmet: mat('ratnik_green', { tile: 0.3 }),
-    skin: mat('olive_knit', { tile: 0.2 }), // olive balaclava
+    knit: mat('olive_knit', { tile: 0.12 }), // olive balaclava
+    glove: mat('fabric_glove', { tile: 0.15, color: 0x5a5a5a }),
+    boot: mat('boot_leather', { tile: 0.25, color: 0x4a4440 }),
     gun: mat('gunmetal'),
     wood: mat('ak_wood', { tile: 0.3 }),
     poly: mat('polymer', { tile: 0.25 }),
     plum: mat('plum_polymer', { tile: 0.2 }),
-    visor: new THREE.MeshPhysicalMaterial({ color: 0x050607, roughness: 0.05, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.03 }), // tinted lenses
+    visor: new THREE.MeshPhysicalMaterial({ color: 0x07080a, roughness: 0.06, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.03 }), // tinted lenses
   };
   return shared;
 }
 
 // Kalashnikov family at real scale. Barrel toward -Z, origin near the magazine well.
 // variant 'ak74': AK-74M (black polymer, plum magazine, AK-74 muzzle brake)
-// variant 'akm' : AKM/AK-47 pattern (laminated wood furniture, slant brake, steel magazine)
+// variant 'akm' : AKM pattern (laminated wood furniture, slant brake, steel magazine)
 function kalashnikov(S, variant) {
   const g = new THREE.Group();
-  const furn = variant === 'akm' ? S.wood : S.poly;
-  const magM = variant === 'akm' ? S.gun : S.plum;
-  const add = (list, m) => { const o = new THREE.Mesh(M(list), m); o.castShadow = true; g.add(o); };
+  const akm = variant === 'akm';
+  const furn = akm ? S.wood : S.poly;
+  const magM = akm ? S.gun : S.plum;
+  const add = (list, m) => { const o = new THREE.Mesh(M(list), m); o.castShadow = true; g.add(o); return o; };
   const Z = Math.PI / 2;
   add([
-    [box(0.046, 0.06, 0.25, 0.004), xform(0, 0, 0.02)],                 // stamped receiver
-    [box(0.042, 0.022, 0.23, 0.009), xform(0, 0.038, 0.03)],            // dust cover
-    ...[0, 1, 2].map(i => [box(0.044, 0.004, 0.006, 0.001), xform(0, 0.05, 0.13 - i * 0.012)]),
-    [box(0.03, 0.02, 0.06, 0.004), xform(0, 0.042, -0.12)],             // rear sight block
-    [box(0.026, 0.006, 0.08, 0.002), xform(0, 0.054, -0.11)],           // sight leaf
-    [rcyl(0.009, 0.27, 0.002, 16), xform(0, 0.0, -0.4, 0, Z)],         // barrel
-    [rcyl(0.011, 0.2, 0.002, 16), xform(0, 0.034, -0.27, 0, Z)],       // gas tube
-    [box(0.022, 0.06, 0.03, 0.004), xform(0, 0.02, -0.52)],             // front sight block
-    [box(0.004, 0.03, 0.004, 0.001), xform(0, 0.06, -0.52)],
-    [box(0.006, 0.02, 0.06, 0.002), xform(0.026, 0.005, 0.05)],         // selector lever
-    [box(0.012, 0.03, 0.06, 0.003), xform(0, -0.045, 0.06)],            // trigger guard
-    ...(variant === 'akm'
-      ? [[rcyl(0.011, 0.04, 0.003, 16), xform(0, 0.0, -0.555, 0, Z)]]    // slant brake
-      : [[rcyl(0.0135, 0.085, 0.004, 20), xform(0, 0.0, -0.575, 0, Z)], [box(0.03, 0.006, 0.012, 0.002), xform(0, 0.0, -0.56)]]),
+    [box(0.046, 0.058, 0.25, 0.004), xform(0, 0, 0.02)],                 // stamped receiver
+    [box(0.042, 0.024, 0.235, 0.011), xform(0, 0.038, 0.03)],           // ribbed dust cover
+    ...[0, 1, 2].map(i => [box(0.044, 0.004, 0.006), xform(0, 0.051, 0.13 - i * 0.012)]),
+    [box(0.05, 0.03, 0.03), xform(0, 0.005, -0.115)],            // front trunnion
+    [box(0.03, 0.02, 0.06), xform(0, 0.042, -0.125)],            // rear sight block
+    [box(0.026, 0.006, 0.08), xform(0, 0.056, -0.11)],           // sight leaf
+    [box(0.008, 0.012, 0.018), xform(0.03, 0.03, 0.02)],         // charging handle
+    [cyl(0.0085, 0.0085, 0.3, 12), xform(0, 0.0, -0.4, 0, Z)],         // barrel
+    [cyl(0.011, 0.011, 0.2, 12), xform(0, 0.034, -0.27, 0, Z)],       // gas tube
+    [box(0.022, 0.05, 0.035), xform(0, 0.022, -0.52)],           // front sight block / gas block
+    [box(0.016, 0.03, 0.01), xform(0, 0.055, -0.525)],           // front sight ears
+    [box(0.006, 0.02, 0.06), xform(0.026, 0.005, 0.05)],         // selector lever
+    [box(0.01, 0.006, 0.07), xform(0, -0.038, 0.075)],           // trigger guard bottom
+    [box(0.006, 0.02, 0.008), xform(0, -0.032, 0.06, 0, -0.3)], // trigger
+    [box(0.024, 0.008, 0.012), xform(0, -0.012, -0.505)],        // bayonet lug
+    ...(akm
+      ? [[rcyl(0.012, 0.045, 0.003, 14), xform(0, 0.0, -0.565, 0, Z)]]
+      : [[rcyl(0.0135, 0.085, 0.004, 16), xform(0, 0.0, -0.585, 0, Z)], [box(0.03, 0.006, 0.012), xform(0, 0.0, -0.57)]]),
   ], S.gun);
   add([
-    [box(0.056, 0.05, 0.2, 0.012), xform(0, -0.006, -0.27)],            // lower handguard
-    [box(0.04, 0.028, 0.17, 0.01), xform(0, 0.036, -0.26)],             // upper handguard over the gas tube
-    [box(0.032, 0.095, 0.042, 0.01), xform(0, -0.075, 0.1, 0, 0.32)],   // pistol grip
-    [box(0.042, 0.06, 0.24, 0.012), xform(0, -0.02, 0.27, 0, -0.08)],   // stock
-    [box(0.046, 0.13, 0.03, 0.012), xform(0, -0.05, 0.39, 0, -0.08)],   // butt
+    // lower handguard: rounded, slightly wider at the front with finger grooves
+    [rcyl(0.026, 0.2, 0.008, 16), xform(0, -0.006, -0.27, 0, Z, 0, 1.05, 1, 1.0)],
+    [rcyl(0.019, 0.17, 0.006, 14), xform(0, 0.036, -0.26, 0, Z, 0, 1.05, 1, 0.8)],    // upper handguard over the gas tube
+    [box(0.032, 0.1, 0.044, 0.012), xform(0, -0.082, 0.112, 0, -0.32)],               // pistol grip (raked back)
+    ...(akm
+      ? [[box(0.042, 0.065, 0.25, 0.014), xform(0, -0.022, 0.27, 0, 0.1)], [box(0.046, 0.13, 0.03, 0.012), xform(0, -0.05, 0.395, 0, 0.1)]]
+      : [[box(0.04, 0.03, 0.25, 0.01), xform(0, -0.005, 0.27, 0, 0.1)], [box(0.036, 0.024, 0.2, 0.008), xform(0, -0.06, 0.29, 0, 0.18)],
+        [box(0.044, 0.135, 0.03, 0.012), xform(0, -0.05, 0.395, 0, 0.1)], [box(0.036, 0.012, 0.03), xform(0, -0.03, 0.19, 0, 0.6)]]),
   ], furn);
-  // curved 30-round magazine: segments rotated progressively
+  // curved 30-round magazine: segments rotated progressively, with a floor plate
   const segs = [];
-  for (let i = 0; i < 5; i++) segs.push([box(0.028, 0.045, 0.07 - i * 0.002, 0.005), xform(0, -0.05 - i * 0.04, -0.07 - i * i * 0.007, 0, 0.12 + i * 0.12)]);
+  for (let i = 0; i < 5; i++) segs.push([box(0.028, 0.046, 0.072 - i * 0.002, 0.006), xform(0, -0.05 - i * 0.04, -0.07 - i * i * 0.007, 0, 0.12 + i * 0.12)]);
+  segs.push([box(0.032, 0.012, 0.068, 0.004), xform(0, -0.235, -0.18, 0, 0.66)]);
   add(segs, magM);
-  return g;
-}
-
-// Tapered capsule along -Y from the joint (smooth, organic limb shape).
-function taper(len, r0, r1, seg = 20) {
-  const pts = [];
-  for (let i = 0; i <= 6; i++) { const a = -Math.PI / 2 + (i / 6) * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r1, -len + r1 + Math.sin(a) * r1)); }
-  // slight muscle bulge in the upper third
-  pts.push(new THREE.Vector2((r0 + r1) * 0.5 * 1.08, -len * 0.55));
-  for (let i = 0; i <= 6; i++) { const a = (i / 6) * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r0, -r0 * 0.3 + Math.sin(a) * r0)); }
-  return new THREE.LatheGeometry(pts, seg);
-}
-function torsoGeo() {
-  // chest-to-hip profile, flattened front-to-back
-  const prof = [[0.0, -0.02], [0.15, 0.0], [0.16, 0.08], [0.15, 0.2], [0.175, 0.36], [0.19, 0.46], [0.16, 0.53], [0.08, 0.58], [0.0, 0.6]];
-  const g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 24);
-  g.scale(1, 1, 0.62);
-  return g;
-}
-
-function limb(len, r0, r1, material) {
-  const g = new THREE.Group();
-  const m = new THREE.Mesh(taper(len, r0, r1), material);
-  m.castShadow = true;
-  g.add(m);
   return g;
 }
 
 export function createGuard(variant = 'ak74') {
   const S = materials();
   const root = new THREE.Group();
-  const body = new THREE.Group(); root.add(body); // pelvis pivot
-  body.position.y = 1.0;
-  const torso = new THREE.Group(); body.add(torso);
-  const add = (parent, geo, material, shadow = true) => { const m = new THREE.Mesh(geo, material); m.castShadow = shadow; parent.add(m); return m; };
-  // torso + plate carrier with pouches
-  add(torso, M([[torsoGeo(), null]]), S.uniform);
-  // chest rig after the reference: shoulder harness, admin panel, belt line with AK mag pouches
-  add(torso, M([
-    ...[-1, 1].map(sx => [box(0.05, 0.42, 0.014, 0.006), xform(sx * 0.1, 0.33, -0.128, 0, 0.12, sx * 0.08)]),  // front harness straps
-    ...[-1, 1].map(sx => [box(0.05, 0.42, 0.014, 0.006), xform(sx * 0.1, 0.33, 0.125, 0, -0.12, -sx * 0.08)]), // back straps
-    ...[-1, 1].map(sx => [box(0.06, 0.03, 0.27, 0.01), xform(sx * 0.11, 0.56, 0, 0, 0, 0)]),                  // over the shoulders
-    [box(0.23, 0.2, 0.045, 0.012), xform(0, 0.31, -0.15)],                                                // admin / map panel
-    [box(0.21, 0.035, 0.05, 0.01), xform(0, 0.4, -0.16)],                                                 // panel flap
-    [box(0.07, 0.11, 0.045, 0.012), xform(0.135, 0.38, -0.135, 0, 0, 0.1)],                               // radio pouch
-    [box(0.44, 0.055, 0.3, 0.02), xform(0, 0.04, 0)],                                                     // belt
-    ...[-0.088, 0, 0.088].map(x => [box(0.078, 0.15, 0.065, 0.014), xform(x, 0.07, -0.18)]),               // triple AK mag pouches
-    ...[-1, 1].map(sx => [box(0.08, 0.14, 0.16, 0.035), xform(sx * 0.225, 0.02, -0.02)]),                  // side utility / dump pouches
-    [box(0.12, 0.12, 0.08, 0.03), xform(-0.12, 0.03, 0.16)],                                              // canteen
-  ]), S.vest);
-  // magazine tops protruding from the pouches
-  add(torso, M([-0.088, 0, 0.088].map(x => [box(0.03, 0.05, 0.05, 0.006), xform(x, 0.165, -0.185, 0, 0.15)])), S.plum);
-  // jacket collar
-  add(torso, M([[box(0.2, 0.06, 0.16, 0.03), xform(0, 0.58, 0)]]), S.uniform);
-  // head
-  const head = new THREE.Group(); head.position.y = 0.62; torso.add(head);
-  // olive balaclava over the head and neck
-  add(head, M([[cyl(0.062, 0.068, 0.1, 16), xform(0, 0.03, 0)], [new THREE.SphereGeometry(0.108, 28, 20), xform(0, 0.155, -0.005, 0, 0, 0, 0.95, 1.14, 1.05)],
-    [box(0.09, 0.06, 0.05, 0.02), xform(0, 0.09, -0.085)]]), S.skin);  // chin / jaw
-  // electronic hearing protection: two cups and a headband over the top
-  const band = new THREE.TorusGeometry(0.118, 0.012, 8, 32, Math.PI);
-  add(head, M([
-    [rcyl(0.047, 0.04, 0.012, 32), xform(0.112, 0.15, 0.0, 0, 0, Math.PI / 2)],
-    [rcyl(0.047, 0.04, 0.012, 32), xform(-0.112, 0.15, 0.0, 0, 0, Math.PI / 2)],
-    [band, xform(0, 0.16, 0.0, 0, 0, 0)],
-  ]), S.vest);
-  // wrap-around dark shooting glasses
-  add(head, M([[box(0.075, 0.042, 0.012, 0.01), xform(0.037, 0.175, -0.104, -0.18)], [box(0.075, 0.042, 0.012, 0.01), xform(-0.037, 0.175, -0.104, 0.18)],
-    [box(0.006, 0.006, 0.1, 0.002), xform(0.1, 0.185, -0.05)], [box(0.006, 0.006, 0.1, 0.002), xform(-0.1, 0.185, -0.05)]]), S.visor, false);
-  // arms
-  const arm = (side) => {
-    const sh = new THREE.Group(); sh.position.set(side * 0.23, 0.5, 0); torso.add(sh);
-    const up = limb(0.31, 0.075, 0.066, S.uniform); sh.add(up);
-    const el = new THREE.Group(); el.position.y = -0.3; up.add(el);
-    const fo = limb(0.28, 0.066, 0.05, S.uniform); el.add(fo);
-    const hand = new THREE.Mesh(box(0.07, 0.1, 0.05, 0.022), S.glove); hand.position.y = -0.31; hand.castShadow = true; fo.add(hand);
-    return { sh, el, base: sh.position.clone(), side };
-  };
-  const armR = arm(1), armL = arm(-1);
-  // clothing volume: jacket hem, belt with pouches, shoulder straps, radio
-  add(torso, M([[box(0.4, 0.1, 0.27, 0.04), xform(0, -0.02, 0)]]), S.uniform);
-  add(torso, M([[box(0.41, 0.05, 0.28, 0.015), xform(0, 0.07, 0)], [box(0.08, 0.1, 0.06, 0.015), xform(0.16, 0.04, 0.12)], [box(0.08, 0.1, 0.06, 0.015), xform(-0.16, 0.04, 0.12)], [box(0.06, 0.16, 0.05, 0.012), xform(-0.12, 0.42, 0.2)]]), S.vest);
-  // legs
-  const leg = (side) => {
-    const hip = new THREE.Group(); hip.position.set(side * 0.105, 0, 0); body.add(hip);
-    const th = limb(0.47, 0.118, 0.098, S.uniform); hip.add(th);
-    const knee = new THREE.Group(); knee.position.y = -0.45; th.add(knee);
-    const sh = limb(0.45, 0.094, 0.07, S.uniform); knee.add(sh);
-    // cargo pocket and knee pad
-    const pocket = new THREE.Mesh(box(0.05, 0.16, 0.13, 0.02), S.uniform); pocket.position.set(side * 0.105, -0.26, 0); pocket.castShadow = true; th.add(pocket);
-    const pad = new THREE.Mesh(box(0.12, 0.13, 0.05, 0.022), S.vest); pad.position.set(0, -0.02, -0.085); pad.castShadow = true; sh.add(pad);
-    const boot = new THREE.Mesh(M([[rcyl(0.07, 0.16, 0.02, 24), xform(0, -0.42, 0)], [box(0.12, 0.1, 0.3, 0.045), xform(0, -0.49, -0.05)], [box(0.125, 0.03, 0.31, 0.012), xform(0, -0.535, -0.05)]]), S.boot); boot.castShadow = true; sh.add(boot);
-    return { hip, knee };
-  };
-  const legR = leg(1), legL = leg(-1);
-  // rifle held across the body
+  const { mesh, bones, rest } = createSoldierMesh({ camo: S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor });
+  root.add(mesh);
   const rifle = kalashnikov(S, variant);
-  rifle.position.set(0.08, 0.32, -0.28);
-  torso.add(rifle);
+  root.add(rifle);
   // muzzle flash
   const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.0, -0.66); rifle.add(flash);
   const fl = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.5, 1.5) }));
   fl.position.set(0, 0.0, -0.66); fl.visible = false; rifle.add(fl);
   root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
-  return { root, body, torso, head, armR, armL, legR, legL, rifle, flash, flashMesh: fl };
+  const seed = Math.random() * 100;
+  const g = {
+    root, rifle, flash, flashMesh: fl, mesh, bones, rest,
+    s: { t: 0, time: seed, ph: null, rate: 0, seed, hitSide: 1, lastHit: 0, death: null, mm: bones.map(() => new THREE.Matrix4()), mq: bones.map(() => new THREE.Quaternion()) },
+  };
+  poseGuard(g, { walk: 0, speed: 0, aim: 0, flash: 0, hit: 0, dead: 0, fallDir: 1 });
+  return g;
 }
 
-/** Pose a guard. st: {walk, speed(0..1), aim(0..1), flash, hit, dead(0..1 progress), time} */
-export function poseGuard(g, st) {
-  const ph = st.walk, sp = st.speed;
-  const swing = Math.sin(ph) * 0.55 * sp;
-  g.legR.hip.rotation.x = swing; g.legL.hip.rotation.x = -swing;
-  g.legR.knee.rotation.x = Math.max(0, -Math.cos(ph)) * 0.9 * sp + 0.05;
-  g.legL.knee.rotation.x = Math.max(0, Math.cos(ph)) * 0.9 * sp + 0.05;
-  g.body.position.y = 1.0 - Math.abs(Math.sin(ph)) * 0.035 * sp - st.aim * 0.05;
-  g.torso.rotation.y = Math.sin(ph) * 0.08 * sp;
-  g.torso.rotation.x = -0.05 - st.aim * 0.08 + st.hit * 0.35;
-  // arms hold the rifle: patrol low-ready vs aiming
-  const a = st.aim;
-  g.rifle.position.set(0.07 - a * 0.02, 0.27 + a * 0.2, -0.2 - a * 0.06);
-  g.rifle.rotation.set(0.45 * (1 - a) + st.hit * 0.3, 0.3 * (1 - a), 0);
+// ------------------------------------------------------------------ math helpers
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const PARENT = BONE_DEFS.map(d => d[1]);
+const _qf = new THREE.Quaternion(), _e = new THREE.Euler(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
+const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
+const _S = new THREE.Vector3(), _T = new THREE.Vector3(), _E = new THREE.Vector3(), _u = new THREE.Vector3(), _w = new THREE.Vector3();
+const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+const UNIT = new THREE.Vector3(1, 1, 1);
+const _pLow = new THREE.Vector3(), _pAim = new THREE.Vector3(), _qLow = new THREE.Quaternion(), _qAim = new THREE.Quaternion();
+const qE = (x, y, z, q = new THREE.Quaternion()) => q.setFromEuler(_e.set(x, y, z, 'YXZ'));
+
+/** Model-space (root-local) forward kinematics for bone i (parents must be current). */
+function fk(g, i) {
+  const s = g.s, b = g.bones[i], p = PARENT[i];
+  b.updateMatrix();
+  if (p < 0) { s.mm[i].copy(b.matrix); s.mq[i].copy(b.quaternion); }
+  else { s.mm[i].multiplyMatrices(s.mm[p], b.matrix); s.mq[i].multiplyQuaternions(s.mq[p], b.quaternion); }
+}
+function fkFrom(g, i0) { for (let i = i0; i < g.bones.length; i++) fk(g, i); }
+const bonePos = (g, i, v) => v.setFromMatrixPosition(g.s.mm[i]);
+/** Set bone i so that its model-space orientation equals q. */
+function setModelRot(g, i, q) {
+  const p = PARENT[i];
+  g.bones[i].quaternion.copy(_q3.copy(g.s.mq[p]).invert().multiply(q));
+  fk(g, i);
+}
+
+/**
+ * Analytic two-bone IK in model space. Limbs point along local -Y.
+ * sign +1 (arm): local +Z faces the joint pole, lower bone flexes toward local -Z.
+ * sign -1 (leg): local -Z faces the joint pole (knee forward), shin flexes toward +Z.
+ */
+function twoBone(g, iu, il, L1, L2, target, pole, sign) {
+  bonePos(g, iu, _S);
+  _u.subVectors(target, _S);
+  let d = _u.length();
+  d = clamp(d, 0.05, (L1 + L2) * 0.9995);
+  _u.normalize();
+  const cosA = clamp((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d), -1, 1);
+  const sinA = Math.sqrt(1 - cosA * cosA);
+  _w.copy(pole).addScaledVector(_u, -pole.dot(_u));
+  if (_w.lengthSq() < 1e-8) _w.set(0, 0, sign); _w.normalize();
+  _E.copy(_S).addScaledVector(_u, L1 * cosA).addScaledVector(_w, L1 * sinA);
+  _T.copy(_S).addScaledVector(_u, d);
+  _a.subVectors(_E, _S).normalize();           // upper direction
+  _b.subVectors(_T, _E).normalize();           // lower direction
+  _y.copy(_a).negate();
+  _z.copy(_w).addScaledVector(_a, -_w.dot(_a)).normalize().multiplyScalar(sign);
+  _x.crossVectors(_y, _z).normalize();
+  _z.crossVectors(_x, _y);
+  _m.makeBasis(_x, _y, _z);
+  _q.setFromRotationMatrix(_m);
+  setModelRot(g, iu, _q);
+  const ang = Math.acos(clamp(_a.dot(_b), -1, 1));
+  g.bones[il].quaternion.setFromAxisAngle(_x.set(1, 0, 0), sign * ang);
+  fk(g, il);
+}
+
+// hand frames relative to the rifle (see soldier.js hand(): palm faces -X*side, grip centre at (palm*0.03, -0.097, 0))
+const GRIP_R = new THREE.Vector3(0, -0.062, 0.1);
+const GRIP_L = new THREE.Vector3(-0.004, -0.012, -0.21);
+const HAND_R_Q = (() => {
+  const X = new THREE.Vector3(1, 0, 0), Zd = new THREE.Vector3(0, -0.95, 0.31).normalize();
+  const Y = new THREE.Vector3().crossVectors(Zd, X).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Zd));
+})();
+const HAND_L_Q = (() => {
+  const al = 0.55, Y = new THREE.Vector3(-Math.cos(al), -Math.sin(al), 0), Zd = new THREE.Vector3(0, 0, 1);
+  const X = new THREE.Vector3().crossVectors(Y, Zd).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Zd));
+})();
+const GRIP_IN_HAND_R = new THREE.Vector3(-0.03, -0.097, 0.004);
+const GRIP_IN_HAND_L = new THREE.Vector3(0.03, -0.097, 0.0);
+const EYE = new THREE.Vector3(0.034, 0.128, -0.078);
+
+// ------------------------------------------------------------------ alive pose
+function poseAlive(g, st, dt) {
+  const s = g.s, B = g.bones, t = s.time;
+  for (let i = 0; i < B.length; i++) { B[i].quaternion.identity(); B[i].position.copy(g.rest[i]); }
+  const aimRaw = clamp(st.aim, 0, 1), A = sstep(0, 1, aimRaw);
+  const sp = clamp(st.speed, 0, 1);
+  const m = sstep(0.04, 0.3, sp) * sstep(0.3, 1.2, s.rate);
+  const run = sstep(0.6, 0.95, sp);
+  const ph = st.walk;
+  const duty = lerp(0.6, 0.42, run);
+  const rate = Math.max(s.rate, 1.5);
+  const v = sp * 2.3;
+  const D = clamp(v * duty * Math.PI * 2 / rate, 0, 0.95) * m;
+  const breath = Math.sin(t * 1.65 + s.seed);
+  const shift = Math.sin(t * 0.33 + s.seed * 1.7);
+  const hit = clamp(st.hit, 0, 1);
+  if (hit > s.lastHit + 0.3) s.hitSide = Math.random() < 0.5 ? -1 : 1;
+  s.lastHit = hit;
+  const kick = st.flash > 0 ? clamp(st.flash / 0.13, 0, 1) : 0;
+  const midR = Math.PI * duty;
+
+  // ---- pelvis
+  const bobW = Math.cos(2 * (ph - midR));
+  const hy = 0.97 - 0.022 - 0.045 * A - 0.06 * run * m + m * (0.022 * (1 - run) * bobW - 0.025 * run * bobW) + 0.004 * (1 - m) * breath * 0.3;
+  const hx = m * 0.022 * (1 - 0.5 * run) * Math.cos(ph - midR) + (1 - m) * 0.022 * shift;
+  const hz = 0.02 * A;
+  const swingR = Math.PI * 2 * (duty + (1 - duty) / 2);
+  const twist = m * (0.1 + 0.06 * run) * Math.cos(ph - swingR);
+  const blade = -0.38 * A * (1 - 0.6 * m);
+  B[BI.hips].position.set(hx, hy, hz);
+  qE(-(0.03 + 0.12 * run * m + 0.04 * A) + hit * 0.12, twist + blade, m * 0.035 * (1 - run) * Math.cos(ph - midR) + (1 - m) * 0.03 * shift, B[BI.hips].quaternion);
+  // ---- spine / chest (counter-rotate the gait twist; square the shoulders when aiming)
+  qE(-0.02 - 0.05 * A + hit * 0.12, -twist * 0.45 - blade * 0.2 + hit * 0.15 * s.hitSide, -0.02 * shift * (1 - m), B[BI.spine].quaternion);
+  qE(0.01 * breath * (1 - 0.5 * A) - 0.03 * A - 0.04 * run * m + hit * 0.18 + kick * 0.04, -twist * 0.5 - blade * 0.2 + hit * 0.2 * s.hitSide, 0, B[BI.chest].quaternion);
+  B[BI.chest].position.y += 0.0025 * breath;
+  // clavicles: slight shrug/protraction when shouldering
+  qE(0, 0.06 * A, 0.14 * A + 0.01 * breath, B[BI.clavR].quaternion);
+  qE(0, -0.12 - 0.3 * A, -0.04 * A - 0.01 * breath, B[BI.clavL].quaternion);
+  // neck flexes forward into the cheek weld
+  qE(-0.04 - 0.62 * A + hit * 0.25, 0, -0.14 * A, B[BI.neck].quaternion);
+  fkFrom(g, 0);
+
+  // ---- head: gaze-stabilised in model space
+  const scan = (1 - A) * (0.45 * Math.sin(t * 0.27 + s.seed) + 0.15 * Math.sin(t * 0.71 + s.seed * 3));
+  const lookPitch = lerp(-0.1 + 0.03 * Math.sin(t * 0.4), -0.2, A) + hit * 0.35;
+  setModelRot(g, BI.head, qE(lookPitch, scan + A * 0.04, -0.2 * A, _q2));
+  fkFrom(g, BI.head + 1);
+
+  // ---- legs: foot-planted gait blended with an idle / bladed stance
+  for (const side of [1, -1]) {
+    const R = side > 0;
+    const phi = ph + (R ? 0 : Math.PI);
+    const u = ((phi / (Math.PI * 2)) % 1 + 1) % 1;
+    let fz, fy = 0, pitch = 0;
+    if (u < duty) {
+      const k = u / duty;
+      fz = -D / 2 + D * k;
+      if (k < 0.15) pitch = 0.28 * (1 - k / 0.15) ** 2;
+      else if (k > 0.7) pitch = -0.55 * ((k - 0.7) / 0.3) ** 2;
+    } else {
+      const k = (u - duty) / (1 - duty), e = k * k * (3 - 2 * k);
+      fz = D / 2 - D * e;
+      fy = (0.08 + 0.08 * run) * Math.sin(Math.PI * Math.min(1, k * 1.15)) * m;
+      pitch = lerp(-0.55, 0.28, sstep(0.1, 0.95, k)) * m;
+    }
+    pitch *= m;
+    const ix = side * (0.12 + 0.03 * A), iz = (R ? 0.02 + 0.1 * A : -0.03 - 0.12 * A) + (R ? 0.01 : -0.01) * shift;
+    const x = lerp(ix, side * 0.1, m), z = lerp(iz, fz, m) + hz;
+    const yaw = -side * 0.12 + (R ? -0.55 : -0.3) * A * (1 - m);
+    // ankle from ground contact with heel / ball pivot
+    const fq = _qf.setFromEuler(_e.set(pitch, yaw, 0, 'YXZ'));
+    const piv = pitch >= 0 ? _a.set(0, -0.085, 0.04) : _a.set(0, -0.085, -0.15);
+    _c.set(0, 0, 0).add(piv); _c.applyAxisAngle(_d.set(0, 1, 0), yaw);       // flat pivot offset
+    _T.set(x, fy + 0.085, z).add(_c);                                          // pivot position
+    _b.copy(piv).applyQuaternion(fq);
+    _T.sub(_b);                                                                // ankle position
+    _d.set(side * 0.12, 0, -1).applyAxisAngle(_c.set(0, 1, 0), yaw * 0.7 + twist * 0.5);
+    twoBone(g, R ? BI.thighR : BI.thighL, R ? BI.shinR : BI.shinL, LEN.thigh, LEN.shin, _T, _d, -1);
+    setModelRot(g, R ? BI.footR : BI.footL, fq);
+  }
+
+  // ---- rifle: patrol low-ready (anchored to the chest) -> shouldered (anchored to the eye)
+  const ch = s.mm[BI.chest];
+  _m.compose(_a.set(0.0, -0.1, -0.21), qE(-0.62, 0.5, 0.3, _q), UNIT);
+  _m2.multiplyMatrices(ch, _m);
+  const pLow = _pLow.setFromMatrixPosition(_m2), qLow = _qLow.setFromRotationMatrix(_m2);
+  const qAim = qE(0.012 * breath + kick * 0.06 + hit * 0.25, 0.01 * Math.sin(t * 0.9 + s.seed), 0, _qAim);
+  const pAim = _pAim.copy(EYE).applyMatrix4(s.mm[BI.head]).sub(_b.set(0, 0.066, 0.2 - kick * 0.03).applyQuaternion(qAim));
+  const rq = g.rifle.quaternion.slerpQuaternions(qLow, qAim, A);
+  g.rifle.position.lerpVectors(pLow, pAim, A);
   g.rifle.updateMatrix();
-  // two-bone IK: right hand on the pistol grip, left hand on the handguard
-  reach(g.armR, _v1.set(0, -0.07, 0.1).applyMatrix4(g.rifle.matrix), _pR);
-  reach(g.armL, _v2.set(0, -0.01, -0.27).applyMatrix4(g.rifle.matrix), _pL);
-  g.head.rotation.x = a * 0.12;
+
+  // ---- arms: IK onto the rifle
+  for (const side of [1, -1]) {
+    const R = side > 0;
+    const hq = _q2.multiplyQuaternions(rq, R ? HAND_R_Q : HAND_L_Q);
+    const grip = _a.copy(R ? GRIP_R : GRIP_L).applyMatrix4(g.rifle.matrix);
+    const wrist = grip.sub(_b.copy(R ? GRIP_IN_HAND_R : GRIP_IN_HAND_L).applyQuaternion(hq));
+    const pole = R ? _d.set(0.55 + 0.4 * A, -1 + 0.55 * A, 0.35) : _d.set(-0.35 - 0.2 * A, -1, 0.1);
+    twoBone(g, R ? BI.uarmR : BI.uarmL, R ? BI.farmR : BI.farmL, LEN.upper, LEN.fore, wrist, pole, 1);
+    setModelRot(g, R ? BI.handR : BI.handL, hq);
+  }
+}
+
+// ------------------------------------------------------------------ death
+function keyPose(g, spec) {
+  const q = g.bones.map(() => new THREE.Quaternion()), p = g.rest.map(r => r.clone());
+  for (const [name, e] of Object.entries(spec)) {
+    if (name === 'pos') { p[0].set(...e); continue; }
+    qE(e[0] || 0, e[1] || 0, e[2] || 0, q[BI[name]]);
+  }
+  return { q, p };
+}
+function deathKeys(g, dir, side) {
+  const slump = keyPose(g, {
+    pos: [0.02 * side, 0.74, 0.05 * dir],
+    hips: [0.1 * dir, 0.15 * side, 0.05 * side], spine: [-0.25, 0.1 * side, 0], chest: [-0.2, 0.15 * side, 0.05 * side], neck: [-0.3], head: [-0.25, 0.2 * side],
+    thighR: [0.75, 0, 0.05], shinR: [-1.5], footR: [0.6], thighL: [0.8, 0, -0.05], shinL: [-1.55], footL: [0.65],
+    uarmR: [0.35, 0, 0.25], farmR: [0.6], uarmL: [0.3, 0, -0.2], farmL: [0.5], handR: [0.2], handL: [0.2],
+  });
+  const lie = dir > 0 ? keyPose(g, {
+    // on the back, legs splayed, one knee raised, head rolled to one side
+    pos: [0.08 * side, 0.2, 0.8], hips: [1.5, 0.2 * side, 0.1 * side],
+    spine: [-0.06, 0.12 * side, 0], chest: [-0.04, 0.18 * side, 0.05 * side], neck: [0.05], head: [0.12, 0.85 * side, 0.15 * side],
+    thighR: side > 0 ? [0.55, 0, 0.12] : [0.05, 0, 0.18], shinR: side > 0 ? [-0.95] : [-0.15], footR: [0.3, 0, 0.3],
+    thighL: side < 0 ? [0.55, 0, -0.12] : [0.05, 0, -0.18], shinL: side < 0 ? [-0.95] : [-0.15], footL: [0.3, 0, -0.3],
+    clavR: [0, 0, 0.1], clavL: [0, 0, -0.1],
+    uarmR: [0.15, 0, 1.0], farmR: [0.7], handR: [0.3], uarmL: [0.4, 0, -0.7], farmL: [1.0], handL: [0.3],
+  }) : keyPose(g, {
+    // face down, head turned, arms tucked
+    pos: [0.08 * side, 0.2, -0.8], hips: [-1.52, 0.2 * side, -0.08 * side],
+    spine: [0.05, 0.1 * side, 0], chest: [0.06, 0.15 * side, 0], neck: [0.25], head: [0.25, 1.1 * side, 0.1 * side],
+    thighR: [-0.05, 0, 0.12], shinR: [-0.12], footR: [1.1], thighL: [-0.1, 0, -0.1], shinL: [-0.05], footL: [1.0],
+    uarmR: [-0.1, 0, 0.3], farmR: [0.1], handR: [0, 0.8], uarmL: [-0.2, 0, -0.45], farmL: [0.15], handL: [0, -0.8],
+  });
+  return { slump, lie };
+}
+
+const GROUND_PROBES = [
+  [BI.hips, 0, 0, 0, 0.12], [BI.spine, 0, 0.08, 0, 0.12], [BI.chest, 0, 0.12, 0, 0.13], [BI.head, 0, 0.13, -0.01, 0.1],
+  [BI.shinR, 0, 0, 0, 0.06], [BI.shinL, 0, 0, 0, 0.06], [BI.farmR, 0, 0, 0, 0.05], [BI.farmL, 0, 0, 0, 0.05],
+  [BI.handR, 0, -0.08, 0, 0.025], [BI.handL, 0, -0.08, 0, 0.025],
+  [BI.footR, 0, -0.085, 0.05, 0], [BI.footR, 0, -0.06, -0.2, 0], [BI.footL, 0, -0.085, 0.05, 0], [BI.footL, 0, -0.06, -0.2, 0],
+];
+function poseDeath(g, st) {
+  const s = g.s, B = g.bones, D = s.death;
+  const T = st.dead * 0.9; // seconds since death
+  const w1 = sstep(0, 0.42, T);
+  const pf = clamp((T - 0.3) / 0.62, 0, 1), w2 = pf * pf;        // accelerating topple
+  const settle = T > 0.92 ? Math.sin(clamp((T - 0.92) / 0.35, 0, 1) * Math.PI) * Math.exp(-(T - 0.92) * 3) : 0;
+  for (let i = 0; i < B.length; i++) {
+    _q.slerpQuaternions(D.k0.q[i], D.slump.q[i], w1);
+    B[i].quaternion.slerpQuaternions(_q, D.lie.q[i], w2);
+    _a.lerpVectors(D.k0.p[i], D.slump.p[i], w1);
+    B[i].position.lerpVectors(_a, D.lie.p[i], w2);
+  }
+  // fall arc: the pelvis travels in an arc rather than a straight line
+  B[0].position.y += Math.sin(w2 * Math.PI) * 0.08 + settle * 0.03;
+  B[BI.chest].quaternion.multiply(qE(-settle * 0.08 * D.dir, 0, 0, _q));
+  fkFrom(g, 0);
+  // keep the body out of the ground: lift the pelvis by the deepest penetration
+  let lift = 0;
+  for (const [i, x, y, z, r] of GROUND_PROBES) { _a.set(x, y, z).applyMatrix4(s.mm[i]); lift = Math.max(lift, r - _a.y); }
+  if (lift > 0) { B[0].position.y += lift; fkFrom(g, 0); }
+  // rifle: released, drops and clatters onto its side next to the body
+  const r = clamp((T - 0.1) / 0.5, 0, 1), rf = r * r;
+  const bounce = T > 0.6 ? Math.abs(Math.sin((T - 0.6) * 9)) * Math.exp(-(T - 0.6) * 7) * 0.05 : 0;
+  g.rifle.position.lerpVectors(D.r0p, D.r1p, rf); g.rifle.position.y += bounce;
+  g.rifle.quaternion.slerpQuaternions(D.r0q, D.r1q, sstep(0, 1, r));
+}
+
+// ------------------------------------------------------------------ public
+/** Pose a guard. st: {walk, speed(0..1), aim(0..1), flash, hit, dead (0 alive, then s/0.9), fallDir} */
+export function poseGuard(g, st) {
+  const s = g.s;
+  const DBG = globalThis.__GUARD_DEBUG__; // TEMP QA hook
+  if (DBG) { st = { ...st, ...DBG }; if (DBG.rate !== undefined) s.rateOverride = DBG.rate; if (DBG.facing !== undefined) g.root.rotation.y = DBG.facing; }
+  const now = performance.now() / 1000;
+  const dt = s.t ? clamp(now - s.t, 0, 0.1) : 0.016;
+  s.t = now; s.time += dt;
+  if (s.ph === null) s.ph = st.walk;
+  if (dt > 1e-4) s.rate += (clamp((st.walk - s.ph) / dt, 0, 14) - s.rate) * Math.min(1, dt * 8);
+  s.ph = st.walk;
+  if (DBG && DBG.rate !== undefined) s.rate = DBG.rate;
+  if (DBG && DBG.time !== undefined) s.time = DBG.time;
+
   g.flash.intensity = st.flash > 0 ? 18 : 0;
   g.flashMesh.visible = st.flash > 0;
-  // death: knees buckle, then fall backward/sideways
-  if (st.dead > 0) {
-    const d = Math.min(1, st.dead);
-    const e = d * d * (3 - 2 * d);
-    g.legR.knee.rotation.x = g.legL.knee.rotation.x = 1.2 * Math.min(1, d * 2);
-    g.body.position.y = 1.0 - e * 0.8;
-    g.root.rotation.x = e * 1.45 * st.fallDir;
-    g.root.rotation.z = e * 0.2;
-    g.torso.rotation.x = -e * 0.3;
-      g.rifle.visible = d < 0.6;
-  } else { g.root.rotation.x = 0; g.root.rotation.z = 0; g.rifle.visible = true; }
-}
+  g.flashMesh.rotation.z = Math.random() * 6.28;
+  g.flashMesh.scale.setScalar(0.8 + Math.random() * 0.6);
 
-const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
-const _pR = new THREE.Vector3(0.7, -1, 0.35), _pL = new THREE.Vector3(-0.8, -1, 0.1);
-const DOWN = new THREE.Vector3(0, -1, 0);
-const UPPER = 0.3, FORE = 0.29;
-const _u = new THREE.Vector3(), _w = new THREE.Vector3(), _e = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
-/** Analytic two-bone IK in torso space; limbs point along -Y in their local frames. */
-function reach(arm, target, pole) {
-  const S = arm.base;
-  _u.copy(target).sub(S);
-  let d = _u.length();
-  d = Math.min(Math.max(d, 0.08), UPPER + FORE - 0.002);
-  _u.normalize();
-  const cosA = (UPPER * UPPER + d * d - FORE * FORE) / (2 * UPPER * d);
-  const sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
-  _w.copy(pole).addScaledVector(_u, -pole.dot(_u)).normalize();
-  _e.copy(S).addScaledVector(_u, UPPER * cosA).addScaledVector(_w, UPPER * sinA);
-  arm.sh.quaternion.setFromUnitVectors(DOWN, _d.copy(_e).sub(S).normalize());
-  _q.copy(arm.sh.quaternion).invert();
-  _d.copy(target).sub(_e).normalize().applyQuaternion(_q);
-  arm.el.quaternion.setFromUnitVectors(DOWN, _d);
+  if (!(st.dead > 0)) {
+    s.death = null;
+    poseAlive(g, st, dt);
+  } else {
+    if (!s.death) {
+      const side = Math.random() < 0.5 ? -1 : 1, dir = st.fallDir >= 0 ? 1 : -1;
+      const k0 = { q: g.bones.map(b => b.quaternion.clone()), p: g.bones.map(b => b.position.clone()) };
+      const keys = deathKeys(g, dir, side);
+      const r1q = qE(0, side * 0.9 + 0.4 * dir, Math.PI / 2 * side);
+      s.death = {
+        dir, side, k0, ...keys,
+        r0p: g.rifle.position.clone(), r0q: g.rifle.quaternion.clone(),
+        r1p: new THREE.Vector3(0.42 * side, 0.026, -0.15 * dir), r1q,
+      };
+    }
+    poseDeath(g, st);
+    g.flash.intensity = 0; g.flashMesh.visible = false;
+  }
+  g.root.rotation.x = 0; g.root.rotation.z = 0;
+  g.rifle.visible = true;
 }

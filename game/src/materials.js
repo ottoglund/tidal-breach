@@ -345,7 +345,6 @@ function addWet(material, mode, ground, macro) {
       }
       #endif
       #include <opaque_fragment>`);
-  };
     shader.fragmentShader = fs;
   };
   material.customProgramCacheKey = () => 'wet-' + mode + (ground ? '-h' : '') + (macro ? '-' + macro : '') + '-v3';

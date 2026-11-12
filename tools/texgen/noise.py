@@ -229,7 +229,6 @@ def polyline_dist(n, polys, maxd, out=None, wrap=True):
         out = np.full((n, n), float(maxd), np.float32)
     for pts in polys:
         for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
-            offs = [(-n, 0, n)] if wrap else [(0,)]
             for ox in (-n, 0, n) if wrap else (0,):
                 for oy in (-n, 0, n) if wrap else (0,):
                     ax, ay, bx, by = x0 + ox, y0 + oy, x1 + ox, y1 + oy

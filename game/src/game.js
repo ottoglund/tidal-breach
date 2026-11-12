@@ -70,7 +70,7 @@ export class Game {
     if (!this.isTouch) this.pipeline.renderer.domElement.requestPointerLock?.();
     this.toast('UPPLINK OFFLINE — SABOTERA 3 NODER', 3.2);
   }
-  pause() { if (this.mode !== 'play') return; this.mode = 'pause'; $('pause').classList.add('show'); this.touch.firing = false; this.keys.mouse = false; if (document.pointerLockElement) document.exitPointerLock(); }
+  pause() { if (this.mode !== 'play') return; this.mode = 'pause'; this.audio.halt(); /* audio: silence barks/breathing */ $('pause').classList.add('show'); this.touch.firing = false; this.keys.mouse = false; if (document.pointerLockElement) document.exitPointerLock(); }
   resume() { if (this.mode !== 'pause') return; this.mode = 'play'; $('pause').classList.remove('show'); if (!this.isTouch) this.pipeline.renderer.domElement.requestPointerLock?.(); }
   finish(win) {
     if (this.mode !== 'play') return;
@@ -146,7 +146,9 @@ export class Game {
     p.ammo--; p.shots++;
     const ads = p.ads > 0.5;
     this.recoil += ads ? 0.042 : 0.062;
-    this.audio.gunshot();
+    // audio (presentation only): distances to the nearest walls front/right/back/left for slap-back echoes
+    const walls = [0, 1, 2, 3].map(i => { const a = p.yaw + i * Math.PI / 2, t = this.wallHit(p.x, p.z, p.x + Math.sin(a) * 60, p.z - Math.cos(a) * 60); return t === null ? 0 : t * 60; });
+    this.audio.gunshot({ walls });
     this.weapon.fire();
     this.camKick = (this.camKick || 0) + (ads ? 0.006 : 0.01);
     if (navigator.vibrate && this.isTouch) navigator.vibrate(12);
@@ -186,6 +188,7 @@ export class Game {
         this.showKill(killed ? (head ? 'HEADSHOT — TARGET NEUTRALIZED' : 'TARGET NEUTRALIZED') : 'TARGET HIT');
         if (killed) { best.alive = false; best.deathAt = performance.now() / 1000; best.fallDir = Math.random() < 0.5 ? 1 : -1; p.kills++; } else best.alert = 7;
         this.hitMarker(killed); this.audio.hitTick(killed);
+        this.audio.voice(killed ? 'death' : 'hit', { guardId: this.guardPool.indexOf(best.model), distance: bestT, x: best.x, z: best.z }); // audio: guard cry
         this.fx.blood(hitPoint, dir);
         this.audio.impact('flesh', bestT);
       } else { this.sabotage(best); this.fx.sparks(hitPoint, dir.clone().negate(), 14); }
@@ -208,11 +211,13 @@ export class Game {
     if (n.done) return;
     n.done = true;
     this.nodeVisual(n);
-    this.audio.sabotage();
+    this.audio.sabotage({ x: n.x, z: n.z, distance: dist(this.player, n) }); // audio: positional power-down
     this.fx.sparks(new THREE.Vector3(n.x, 1.2, n.z + 0.4), new THREE.Vector3(0, 1, 0.4), 30);
     const count = this.nodes.filter(m => m.done).length;
     this.toast(`◈ NOD ${count} AV 3 FÖRSTÖRD`, 2.8);
     if (count === 3) { $('uplinkState').textContent = 'ONLINE'; this.toast('ALLA NODER NERE — NÅ EVAKUERINGEN!', 5); this.spawnEnemy(-16, 9, 3); this.spawnEnemy(17, 14, 3); }
+    // audio (presentation only): nearest living guard calls the reinforcements in
+    if (count === 3) { const pl = this.player, g = this.enemies.filter(e => e.alive).sort((a, b) => dist(a, pl) - dist(b, pl))[0]; if (g) this.audio.voice('reinforce', { guardId: this.guardPool.indexOf(g.model), distance: dist(g, pl), x: g.x, z: g.z }); }
   }
 
   interact() {
@@ -239,6 +244,8 @@ export class Game {
     if (this.mode !== 'play' || this.frozen) return;
     const p = this.player, k = this.keys, T = this.touch;
     this.round += dt;
+    // audio (presentation only): listener pose for 3D sound, heartbeat, low-health breathing level
+    this.audio.listener(p.x, p.y, p.z, p.yaw); this.audio.lowHealth(clamp(1 - p.hp / 40, 0, 1));
     let mx = (k.KeyD ? 1 : 0) - (k.KeyA ? 1 : 0) + T.joyX, my = (k.KeyW ? 1 : 0) - (k.KeyS ? 1 : 0) - T.joyY;
     const mag = Math.hypot(mx, my); if (mag > 1) { mx /= mag; my /= mag; }
     const moving = mag > 0.08, sprint = (k.ShiftLeft || k.ShiftRight || T.sprint) && my > 0.05, crouching = k.KeyC, aiming = k.aim || T.aim;
@@ -258,7 +265,7 @@ export class Game {
       const oldStep = Math.floor(p.steps / 1.55);
       p.steps += dt * vel;
       this.bob += dt * (sprint ? 13 : 9.5) * Math.min(1, vel / 4);
-      if (Math.floor(p.steps / 1.55) !== oldStep) this.audio.footstep(sprint);
+      if (Math.floor(p.steps / 1.55) !== oldStep) this.audio.footstep(sprint, { crouch: crouching });
     } else this.bob += dt * 0.7;
     this.moving = vel > 0.3; this.sprinting = sprint && vel > 3;
     if (p.reloading > 0) {
@@ -278,6 +285,9 @@ export class Game {
       let targetX = e.baseX + Math.cos(time * 0.46 + e.phase) * e.r * 0.65, targetZ = e.baseZ + Math.sin(time * 0.46 + e.phase) * e.r * 0.65;
       if ((d < 23 && canSee) || e.alert > 0) { e.alert = Math.max(e.alert, 4); if (d > 5.5) { targetX = p.x; targetZ = p.z; } }
       e.alert -= dt;
+      // audio (presentation only): bark on first contact / re-engage, and when the guard loses the player
+      const gid = this.guardPool.indexOf(e.model), va = e.alert > 0;
+      if (va !== !!e._va) { this.audio.voice(va ? (e._seen ? 'engage' : 'contact') : 'search', { guardId: gid, distance: d, x: e.x, z: e.z }); if (va) e._seen = true; e._va = va; }
       const ex = targetX - e.x, ez = targetZ - e.z, nd = Math.hypot(ex, ez), step = Math.min(nd, dt * (e.alert > 0 ? 2.5 : 1.1));
       let moved = 0;
       if (nd > 0.15) {
@@ -292,16 +302,19 @@ export class Game {
       e.angle = lerpAngle(e.angle, face, Math.min(1, dt * 6));
       e.speed = lerp(e.speed, clamp(moved / Math.max(dt, 1e-4) / 2.5, 0, 1), Math.min(1, dt * 6));
       e.aim = lerp(e.aim, engage ? 1 : 0, Math.min(1, dt * 5));
+      // audio (presentation only): guard footfalls on the wet quay (one per half gait cycle)
+      const ws = Math.floor(e.walk / Math.PI); if (ws !== e._ws) { e._ws = ws; if (e.speed > 0.2) this.audio.guardStep({ x: e.x, z: e.z, distance: d, run: e.alert > 0 }); }
       e.cooldown -= dt;
       if (d < 27 && canSee && e.alert > 0 && e.cooldown <= 0) {
         e.cooldown = rr(1.25, 2.8); e.flash = 0.13;
         const chance = clamp(0.85 - d * 0.02 - (p.run * 0.2), 0.27, 0.72);
         const from = new THREE.Vector3(e.x + Math.sin(e.angle) * 0.6, 1.45, e.z + Math.cos(e.angle) * 0.6);
         const rel = Math.atan2(e.x - p.x, -(e.z - p.z)) - p.yaw, panv = Math.sin(rel);
-        this.audio.remoteShot(d, panv);
+        this.audio.remoteShot(d, panv, { x: from.x, y: from.y, z: from.z, guardId: gid }); // audio: 3D placement
+        this.audio.voice('engage', { guardId: gid, distance: d, x: e.x, z: e.z }); // audio: occasional fire bark (throttled)
         if (rand() < chance) { this.damage(rr(5, 13)); }
         else {
-          this.audio.bulletCrack(panv);
+          this.audio.bulletCrack(panv, d);
           const miss = new THREE.Vector3(p.x + rr(-1.2, 1.2), p.y + rr(-0.8, 0.6), p.z + rr(-1.2, 1.2));
           this.fx.tracer(from, miss.clone().sub(from).multiplyScalar(1.6).add(from), true);
         }

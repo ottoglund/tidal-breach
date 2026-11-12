@@ -6,6 +6,7 @@ import { Batch, box, cyl, rcyl, beam, tube, corrugated, plane, xform, catenary }
 import { mat, plainMat, textures } from '../materials.js';
 import { buildContainers, CONTAINER, bollardGeometry, lightMast, rtgCrane, shipHull, lathe, merged } from './props.js';
 import { lightCone, lampGlow } from './atmosphere.js';
+import { dressPort, vehicleLoads } from './props/dress.js';
 
 export const BOUNDS = { x1: -34.7, x2: 34.5, z1: -85, z2: 32.0 };
 export const SPAWN = { x: 0, z: 24, yaw: 0 };
@@ -23,6 +24,11 @@ const QUAY_E = 37.2, QUAY_S = 36.4, WATER_Y = -2.2;
 let seed = 1358961;
 const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) | 0; return (seed >>> 0) / 4294967296; };
 const rr = (a, b) => a + (b - a) * rand();
+// second stream for set dressing / stacking jitter so the gameplay-relevant
+// layout drawn from rand() above stays bit-identical
+let seed2 = 7700417;
+const rand2 = () => { seed2 = (Math.imul(seed2, 1664525) + 1013904223) | 0; return (seed2 >>> 0) / 4294967296; };
+const jit = (a) => (rand2() - 0.5) * 2 * a;
 
 export function buildLevel(scene, quality) {
   let this_ao = null;
@@ -110,8 +116,14 @@ export function buildLevel(scene, quality) {
     [-12, -7, 0, 2], [-12, -27, 0, 0], [13, -18, 0, 0], [13, -51, 0, 1], [-12, -49, 0, 4], [-12, -76, 0, 3],
     [12, -75, 0, 0], [26, -4, 1, 3], [-26, -19, 1, 1], [26, -42, 1, 2], [-26, -62, 1, 5], [13, -51, 1, 3]];
   const boxes = [];
+  const reefers = [];
   for (const [x, z, tier, c] of placements) {
-    boxes.push({ x, z, y: tier * H, ry: rand() < 0.5 ? 0 : Math.PI, color: c });
+    const b = { x, z, y: tier * H, ry: rand() < 0.5 ? 0 : Math.PI, color: c };
+    // real stacks are never perfectly aligned: a few cm of play in the twistlocks
+    if (tier) { b.x += jit(0.05); b.z += jit(0.09); b.ry += jit(0.006); }
+    // two reefers on the slice side, machinery end facing the pier head (visual only)
+    if ((x === 26 && z === 15 && !tier) || (x === 26 && z === -4 && tier === 1)) { b.ry = Math.PI; b.color = 5; reefers.push(b); }
+    boxes.push(b);
     if (!tier) block(x, z, CONTAINER.W, CONTAINER.L, H);
   }
   for (const [x, z, c] of [[-1, -38, 3], [10, 7, 1], [-1, -82, 2]]) {
@@ -119,8 +131,11 @@ export function buildLevel(scene, quality) {
     block(x, z, CONTAINER.L, CONTAINER.W, H);
   }
   // perimeter stacks closing the north end and the outer lanes (visual, behind bounds)
-  for (let x = -30; x <= 30; x += 2.6) for (let t = 0; t < 3; t++) if (rand() < 0.9 - t * 0.25) boxes.push({ x, z: -93, y: t * H, ry: rand() < .5 ? 0 : Math.PI, color: Math.floor(rand() * 6), bg: true });
-  for (let z = 26; z > -84; z -= 12.6) for (let t = 0; t < 4; t++) if (rand() < 0.95 - t * 0.2) boxes.push({ x: -31.5, z, y: t * H, ry: 0, color: Math.floor(rand() * 6), bg: t > 0 });
+  // (a box is only kept when the tier below exists – no floating containers; rand() use unchanged)
+  const perimBlock = [];
+  for (let x = -30; x <= 30; x += 2.6) { let below = true; for (let t = 0; t < 3; t++) if (rand() < 0.9 - t * 0.25) { const b = { x: x + (t ? jit(0.04) : 0), z: -93 + (t ? jit(0.08) : 0), y: t * H, ry: rand() < .5 ? 0 : Math.PI, color: Math.floor(rand() * 6), bg: true }; if (below) boxes.push(b); else continue; } else below = false; }
+  for (let z = 26; z > -84; z -= 12.6) { let below = true; for (let t = 0; t < 4; t++) if (rand() < 0.95 - t * 0.2) { const b = { x: -31.5 + (t ? jit(0.04) : 0), z: z + (t ? jit(0.08) : 0), y: t * H, ry: t ? jit(0.005) : 0, color: Math.floor(rand() * 6), bg: t > 0 }; if (below) { boxes.push(b); if (!t) perimBlock.push(z); } } else below = false; }
+  boxes.push(...vehicleLoads());
   // gameplay-lane containers get full detail; the background perimeter stacks use the light LOD
   const near = boxes.filter(c => !c.bg), far = boxes.filter(c => c.bg);
   buildContainers(root, near);
@@ -167,6 +182,9 @@ export function buildLevel(scene, quality) {
     block(x + 0.3, z + 0.3 * (n > 2), n > 1 ? 1.25 : 0.62, n > 2 ? 1.25 : 0.62, 0.9);
     placed++;
   }
+  // west perimeter stack (x=-31.5) is inside the bounds: give its ground tier collision
+  // (added after the drum scatter so the drum layout is unchanged)
+  for (const z of perimBlock) block(-31.5, z, CONTAINER.W, CONTAINER.L, H);
   // water-filled safety barriers along the pier head & east edge (visual reason for the bounds)
   const barrier = merged([[box(1.9, 0.75, 0.46, 0.12), xform(0, 0.375, 0)], [box(1.6, 0.24, 0.3, 0.1), xform(0, 0.84, 0)], [box(0.5, 0.08, 0.06, 0.03), xform(-0.5, 0.97, 0)]]);
   const barrierMat = plainMat(0x8c2a18, 0.5, 0, { wet: 'surface' });
@@ -325,6 +343,10 @@ export function buildLevel(scene, quality) {
     shore.add(lampGlow(new THREE.Vector3(rr(-260, 260), rr(1, 9), rr(260, 340)), c, rr(2, 5), 2.5));
   }
   root.add(shore);
+
+  // --------------------------------------------------------------- set dressing (props/dress.js)
+  const aoAdd = (x, z, w, d, ry = 0) => this_ao.add(aoMat, plane(w, d, 1, 1), xform(x, 0.009, z, ry, -Math.PI / 2));
+  dressPort({ root, B, G, M, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS });
 
   // --------------------------------------------------------------- nodes (jammer units)
   const nodeObjs = NODES.map(n => buildNode(root, B, M, n));

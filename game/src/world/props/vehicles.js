@@ -8,10 +8,28 @@ import { box, cyl, rcyl, tube, beam, xform, catenary } from '../../geo.js';
 const T = xform;
 const HALF_PI = Math.PI / 2;
 
+// Tyre: lathe with a rounded shoulder and a sidewall bulge (36 segments keeps
+// the silhouette round at street distance for a fraction of rcyl's cost).
+const tyreCache = new Map();
+function tyre(r, w) {
+  const k = r.toFixed(3) + ',' + w.toFixed(3);
+  if (!tyreCache.has(k)) {
+    const h = w / 2, f = Math.min(r * 0.2, w * 0.33);
+    const pts = [[r * 0.6, -h * 0.92], [r - f, -h], [r - f * 0.3, -h + f * 0.3], [r, -h + f], [r, h - f], [r - f * 0.3, h - f * 0.3], [r - f, h], [r * 0.6, h * 0.92]]
+      .map(([a, b]) => new THREE.Vector2(a, b));
+    const g = new THREE.LatheGeometry(pts, 36);
+    const uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * Math.PI * 2 * r, uv.getY(i) * w * 1.5);
+    tyreCache.set(k, g);
+  }
+  return tyreCache.get(k);
+}
+
 /** Tyre + rim, axle along X. side = +1 / -1 (which way the rim face points). */
 export function wheel(put, x, y, z, r, w, side = 1, rimKey = 'steel') {
-  put('rubber', rcyl(r, w, Math.min(r * 0.22, w * 0.35), 40), T(x, y, z, 0, 0, HALF_PI));
-  put(rimKey, cyl(r * 0.62, r * 0.62, w + 0.012, 24), T(x, y, z, 0, 0, HALF_PI));
+  put('rubber', tyre(r, w), T(x, y, z, 0, 0, HALF_PI));
+  put(rimKey, cyl(r * 0.62, r * 0.62, w * 0.9, 24), T(x, y, z, 0, 0, HALF_PI));
+  put('rubber', cyl(r * 0.6, r * 0.6, w * 0.93, 24, true), T(x, y, z, 0, 0, HALF_PI));
   put('steel', cyl(r * 0.2, r * 0.24, 0.06, 12), T(x + side * (w / 2 + 0.03), y, z, 0, 0, HALF_PI));
   // wheel nuts
   for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; put('galv', box(0.03, 0.03, 0.03, 0), T(x + side * (w / 2 + 0.01), y + Math.sin(a) * r * 0.32, z + Math.cos(a) * r * 0.32)); }
