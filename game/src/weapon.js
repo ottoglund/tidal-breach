@@ -187,6 +187,8 @@ export class Weapon {
   fire() {
     this.recoilV += 0.9;
     this.kickRot += 0.045 + Math.random() * 0.02;
+    this.kickYaw = (this.kickYaw || 0) + (Math.random() - 0.45) * 0.03;   // slight right-bias horizontal jump
+    this.kickRoll = (this.kickRoll || 0) + (Math.random() - 0.5) * 0.04;
     this.flashT = 0.04;
     this.flash.rotation.z = Math.random() * Math.PI * 2;
     this.flash.scale.setScalar(0.75 + Math.random() * 0.5);
@@ -204,10 +206,19 @@ export class Weapon {
     const bobX = Math.sin(s.bob) * 0.011 * (s.moving ? 1 : 0.15) * steady;
     const bobY = Math.abs(Math.cos(s.bob)) * 0.009 * (s.moving ? 1 : 0.15) * steady;
     const breathe = Math.sin(s.time * 1.3) * 0.0012 * steady;
+    this.kickYaw = (this.kickYaw || 0) * Math.exp(-dt * 10);
+    this.kickRoll = (this.kickRoll || 0) * Math.exp(-dt * 9);
+    // holding a sight picture: slow figure-eight from breathing and muscle tremor
+    const hold = a * (Math.sin(s.time * 0.9) * 0.0007 + Math.sin(s.time * 7.3) * 0.00012);
+    const holdY = a * (Math.sin(s.time * 1.8) * 0.0005 + Math.sin(s.time * 6.1 + 1.0) * 0.0001);
+    // bring the rifle up on an arc (dips below the line, then settles into the shoulder)
+    const arc = Math.sin(Math.PI * a) * 0.02;
     const p = this.hip.clone().lerp(this.aim, a);
+    p.x += hold; p.y += holdY - arc;
     this.gun.position.set(p.x + bobX + this.swayX * steady, p.y - bobY + breathe + this.swayY * steady, p.z + this.recoil * 0.03);
     this.gun.rotation.set(this.kickRot * (1 - a * 0.6) + this.swayY * 3 * steady - this.sprint * 0.5, this.swayX * 3 * steady + this.sprint * 0.55 + (1 - a) * 0.04, -bobX * 2 - this.sprint * 0.3 - (1 - a) * 0.05);
     this.gun.position.x -= this.sprint * 0.02; this.gun.position.y -= this.sprint * 0.035;
+    this.gun.rotation.y += this.kickYaw; this.gun.rotation.z += this.kickRoll * (1 - a * 0.5);
     const r = s.reloading;
     if (r >= 0) {
       const tilt = Math.sin(Math.min(1, r * 1.15) * Math.PI);
