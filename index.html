@@ -90,6 +90,25 @@ function grainTexture(type){const [c,g]=textureCanvas(type==='asphalt'?512:512,5
  let rust=(type==='container'||type==='hull'||type==='metal')&& noise2((x>>3)*7+(y>>3)*17)>.85;const b=n+coarse+fine;
  for(let q=0;q<3;q++){let z=v[q]+b+(rust?(q===0?17:q===1?-21:-26):0);img.data[k+q]=clamp(z,0,255);}img.data[k+3]=255;
  }g.putImageData(img,0,0);
+ if(type==='asphalt'){
+  // Pebbled aggregate breaks up the uniform pixel noise at close range.
+  for(let i=0;i<1900;i++){
+   const x=rr(0,512),y=rr(0,512),rx=rr(.45,1.9),ry=rx*rr(.55,1.25),tone=rr(40,112),alpha=rr(.09,.27);
+   g.fillStyle=`rgba(${tone},${tone+rr(1,8)},${tone+rr(3,14)},${alpha})`;
+   g.beginPath();g.ellipse(x,y,rx,ry,rr(-.5,.5),0,Math.PI*2);g.fill();
+  }
+  // Thin branching cracks and old patch edges catch the grazing quay light.
+  for(let i=0;i<18;i++){
+   let x=rr(0,512),y=rr(0,512),steps=Math.floor(rr(4,10));
+   g.beginPath();g.moveTo(x,y);
+   for(let j=0;j<steps;j++){x+=rr(-18,18);y+=rr(-7,18);g.lineTo(x,y);}
+   g.strokeStyle=i%3===0?'#9b927744':'#08141988';g.lineWidth=rr(.45,1.15);g.stroke();
+   if(i%3===0){
+    g.beginPath();g.moveTo(x,y);g.lineTo(x+rr(-12,12),y+rr(3,13));
+    g.strokeStyle='#0b151a99';g.lineWidth=.55;g.stroke();
+   }
+  }
+ }
  if(type==='asphalt'||type==='concrete'){g.strokeStyle=type==='asphalt'?'#101d246d':'#434d4c62';g.lineWidth=1;for(let i=0;i<30;i++){let x=rr(0,512),y=rr(0,512);g.beginPath();g.moveTo(x,y);for(let j=0;j<4;j++){x+=rr(-21,21);y+=rr(5,26);g.lineTo(x,y);}g.stroke();}if(type==='concrete'){g.strokeStyle='#353f4260';g.strokeRect(4,4,504,504);}}
  if(type==='container'){for(let x=12;x<512;x+=21){g.fillStyle='#fff8';g.fillRect(x,0,2,512);g.fillStyle='#1b292a66';g.fillRect(x+8,0,3,512);}for(let i=0;i<180;i++){const x=rr(0,512),y=rr(0,512),wid=rr(2,23);g.fillStyle=`rgba(91,49,32,${rr(.02,.2)})`;g.fillRect(x,y,wid,rr(1,7));}}
  if(type==='metal'){g.strokeStyle='#e1e5e621';for(let x=0;x<512;x+=26){g.beginPath();g.moveTo(x,0);g.lineTo(x,512);g.stroke();}}
