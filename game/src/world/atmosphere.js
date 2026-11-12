@@ -1,6 +1,7 @@
 // Sky, environment lighting, harbour water, light shafts, lamp glows and rain.
 import * as THREE from 'three';
 import { textures, WET } from '../materials.js';
+import { FOG, SCATTER_GLSL } from '../fog.js';
 
 // ---------------------------------------------------------------------------
 // Overcast night sky lit from below by sodium city glow.
@@ -9,7 +10,8 @@ const SKY_VERT = /* glsl */`
 varying vec3 vDir;
 void main(){ vDir = normalize(position); vec4 p = modelViewMatrix * vec4(position,1.0); gl_Position = projectionMatrix * p; gl_Position.z = gl_Position.w; }`;
 const SKY_FRAG = /* glsl */`
-uniform float uTime; uniform float uEnv;
+uniform float uTime; uniform float uEnv; uniform float uScat;
+${SCATTER_GLSL}
 varying vec3 vDir;
 float h(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float n3(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
@@ -35,13 +37,15 @@ void main(){
   col = mix(col, cloudCol * (0.7 + 0.6 * c2), clouds * smoothstep(-0.05, 0.12, y));
   // below horizon: dark sea haze
   col = mix(col, vec3(0.012, 0.016, 0.02), smoothstep(0.0, -0.08, y));
+  // lamps glowing through the rain haze against the sky
+  col += fogInscatter(d, 420.0) * uScat;
   gl_FragColor = vec4(col * uEnv, 1.0);
 }`;
 
 export function createSky() {
   const mat = new THREE.ShaderMaterial({
     vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false,
-    uniforms: { uTime: { value: 0 }, uEnv: { value: 1 } },
+    uniforms: { uTime: { value: 0 }, uEnv: { value: 1 }, uScat: { value: 1 }, ...FOG },
   });
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(500, 48, 24), mat);
   mesh.frustumCulled = false;
@@ -54,6 +58,7 @@ export function bakeEnvironment(renderer, lamps) {
   const envScene = new THREE.Scene();
   const sky = createSky();
   sky.material.uniforms.uEnv.value = 3.0;
+  sky.material.uniforms.uScat = { value: 0 };
   envScene.add(sky);
   // Lamps are deliberately NOT baked into the environment: an infinitely distant IBL
   // would mirror them in puddles at the wrong place (ghost highlights). Real lamp

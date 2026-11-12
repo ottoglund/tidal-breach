@@ -8,6 +8,9 @@ import { createSky, bakeEnvironment, createWater, createRain, createSplashes } f
 import { Weapon } from './weapon.js';
 import { Audio } from './audio.js';
 import { Game } from './game.js';
+import { installFog, attachFogUniforms, updateFogLamps } from './fog.js';
+
+installFog(); // must run before any material compiles
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -81,6 +84,15 @@ async function boot() {
   const audio = new Audio();
   const game = new Game({ pipeline: pipe, level, weapon, audio, isTouch, lights });
 
+  // lamps that light the rain haze (analytic in-scattering in fog.js)
+  const fogLamps = [
+    ...level.spots.map(s => ({ pos: s.pos.clone().add(new THREE.Vector3(0, -0.6, 0)), color: s.color, power: 0.06 })),
+    ...level.points.map(p => ({ pos: p.pos, color: p.color, power: 0.012 * p.intensity / 1000 })),
+    ...game.nodes.map(n => ({ pos: new THREE.Vector3(n.x + 0.45, 4.55, n.z - 0.2), color: new THREE.Color(1, 0.05, 0.02), power: 0.004, node: n })),
+  ];
+  attachFogUniforms(scene);
+  let fogTick = 0;
+
   // exposure tuned for the night scene (physically based light units)
   renderer.toneMappingExposure = 0.9;
 
@@ -104,6 +116,7 @@ async function boot() {
     game.update(dt, now);
     game.syncVisuals(now, dt);
     updateWet(now);
+    if ((fogTick++ % 10) === 0) updateFogLamps(fogLamps.filter(l => !l.node || !l.node.done), pipe.camera.position);
     rain.material.uniforms.uCam.value.copy(pipe.camera.position);
     splashes.material.uniforms.uCam.value.copy(pipe.camera.position);
     pipe.render(now, game.hitFlash);
