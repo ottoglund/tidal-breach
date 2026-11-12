@@ -37,4 +37,4 @@ The operator optic follows the Aimpoint red-dot form, with a tubular housing, ca
 
 ## Surface response
 
-The WebGL material shader samples neighbouring texels and perturbs the lighting normal using the painted texture and world-space wear variation. Container paint includes fading, chips and rain streaks. Wet asphalt uses irregular puddle masks with moving light reflections. The effect adds no external assets or network dependencies.
+The WebGL material shader samples neighbouring texels and perturbs the lighting normal using the painted texture and world-space wear variation. Container paint includes fading, chips and rain streaks. Wet asphalt uses irregular puddle masks with moving light reflections. The effect adds no external assets or network dependencies. The asphalt texture also layers small exposed aggregate, branching hairline cracks and worn repair seams into the material canvas to keep close surfaces from reading as uniform pixel noise.
