@@ -95,7 +95,7 @@ export function createGuard(variant = 'ak74') {
   const S = materials();
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body); // pelvis pivot
-  body.position.y = 0.98;
+  body.position.y = 1.0;
   const torso = new THREE.Group(); body.add(torso);
   const add = (parent, geo, material, shadow = true) => { const m = new THREE.Mesh(geo, material); m.castShadow = shadow; parent.add(m); return m; };
   // torso + plate carrier with pouches
@@ -135,9 +135,9 @@ export function createGuard(variant = 'ak74') {
   // arms
   const arm = (side) => {
     const sh = new THREE.Group(); sh.position.set(side * 0.23, 0.5, 0); torso.add(sh);
-    const up = limb(0.3, 0.068, 0.058, S.uniform); sh.add(up);
+    const up = limb(0.31, 0.075, 0.066, S.uniform); sh.add(up);
     const el = new THREE.Group(); el.position.y = -0.3; up.add(el);
-    const fo = limb(0.27, 0.058, 0.046, S.uniform); el.add(fo);
+    const fo = limb(0.28, 0.066, 0.05, S.uniform); el.add(fo);
     const hand = new THREE.Mesh(box(0.07, 0.1, 0.05, 0.022), S.glove); hand.position.y = -0.31; hand.castShadow = true; fo.add(hand);
     return { sh, el, base: sh.position.clone(), side };
   };
@@ -147,14 +147,14 @@ export function createGuard(variant = 'ak74') {
   add(torso, M([[box(0.41, 0.05, 0.28, 0.015), xform(0, 0.07, 0)], [box(0.08, 0.1, 0.06, 0.015), xform(0.16, 0.04, 0.12)], [box(0.08, 0.1, 0.06, 0.015), xform(-0.16, 0.04, 0.12)], [box(0.06, 0.16, 0.05, 0.012), xform(-0.12, 0.42, 0.2)]]), S.vest);
   // legs
   const leg = (side) => {
-    const hip = new THREE.Group(); hip.position.set(side * 0.1, 0, 0); body.add(hip);
-    const th = limb(0.45, 0.1, 0.078, S.uniform); hip.add(th);
+    const hip = new THREE.Group(); hip.position.set(side * 0.105, 0, 0); body.add(hip);
+    const th = limb(0.47, 0.118, 0.098, S.uniform); hip.add(th);
     const knee = new THREE.Group(); knee.position.y = -0.45; th.add(knee);
-    const sh = limb(0.44, 0.078, 0.06, S.uniform); knee.add(sh);
+    const sh = limb(0.45, 0.094, 0.07, S.uniform); knee.add(sh);
     // cargo pocket and knee pad
-    const pocket = new THREE.Mesh(box(0.05, 0.16, 0.13, 0.02), S.uniform); pocket.position.set(side * 0.085, -0.25, 0); pocket.castShadow = true; th.add(pocket);
-    const pad = new THREE.Mesh(box(0.11, 0.12, 0.05, 0.02), S.vest); pad.position.set(0, -0.03, -0.065); pad.castShadow = true; sh.add(pad);
-    const boot = new THREE.Mesh(M([[box(0.115, 0.11, 0.29, 0.045), xform(0, -0.48, -0.05)], [box(0.12, 0.03, 0.3, 0.012), xform(0, -0.53, -0.05)]]), S.boot); boot.castShadow = true; sh.add(boot);
+    const pocket = new THREE.Mesh(box(0.05, 0.16, 0.13, 0.02), S.uniform); pocket.position.set(side * 0.105, -0.26, 0); pocket.castShadow = true; th.add(pocket);
+    const pad = new THREE.Mesh(box(0.12, 0.13, 0.05, 0.022), S.vest); pad.position.set(0, -0.02, -0.085); pad.castShadow = true; sh.add(pad);
+    const boot = new THREE.Mesh(M([[rcyl(0.07, 0.16, 0.02, 24), xform(0, -0.42, 0)], [box(0.12, 0.1, 0.3, 0.045), xform(0, -0.49, -0.05)], [box(0.125, 0.03, 0.31, 0.012), xform(0, -0.535, -0.05)]]), S.boot); boot.castShadow = true; sh.add(boot);
     return { hip, knee };
   };
   const legR = leg(1), legL = leg(-1);
@@ -177,7 +177,7 @@ export function poseGuard(g, st) {
   g.legR.hip.rotation.x = swing; g.legL.hip.rotation.x = -swing;
   g.legR.knee.rotation.x = Math.max(0, -Math.cos(ph)) * 0.9 * sp + 0.05;
   g.legL.knee.rotation.x = Math.max(0, Math.cos(ph)) * 0.9 * sp + 0.05;
-  g.body.position.y = 0.98 - Math.abs(Math.sin(ph)) * 0.035 * sp - st.aim * 0.05;
+  g.body.position.y = 1.0 - Math.abs(Math.sin(ph)) * 0.035 * sp - st.aim * 0.05;
   g.torso.rotation.y = Math.sin(ph) * 0.08 * sp;
   g.torso.rotation.x = -0.05 - st.aim * 0.08 + st.hit * 0.35;
   // arms hold the rifle: patrol low-ready vs aiming
@@ -196,7 +196,7 @@ export function poseGuard(g, st) {
     const d = Math.min(1, st.dead);
     const e = d * d * (3 - 2 * d);
     g.legR.knee.rotation.x = g.legL.knee.rotation.x = 1.2 * Math.min(1, d * 2);
-    g.body.position.y = 0.98 - e * 0.8;
+    g.body.position.y = 1.0 - e * 0.8;
     g.root.rotation.x = e * 1.45 * st.fallDir;
     g.root.rotation.z = e * 0.2;
     g.torso.rotation.x = -e * 0.3;
