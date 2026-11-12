@@ -36,6 +36,12 @@ class GameSourceChecks(unittest.TestCase):
         self.assertIn("Thin branching cracks", HTML)
         self.assertIn("g.ellipse(x,y,rx,ry", HTML)
 
+    def test_recoil_moves_weapon_and_bullet_together(self):
+        self.assertIn("recoilPitch", HTML)
+        self.assertIn("pitch+rr(-spread,spread)+recoil*.72", HTML)
+        self.assertIn("recoil*=Math.exp", HTML)
+        self.assertIn("Math.min(.24,recoil+(player.ads?.042:.062))", HTML)
+
 if __name__ == "__main__":
     unittest.main()
 
