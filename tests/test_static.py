@@ -38,7 +38,8 @@ class GameSourceChecks(unittest.TestCase):
 
     def test_recoil_moves_weapon_and_bullet_together(self):
         self.assertIn("recoilPitch", HTML)
-        self.assertIn("pitch+rr(-spread,spread)+recoil*.72", HTML)
+        self.assertIn("pitch+rr(-spread,spread)+shotKick", HTML)
+        self.assertIn("shotKick=Math.min(.24,recoil*(player.ads?.88:1.15))", HTML)
         self.assertIn("recoil*=Math.exp", HTML)
         self.assertIn("Math.min(.24,recoil+(player.ads?.042:.062))", HTML)
 
