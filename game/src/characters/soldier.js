@@ -5,7 +5,7 @@
 // Skin weights blend across knees, elbows, hips, spine and neck so joints bend
 // without seams. Gear (chest rig, pouches, earmuffs, glasses, gloves, boots) is
 // appended to the same geometry, rigidly weighted to one bone each, so a guard
-// is a single skinned draw per material group (6 groups).
+// is a single skinned draw per material group (7 groups).
 //
 // All geometry is original procedural work (no imported assets).
 import * as THREE from 'three';
@@ -37,7 +37,7 @@ export const BI = Object.fromEntries(BONE_DEFS.map(([n], i) => [n, i]));
 export const LEN = { upper: 0.30, fore: 0.265, thigh: 0.44, shin: 0.405 };
 
 // material group order of the skinned mesh
-export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens'];
+export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove'];
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const AX = V(1, 0, 0), NZ = V(0, 0, -1), PY = V(0, 1, 0), PZ = V(0, 0, 1);
@@ -66,24 +66,30 @@ class SkinBuilder {
       }
       P.push(row);
     }
-    // smooth normals from finite differences (seamless across the u wrap)
+    // smooth normals from finite differences (seamless across the u wrap). The facing is decided ONCE per
+    // tube from the winding (not per vertex against the ring centre), so concave folds such as collar
+    // lips and cuff turn-ups keep correct, non-inverted shading.
     const Nn = [];
     const du = new THREE.Vector3(), dv = new THREE.Vector3(), n = new THREE.Vector3();
+    const nAt = (i, j) => {
+      const ip = Math.min(i + 1, rings.length - 1), im = Math.max(i - 1, 0);
+      du.subVectors(P[i][(j + 1) % N], P[i][(j + N - 1) % N]);
+      dv.subVectors(P[ip][j], P[im][j]);
+      return n.crossVectors(du, dv);
+    };
+    const mi0 = Math.floor(rings.length / 2) - 1, mj0 = Math.floor(N / 4);
+    const sgn = nAt(mi0, mj0).dot(tmp.subVectors(P[mi0][mj0], rings[mi0].c)) < 0 ? -1 : 1;
     for (let i = 0; i < rings.length; i++) {
       const row = [];
-      const ip = Math.min(i + 1, rings.length - 1), im = Math.max(i - 1, 0);
       for (let j = 0; j < N; j++) {
-        du.subVectors(P[i][(j + 1) % N], P[i][(j + N - 1) % N]);
-        dv.subVectors(P[ip][j], P[im][j]);
-        n.crossVectors(du, dv);
+        nAt(i, j);
         const out = tmp.subVectors(P[i][j], rings[i].c);
         if (n.lengthSq() < 1e-12 || rings[i].rx < 0.006) {
           // pole ring: point along the tube end
           n.subVectors(rings[i].c, rings[i === 0 ? 1 : rings.length - 2].c).normalize();
           n.lerp(out.normalize(), rings[i].rx < 0.006 ? 0.0 : 0.5).normalize();
         } else {
-          n.normalize();
-          if (n.dot(out) < 0) n.negate();
+          n.normalize().multiplyScalar(sgn);
         }
         row.push(n.clone());
       }
@@ -168,6 +174,56 @@ const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a)
 const xf = (x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0, sx = 1, sy = 1, sz = 1) =>
   new THREE.Matrix4().compose(V(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz, 'YXZ')), V(sx, sy, sz));
 
+
+// ---- ring refinement (Catmull-Rom) + fabric folds ------------------------------------------
+const cr = (p0, p1, p2, p3, t) => 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
+const mergeW = (wa, wb, t) => {
+  const m = new Map();
+  for (const [b, x] of wa) m.set(b, (m.get(b) || 0) + x * (1 - t));
+  for (const [b, x] of wb) m.set(b, (m.get(b) || 0) + x * t);
+  return [...m.entries()];
+};
+/** Insert interpolated rings: split(ringA, ringB) = number of segments the span is divided into. */
+function refine(rings, split) {
+  const out = [];
+  const n = rings.length;
+  for (let i = 0; i < n - 1; i++) {
+    const a = rings[i], b = rings[i + 1], p0 = rings[Math.max(i - 1, 0)], p3 = rings[Math.min(i + 2, n - 1)];
+    out.push(a);
+    const k = Math.max(1, split(a, b) | 0);
+    for (let q = 1; q < k; q++) {
+      const t = q / k;
+      const c = V(cr(p0.c.x, a.c.x, b.c.x, p3.c.x, t), cr(p0.c.y, a.c.y, b.c.y, p3.c.y, t), cr(p0.c.z, a.c.z, b.c.z, p3.c.z, t));
+      const f = key => Math.max(0.004, cr(p0[key], a[key], b[key], p3[key], t));
+      out.push({ c, rx: f('rx'), rf: f('rf'), rb: f('rb'), p: a.p + (b.p - a.p) * t, ax: a.ax, az: a.az, w: mergeW(a.w, b.w, t) });
+    }
+  }
+  out.push(rings[n - 1]);
+  return out;
+}
+const zoneSplit = (lo, hi, step, maxK = 4) => (a, b) => {
+  const y0 = Math.min(a.c.y, b.c.y), y1 = Math.max(a.c.y, b.c.y);
+  if (y1 < lo || y0 > hi) return 1;
+  return Math.min(maxK, Math.ceil((y1 - y0) / step));
+};
+/**
+ * Fabric fold: radial ripples with creased (cusped) valleys and rounded ridges, concentrated around y0.
+ * o = {y0, h (envelope half height), f (folds per metre), amp, a0, aw (angular focus exponent, 0 = all round), tilt (integer slant)}
+ */
+function fold(pt, r, a, o) {
+  const dy = pt.y - o.y0;
+  const env = Math.exp(-(dy * dy) / (o.h * o.h));
+  if (env < 0.02) return;
+  const mask = o.aw ? Math.pow(0.5 + 0.5 * Math.cos(a - o.a0), o.aw) : 1;
+  if (mask < 0.02) return;
+  const th = Math.PI * 2 * o.f * dy + (o.tilt || 0) * a + (o.ph || 0);
+  const wave = Math.pow(Math.abs(Math.sin(th)), 0.7) - 0.45;
+  const mod = 0.7 + 0.3 * Math.sin(a * 5 + dy * 31 + (o.ph || 0));
+  const ox = pt.x - r.c.x, oz = pt.z - r.c.z, l = Math.hypot(ox, oz) || 1;
+  const d = o.amp * env * mask * wave * mod;
+  pt.x += (ox / l) * d; pt.z += (oz / l) * d;
+}
+
 // ---------------------------------------------------------------- body parts
 function torso(B) {
   const { hips, spine, chest, neck, clavR, clavL } = BI;
@@ -180,15 +236,15 @@ function torso(B) {
     [0.95, 0.178, 0.112, 0.128, 0.0, 2.6, [[hips, 0.85], [spine, 0.15]]],
     // jacket hem flare over the trouser seat
     [0.985, 0.186, 0.12, 0.13, 0.0, 2.6, [[hips, 0.7], [spine, 0.3]]],
-    [1.0, 0.18, 0.116, 0.122, 0.0, 2.6, [[hips, 0.55], [spine, 0.45]]],
-    [1.05, 0.172, 0.112, 0.112, 0.0, 2.6, [[hips, 0.3], [spine, 0.7]]],
-    [1.1, 0.171, 0.112, 0.108, 0.003, 2.6, [[spine, 0.92], [hips, 0.08]]],
-    [1.16, 0.176, 0.118, 0.11, 0.005, 2.6, [[spine, 0.75], [chest, 0.25]]],
-    [1.23, 0.185, 0.126, 0.116, 0.008, 2.6, [[spine, 0.4], [chest, 0.6]]],
-    [1.3, 0.193, 0.132, 0.12, 0.01, 2.6, [[chest, 0.9], [spine, 0.1]]],
-    [1.37, 0.2, 0.13, 0.124, 0.012, 2.7, [[chest, 1]]],
-    [1.42, 0.205, 0.118, 0.12, 0.014, 2.8, [[chest, 1]]],
-    [1.46, 0.188, 0.098, 0.11, 0.016, 2.6, [[chest, 1]]],
+    [1.0, 0.178, 0.116, 0.122, 0.0, 2.6, [[hips, 0.55], [spine, 0.45]]],
+    [1.05, 0.158, 0.106, 0.106, 0.0, 2.5, [[hips, 0.3], [spine, 0.7]]],    // cinched waist under the belt
+    [1.1, 0.157, 0.106, 0.102, 0.003, 2.5, [[spine, 0.92], [hips, 0.08]]],
+    [1.16, 0.168, 0.114, 0.106, 0.005, 2.6, [[spine, 0.75], [chest, 0.25]]],
+    [1.23, 0.186, 0.126, 0.114, 0.008, 2.6, [[spine, 0.4], [chest, 0.6]]],
+    [1.3, 0.2, 0.134, 0.12, 0.01, 2.6, [[chest, 0.9], [spine, 0.1]]],
+    [1.37, 0.214, 0.134, 0.126, 0.012, 2.7, [[chest, 1]]],
+    [1.42, 0.224, 0.12, 0.122, 0.014, 2.9, [[chest, 1]]],                  // padded jacket shoulders
+    [1.46, 0.198, 0.1, 0.11, 0.016, 2.7, [[chest, 1]]],
     [1.49, 0.145, 0.08, 0.092, 0.016, 2.3, [[chest, 0.9], [neck, 0.1]]],
     [1.515, 0.098, 0.07, 0.078, 0.014, 2.1, [[chest, 0.75], [neck, 0.25]]],
     // stand-up collar of the jacket
@@ -197,7 +253,7 @@ function torso(B) {
     [1.555, 0.066, 0.052, 0.058, 0.012, 2, [[chest, 0.4], [neck, 0.6]]],
     [1.54, 0.004, 0.004, 0.004, 0.012, 2, [[neck, 1]]],
   ];
-  const rings = T.map(([y, rx, rf, rb, cz, p, w]) => ring(V(0, y, cz), rx, rf, rb, w, p));
+  const rings = refine(T.map(([y, rx, rf, rb, cz, p, w]) => ring(V(0, y, cz), rx, rf, rb, w, p)), (a, b) => Math.max(zoneSplit(0.93, 1.17, 0.021, 3)(a, b), zoneSplit(1.34, 1.5, 0.03, 2)(a, b)));
   B.tube('camo', rings, 24, (i, a, pt, r) => {
     // shoulders follow the clavicles a little; trouser seat follows the thighs a little
     const w = r.w.map(x => x.slice());
@@ -211,10 +267,16 @@ function torso(B) {
       w.forEach(x => (x[1] *= 1 - k)); w.push([side > 0 ? BI.thighR : BI.thighL, k]);
     }
     return w;
-  }, (pt, i, a) => {
+  }, (pt, i, a, r) => {
     // chest/back shaping: slight pectoral fullness, flatter sides, spine groove behind
     const s = Math.sin(a);
     if (pt.y > 1.2 && pt.y < 1.44 && s < 0) pt.z -= 0.008 * Math.pow(Math.abs(Math.cos(a * 2)), 3) * -s;
+    // jacket bunching above the belt and a gathered hem below it
+    fold(pt, r, a, { y0: 1.125, h: 0.032, f: 17, amp: 0.0045, tilt: 2 });
+    fold(pt, r, a, { y0: 0.965, h: 0.03, f: 16, amp: 0.0045, tilt: -3, ph: 1.3 });
+    // armpit creases where the sleeve meets the body
+    fold(pt, r, a, { y0: 1.37, h: 0.04, f: 16, amp: 0.003, a0: 0, aw: 6, tilt: 1 });
+    fold(pt, r, a, { y0: 1.37, h: 0.04, f: 16, amp: 0.003, a0: Math.PI, aw: 6, tilt: 1 });
   });
 }
 
@@ -272,10 +334,15 @@ function arm(B, side) {
     [-0.552, 0.03, 0.03, 0.03, [[fa, 0.8], [hb, 0.2]]],
     [-0.54, 0.004, 0.004, 0.004, [[fa, 1]]],
   ];
-  const rings = A.map(([dy, rx, rf, rb, w]) => ring(V(x0, y0 + dy, 0), rx, rf, rb, w, 2));
+  const base = A.map(([dy, rx, rf, rb, w]) => ring(V(x0, y0 + dy, 0), rx, rf, rb, w, 2));
   // deltoid dome sits slightly outboard
-  rings.slice(0, 3).forEach(r => (r.c.x += side * 0.01));
+  base.slice(0, 3).forEach(r => (r.c.x += side * 0.01));
+  const rings = refine(base, zoneSplit(y0 - 0.42, y0 - 0.19, 0.018, 3));
   B.tube('camo', rings, 16, null, (pt, i, a, r) => {
+    // elbow: creases bunch on the inside of the bend, a few slack pleats all round, cuff gather
+    fold(pt, r, a, { y0: y0 - 0.3, h: 0.06, f: 15, amp: 0.006, a0: Math.PI / 2, aw: 2, tilt: 1 });
+    fold(pt, r, a, { y0: y0 - 0.3, h: 0.08, f: 11, amp: 0.0025, tilt: 3, ph: 1 });
+    fold(pt, r, a, { y0: y0 - 0.5, h: 0.03, f: 22, amp: 0.002, tilt: -2 });
     // shoulder pocket bulge on the upper sleeve (outer side)
     const c = Math.cos(a) * side;
     if (pt.y < y0 - 0.06 && pt.y > y0 - 0.2 && c > 0.4) pt.x += side * 0.008 * sstep(0.4, 0.8, c);
@@ -288,7 +355,7 @@ function arm(B, side) {
 function hand(B, side) {
   const hb = BI[side > 0 ? 'handR' : 'handL'];
   const o = V(0.19 * side, 0.875, 0);
-  const tmp = new SkinBuilder();
+  const tmp = new SkinBuilder(), tb = new SkinBuilder();
   // in hand space: length along -Y, width along Z (thumb side -Z), palm faces -X*side
   const palmDir = V(-side, 0, 0);
   const P = [
@@ -297,16 +364,19 @@ function hand(B, side) {
   ];
   // ring: ax = Z (width), az = palm direction (front = palm)
   const rings = P.map(([y, w, pf, pb]) => ring(V(0, y, 0), w, pf, pb, [[hb, 1]], 2.4, PZ, palmDir));
-  tmp.tube('black', rings, 16);
+  tmp.tube('glove', rings, 16);
   // curled fingers wrapping a ~2 cm grip: arcs around (palmDir*0.03, -0.097)
-  const fingers = [[-0.029, 0.0085, 0.95], [-0.0098, 0.0094, 1], [0.0098, 0.0092, 0.97], [0.028, 0.0082, 0.88]];
+  // widths: gaps of ~2 mm between fingers so the silhouette reads as separate digits; each finger swells
+  // at the knuckle and is creased at the two inner joints (the glove's phalanx segmentation)
+  const fingers = [[-0.0325, 0.0092, 0.9], [-0.0108, 0.01, 1], [0.0108, 0.0097, 0.97], [0.0318, 0.0086, 0.84]];
   for (const [z, r, len] of fingers) {
     const rr = [];
-    const n = 9;
+    const n = 11;
     for (let k = 0; k <= n; k++) {
       const t = k / n, th = -t * Math.PI * 1.25 * len;
       const c = V(palmDir.x * 0.03 * (1 - Math.cos(th)), -0.097 + Math.sin(th) * 0.03, z);
-      const rad = k === 0 ? r * 0.95 : k === n ? 0.002 : (k === n - 1 ? r * 0.75 : r);
+      const sw = 1 + 0.16 * Math.exp(-Math.pow(t / 0.12, 2)) - 0.17 * Math.exp(-Math.pow((t - 0.36) / 0.055, 2)) - 0.17 * Math.exp(-Math.pow((t - 0.68) / 0.055, 2));
+      const rad = k === n ? 0.002 : (k === n - 1 ? r * 0.7 : r * sw);
       rr.push(ring(c, rad, rad, rad, [[hb, 1]], 2));
     }
     // ring planes perpendicular to the path: ax = Z (across), az = path normal
@@ -315,7 +385,9 @@ function hand(B, side) {
       const tng = new THREE.Vector3().subVectors(b, a).normalize();
       rr[k].ax = PZ.clone(); rr[k].az = new THREE.Vector3().crossVectors(tng, PZ).normalize();
     }
-    tmp.tube('black', rr, 8);
+    tmp.tube('glove', rr, 8);
+    // hard-shell knuckle cap on the back of each finger base
+    tb.rigid('black', box(0.008, 0.016, 0.014), xf(-palmDir.x * 0.0185, -0.083, z), hb);
   }
   // thumb: from the palm base around the far side of the grip
   const tp = [V(-side * 0.012, -0.02, -0.03), V(-side * 0.03, -0.05, -0.04), V(-side * 0.05, -0.078, -0.038), V(-side * 0.064, -0.096, -0.026), V(-side * 0.068, -0.104, -0.012)];
@@ -326,11 +398,13 @@ function hand(B, side) {
     const ax = new THREE.Vector3().crossVectors(tng, PY).normalize();
     tr[k].ax = ax; tr[k].az = new THREE.Vector3().crossVectors(tng, ax).normalize(); tr[k].rf = tr[k].rb = tr[k].rx;
   }
-  tmp.tube('black', tr, 8);
-  // knuckle armour strip on the back of the glove
-  tmp.rigid('black', box(0.012, 0.03, 0.07), xf(side * 0.018, -0.07, 0), hb);
-  const g = tmp.build();
-  B.rigidSkinned('black', g, new THREE.Matrix4().makeTranslation(o.x, o.y, o.z));
+  tmp.tube('glove', tr, 8);
+  // wrist cuff + back-of-hand shell plate
+  tb.rigid('black', box(0.007, 0.03, 0.06), xf(side * 0.0195, -0.062, 0), hb);
+  tmp.rigid('glove', box(0.062, 0.02, 0.07), xf(0, 0.043, 0), hb);
+  const mt = new THREE.Matrix4().makeTranslation(o.x, o.y, o.z);
+  B.rigidSkinned('glove', tmp.build(), mt);
+  B.rigidSkinned('black', tb.build(), mt);
 }
 
 SkinBuilder.prototype.rigidSkinned = function (key, geo, m) {
@@ -351,10 +425,10 @@ function leg(B, side) {
   const x0 = 0.095 * side, y0 = 0.93;
   // baggy trousers: dy, rx, rf, rb, cx shift (outward), weights
   const L = [
-    [0.06, 0.004, 0.004, 0.004, 0, [[hips, 0.8], [th, 0.2]]],
-    [0.05, 0.06, 0.06, 0.07, 0, [[hips, 0.7], [th, 0.3]]],
-    [0.0, 0.097, 0.095, 0.11, 0.004, [[hips, 0.45], [th, 0.55]]],
-    [-0.07, 0.098, 0.096, 0.104, 0.006, [[th, 0.85], [hips, 0.15]]],
+    [0.06, 0.004, 0.004, 0.004, 0, [[hips, 0.9], [th, 0.1]]],
+    [0.05, 0.06, 0.06, 0.07, 0, [[hips, 0.85], [th, 0.15]]],
+    [0.0, 0.097, 0.095, 0.11, 0.004, [[hips, 0.6], [th, 0.4]]],
+    [-0.07, 0.098, 0.096, 0.104, 0.006, [[th, 0.75], [hips, 0.25]]],
     [-0.16, 0.093, 0.092, 0.094, 0.006, [[th, 1]]],
     [-0.26, 0.085, 0.086, 0.084, 0.005, [[th, 1]]],
     [-0.35, 0.077, 0.08, 0.075, 0.004, [[th, 0.95], [sh, 0.05]]],
@@ -362,16 +436,25 @@ function leg(B, side) {
     [-0.44, 0.066, 0.07, 0.063, 0.002, [[th, 0.5], [sh, 0.5]]],
     [-0.48, 0.064, 0.065, 0.064, 0.002, [[th, 0.2], [sh, 0.8]]],
     [-0.56, 0.066, 0.062, 0.074, 0.002, [[sh, 1]]],
-    [-0.65, 0.061, 0.058, 0.066, 0.002, [[sh, 1]]],
-    [-0.72, 0.058, 0.056, 0.06, 0.002, [[sh, 1]]],
-    // bloused over the boot top
-    [-0.76, 0.064, 0.064, 0.066, 0.002, [[sh, 1]]],
-    [-0.785, 0.062, 0.064, 0.064, 0.002, [[sh, 1]]],
-    [-0.795, 0.05, 0.052, 0.054, 0.002, [[sh, 1]]],
-    [-0.79, 0.004, 0.004, 0.004, 0.002, [[sh, 1]]],
+    [-0.65, 0.06, 0.057, 0.065, 0.002, [[sh, 1]]],
+    [-0.7, 0.057, 0.055, 0.059, 0.002, [[sh, 1]]],
+    // bloused over the boot top (hem ends ~21 cm above the ground so the boot ankle stays visible)
+    [-0.724, 0.064, 0.063, 0.066, 0.002, [[sh, 1]]],
+    [-0.742, 0.063, 0.064, 0.065, 0.002, [[sh, 1]]],
+    [-0.752, 0.052, 0.054, 0.056, 0.002, [[sh, 1]]],
+    [-0.748, 0.004, 0.004, 0.004, 0.002, [[sh, 1]]],
   ];
-  const rings = L.map(([dy, rx, rf, rb, cx, w]) => ring(V(x0 + cx * side, y0 + dy, 0), rx, rf, rb, w, 2.1));
-  B.tube('camo', rings, 18, null, (pt, i, a) => {
+  const base = L.map(([dy, rx, rf, rb, cx, w]) => ring(V(x0 + cx * side, y0 + dy, 0), rx, rf, rb, w, 2.1));
+  const rings = refine(base, (a, b) => Math.max(zoneSplit(y0 - 0.58, y0 - 0.34, 0.019, 3)(a, b), zoneSplit(y0 - 0.17, y0 + 0.02, 0.02, 3)(a, b), zoneSplit(y0 - 0.76, y0 - 0.7, 0.012, 2)(a, b)));
+  B.tube('camo', rings, 16, null, (pt, i, a, r) => {
+    // knee: slack trouser pleats across the front of the knee, creases behind it
+    fold(pt, r, a, { y0: y0 - 0.45, h: 0.07, f: 13, amp: 0.006, a0: Math.PI / 2, aw: 2, tilt: 1 });
+    fold(pt, r, a, { y0: y0 - 0.46, h: 0.06, f: 14, amp: 0.006, a0: -Math.PI / 2, aw: 2, tilt: -1, ph: 0.8 });
+    fold(pt, r, a, { y0: y0 - 0.45, h: 0.1, f: 9, amp: 0.0025, tilt: 3, ph: 2 });
+    // groin / hip creases fanning from the crotch
+    fold(pt, r, a, { y0: y0 - 0.06, h: 0.07, f: 14, amp: 0.005, a0: Math.PI / 2 + (side > 0 ? 0.7 : -0.7), aw: 2, tilt: side });
+    // gathered blouse at the hem
+    fold(pt, r, a, { y0: y0 - 0.715, h: 0.025, f: 30, amp: 0.0035, tilt: 5 });
     // inner-thigh flattening so the legs don't interpenetrate at the crotch
     const c = Math.cos(a) * side;
     if (c < -0.5 && pt.y > 0.72) pt.x += side * 0.012 * sstep(0.5, 1, -c) * sstep(0.72, 0.9, pt.y);
@@ -385,14 +468,16 @@ function leg(B, side) {
 
   // boot: shaft (shin->foot blend) and lofted foot
   const S = [
-    [0.235, 0.045, 0.048, 0.05, [[sh, 1]]],
-    [0.225, 0.058, 0.056, 0.06, [[sh, 1]]],
-    [0.16, 0.057, 0.055, 0.06, [[sh, 0.95], [ft, 0.05]]],
-    [0.11, 0.054, 0.056, 0.058, [[sh, 0.5], [ft, 0.5]]],
-    [0.075, 0.052, 0.06, 0.058, [[ft, 1]]],
+    [0.27, 0.05, 0.052, 0.056, [[sh, 1]]],
+    [0.262, 0.057, 0.058, 0.062, [[sh, 1]]],      // padded collar
+    [0.215, 0.056, 0.057, 0.062, [[sh, 1]]],
+    [0.17, 0.052, 0.054, 0.06, [[sh, 0.95], [ft, 0.05]]],
+    [0.13, 0.047, 0.05, 0.058, [[sh, 0.6], [ft, 0.4]]],        // ankle: narrowest point, heel counter bulges behind
+    [0.1, 0.049, 0.056, 0.064, [[sh, 0.25], [ft, 0.75]]],
+    [0.072, 0.053, 0.062, 0.066, [[ft, 1]]],
     [0.05, 0.03, 0.03, 0.03, [[ft, 1]]],
   ];
-  B.tube('boot', S.map(([y, rx, rf, rb, w]) => ring(V(x0, y, 0.005), rx, rf, rb, w, 2.2)), 18);
+  B.tube('boot', S.map(([y, rx, rf, rb, w]) => ring(V(x0, y, 0.006), rx, rf, rb, w, 2.2)), 18);
   // foot along -Z: ax = X (width), az = +Y (top = rf, sole = rb)
   const F = [
     [0.082, 0.004, 0.004, 0.004, 0.048],
@@ -429,7 +514,7 @@ function rig(B) {
   B.rigid('black', box(0.21, 0.004, 0.004), xf(0, 1.2, -0.178, 0, 0.06), chest);
   // padded belt as a skinned band around the waist (follows lumbar/hip blend)
   const band = [[1.025, 0.0], [1.03, 0.016], [1.085, 0.016], [1.09, 0.0]].map(([y, d]) => {
-    const rx = 0.172 + (y - 1.05) * -0.05, w = y < 1.05 ? [[hips, 0.3], [spine, 0.7]] : [[spine, 0.92], [hips, 0.08]];
+    const rx = 0.163 + (y - 1.05) * -0.05, w = y < 1.05 ? [[hips, 0.3], [spine, 0.7]] : [[spine, 0.92], [hips, 0.08]];
     return ring(V(0, y, 0), rx + d, 0.112 + d, 0.112 + d, w, 2.6);
   });
   B.tube('web', band, 32);
@@ -451,7 +536,7 @@ function rig(B) {
 
   // electronic hearing protection: oval cups, cushions, headband over the crown
   for (const s of [-1, 1]) {
-    B.rigid('web', rcyl(0.043, 0.032, 0.012, 16), xf(s * 0.103, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.18), hd);
+    B.rigid('web', rcyl(0.043, 0.032, 0.012, 12), xf(s * 0.103, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.18), hd);
     B.rigid('black', new THREE.CylinderGeometry(0.04, 0.04, 0.016, 16, 1), xf(s * 0.083, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.15), hd);
     B.rigid('black', box(0.012, 0.016, 0.02), xf(s * 0.12, 1.705, -0.02), hd); // volume knob
     // yoke from cup to band

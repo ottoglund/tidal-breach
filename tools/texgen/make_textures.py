@@ -245,15 +245,19 @@ def plain_fabric(name, hexcol, n=512, seed=201, dirt=0.2, tile=0.3, structure='r
 # Rifle furniture: AK wood (laminated birch, reddish lacquer) and plum polymer.
 # ---------------------------------------------------------------------------
 def ak_wood(n=512, seed=211):
+    """Laminated birch furniture, dark reddish-brown stain, low saturation, satin lacquer."""
     r = Rng(seed)
     ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
     grain = fbm(n, r, 1.8, lo=3, hi=300, aniso=(0.05, 1.0))
-    lam = np.sin((ys / n * 40 + grain * 0.6) * np.pi)  # laminate layers
-    alb = lerp(col(n, '#6b2f17'), col(n, '#8a4422'), np.clip(lam * 0.5 + 0.5, 0, 1)) * (0.9 + 0.1 * grain[..., None] * 0.3)
-    dings = lines_mask(n, r, 160, 10, 0.5)
-    alb = lerp(alb, col(n, '#c08a5a'), dings * 0.6)
-    h = grain * 0.05 - dings * 0.3
-    save('ak_wood', alb, normal_from_height(h, 2), np.stack([np.ones_like(h), np.clip(0.38 + 0.3 * dings, 0, 1), np.zeros_like(h)], -1))
+    lam = np.sin((ys / n * 14 + grain * 0.5) * np.pi)  # laminate layers (glue lines every ~2 cm)
+    ring = np.sin((xs / n * 9 + 0.5 * fbm(n, r, 1.5, lo=2, hi=12)) * np.pi * 2) * 0.5 + 0.5
+    alb = lerp(col(n, '#3a2419'), col(n, '#573a2b'), np.clip(lam * 0.35 + 0.5 + 0.18 * ring - 0.1, 0, 1)) * (0.92 + 0.14 * grain[..., None])
+    seam = np.clip(1 - np.abs(np.sin(ys / n * 14 * np.pi * 0.5 + 0.3)) * 14, 0, 1)  # thin darker glue lines
+    alb = alb * (1 - 0.25 * seam[..., None])
+    dings = lines_mask(n, r, 90, 10, 0.5)
+    alb = lerp(alb, col(n, '#7a5a44'), dings * 0.3)
+    h = grain * 0.05 - dings * 0.3 - seam * 0.1
+    save('ak_wood', alb, normal_from_height(h, 2), np.stack([np.ones_like(h) * (1 - 0.15 * seam), np.clip(0.5 + 0.2 * dings + 0.05 * grain, 0, 1), np.zeros_like(h)], -1))
 
 
 def plum_polymer(n=256, seed=221):
@@ -304,7 +308,7 @@ SETS = {
     'olive_knit': lambda: plain_fabric('olive_knit', '#4d4a33', seed=202, tile=0.2, structure='knit', rough_base=0.92),      # balaclava (player side)
     'glove_green': lambda: plain_fabric('glove_green', '#46502f', seed=203, tile=0.12, structure='cordura', rough_base=0.8),     # gloves (player side)
     'khaki_webbing': lambda: plain_fabric('khaki_webbing', '#8a7c58', seed=204, tile=0.15, structure='webbing', sheen=0.08), # sling / belt
-    'ratnik_green': lambda: plain_fabric('ratnik_green', '#4c5236', seed=205, tile=0.35, structure='cordura', sheen=0.1),   # OPFOR vest / helmet cover
+    'ratnik_green': lambda: textiles.plain(textiles.cool_grade(save, 0.85, (1.0, 1.0, 0.97)), 'ratnik_green', '#474f37', 512, 205, 0.2, 0.35, 'cordura', 0.1),   # OPFOR vest / helmet cover
     'boot_leather': lambda: plain_fabric('boot_leather', '#4a3b2a', seed=206, dirt=0.5, tile=0.3, structure='leather', rough_base=0.62),
     'ak_wood': ak_wood, 'plum_polymer': plum_polymer,
 }

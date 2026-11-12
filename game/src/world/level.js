@@ -19,6 +19,15 @@ export const EXTRACT = { x: 2, z: 25 };
 export const ENEMY_SPAWNS = [[-17, -18, 5], [15, -9, 5], [-16, -35, 6], [19, -36, 5], [-4, -55, 5], [15, -70, 4], [-20, -65, 6]];
 
 const QUAY_E = 37.2, QUAY_S = 36.4, WATER_Y = -2.2;
+// Half-beam of the ship at world z (mirrors the section() lofting in props.js shipHull for cz=-22, length 104)
+const SHIP = { cx: 47.1, cz: -22, len: 104, beam: 17 };
+function hullHalf(z) {
+  const t = Math.min(1, Math.max(0, (SHIP.cz + SHIP.len / 2 - z) / SHIP.len));
+  let half = SHIP.beam / 2;
+  if (t > 0.62) half *= Math.pow(Math.max(0, 1 - Math.pow((t - 0.62) / 0.38, 2.2)), 0.55);
+  if (t < 0.06) half *= 0.86 + 0.14 * (t / 0.06);
+  return Math.max(half, 0.12);
+}
 
 // deterministic PRNG so prop layout is identical every run
 let seed = 1358961;
@@ -295,12 +304,28 @@ export function buildLevel(scene, quality) {
   hullMesh.castShadow = hullMesh.receiveShadow = true;
   root.add(hullMesh);
   const deckY = ship.deckY;
-  B.add(M.steel, box(16.6, 0.3, 92), xform(47.1, deckY - 0.1, -22));
-  // bulwark + railing
+  // main deck follows the hull plan (no plate sticking out at the bow), bulwark + railing likewise
+  {
+    const sh = new THREE.Shape();
+    const zs = []; for (let z = 29.5; z > -73.5; z -= 1) zs.push(z);
+    zs.forEach((z, i) => { const u = -(hullHalf(z) - 0.1); if (i) sh.lineTo(u, -z); else sh.moveTo(u, -z); });
+    for (let i = zs.length - 1; i >= 0; i--) sh.lineTo(hullHalf(zs[i]) - 0.1, -zs[i]);
+    const dg = new THREE.ExtrudeGeometry(sh, { depth: 0.3, bevelEnabled: false });
+    dg.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+    B.add(M.steel, dg, xform(47.1, deckY - 0.25, 0));
+  }
   for (const s of [-1, 1]) {
-    B.add(M.hull, box(0.15, 1.1, 92), xform(47.1 + s * 8.3, deckY + 0.5, -22));
-    for (let z = 23; z > -66; z -= 2) B.add(M.galv, cyl(0.025, 0.025, 1.0, 6), xform(47.1 + s * 8.3, deckY + 1.5, z));
-    B.add(M.galv, box(0.05, 0.05, 92), xform(47.1 + s * 8.3, deckY + 2.0, -22));
+    // straight run amidships, then segments that follow the narrowing hull toward the bow
+    B.add(M.hull, box(0.15, 1.1, 67.4), xform(47.1 + s * 8.3, deckY + 0.5, -10.3));
+    for (let z = 23; z > -44; z -= 2) B.add(M.galv, cyl(0.025, 0.025, 1.0, 6), xform(47.1 + s * 8.3, deckY + 1.5, z));
+    B.add(M.galv, box(0.05, 0.05, 67.4), xform(47.1 + s * 8.3, deckY + 2.0, -10.3));
+    for (let z = -44; z > -72; z -= 2) {
+      const h0 = hullHalf(z) - 0.12, h1 = hullHalf(z - 2) - 0.12;
+      B.add(M.galv, cyl(0.025, 0.025, 1.0, 6), xform(47.1 + s * h0, deckY + 0.7, z));
+      const a = new THREE.Vector3(47.1 + s * h0, deckY + 1.2, z), b = new THREE.Vector3(47.1 + s * h1, deckY + 1.2, z - 2);
+      B.add(M.galv, tube([a.x, a.y, a.z], [b.x, b.y, b.z], 0.025, 6), null);
+      B.add(M.galv, tube([a.x, a.y - 0.5, a.z], [b.x, b.y - 0.5, b.z], 0.02, 6), null);
+    }
   }
   // accommodation block aft (toward +z), with lit windows
   const ax = 47.1, az = 18;
@@ -320,8 +345,7 @@ export function buildLevel(scene, quality) {
   const bridgeY = deckY + 14;
   B.add(mat('container_white', { tile: 1 }), box(17, 2.6, 7), xform(ax, bridgeY + 1.3, az - 1));
   for (let wi = -8; wi <= 8; wi++) B.add(M.windowLit, plane(0.9, 1.0), xform(ax + wi * 0.95, bridgeY + 1.5, az - 4.51, Math.PI), { shadow: false });
-  B.add(M.red, box(3, 5, 4), xform(ax + 2.5, bridgeY + 4.5, az + 2.5)); // funnel
-  B.add(M.steel, cyl(0.12, 0.12, 6, 8), xform(ax, bridgeY + 5.5, az - 1)); // mast
+  // funnel, mast, radar and bridge detail: props/ship.js (placed from dress.js)
   points.push({ pos: new THREE.Vector3(ax - 8, deckY + 5, az - 6), color: new THREE.Color(1.0, 0.82, 0.6), intensity: 1500, distance: 30 });
   lamps.push({ pos: new THREE.Vector3(ax - 7, deckY + 6, az - 5), color: new THREE.Color(1.0, 0.82, 0.6) });
   // deck cargo
@@ -346,7 +370,7 @@ export function buildLevel(scene, quality) {
 
   // --------------------------------------------------------------- set dressing (props/dress.js)
   const aoAdd = (x, z, w, d, ry = 0) => this_ao.add(aoMat, plane(w, d, 1, 1), xform(x, 0.009, z, ry, -Math.PI / 2));
-  dressPort({ root, B, G, M, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS });
+  dressPort({ root, B, G, M, hullHalf, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS });
 
   // --------------------------------------------------------------- nodes (jammer units)
   const nodeObjs = NODES.map(n => buildNode(root, B, M, n));
@@ -388,18 +412,60 @@ function makeSign(text, fg, bg, w, h) {
 }
 
 // Signal jammer: rugged equipment case on a skid, telescopic antenna, cable, red status LED.
+// Detail pass: rounded case, corner guards, latches, handles, ribs, vents, hazard strip, feet.
+function hazardStripGeo(w, h, slant) {
+  const g = plane(w, h, 1, 1), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setX(i, p.getX(i) + p.getY(i) * slant);
+  return g;
+}
 function buildNode(root, B, M, n) {
   const g = new THREE.Group();
   g.position.set(n.x, 0, n.z);
   const T = (x, y, z, ry = 0, rx = 0, rz = 0) => xform(n.x + x, y, n.z + z, ry, rx, rz);
-  B.add(M.steel, box(1.7, 0.12, 1.1), T(0, 0.06, 0));
-  B.add(mat('polymer', { tile: 0.6 }), box(1.4, 1.1, 0.8), T(0, 0.7, 0));
-  B.add(mat('polymer', { tile: 0.6 }), box(1.46, 0.1, 0.86), T(0, 1.28, 0));
-  for (const x of [-0.5, 0.5]) B.add(M.galv, box(0.12, 0.08, 0.06), T(x, 1.0, 0.43));
+  const poly = mat('polymer', { tile: 0.6 });
+  // skid: runners with fork pockets, top plate, rubber feet, tie-down eyes
+  for (const x of [-0.7, 0, 0.7]) B.add(M.steel, box(0.2, 0.1, 1.1, 0.02), T(x, 0.05, 0));
+  B.add(M.steel, box(1.7, 0.05, 1.1, 0.015), T(0, 0.125, 0));
+  for (const x of [-0.8, 0.8]) for (const z of [-0.5, 0.5]) { B.add(M.rubber, box(0.14, 0.03, 0.14, 0.01), T(x, 0.015, z)); B.add(M.galv, tube([n.x + x, 0.15, n.z + z * 1.07], [n.x + x * 1.06, 0.15, n.z + z * 1.07], 0.02, 6), null); }
+  // case body + lid, rounded; corner guards, stacking ribs, seam gasket
+  B.add(poly, box(1.4, 1.1, 0.8, 0.07), T(0, 0.7, 0));
+  B.add(poly, box(1.46, 0.1, 0.86, 0.05), T(0, 1.28, 0));
+  B.add(M.rubber, box(1.41, 0.025, 0.81, 0.005), T(0, 1.225, 0));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const y of [0.18, 1.3]) B.add(M.steel, box(0.14, 0.1, 0.14, 0.035), T(sx * 0.67, y, sz * 0.37));
+  for (const x of [-0.5, 0.5]) B.add(poly, box(0.07, 0.9, 0.035, 0.012), T(x, 0.7, 0.415));
+  for (const x of [-0.25, 0.25]) B.add(M.rubber, box(0.025, 0.7, 0.01, 0), T(x, 0.7, 0.412));
+  // butterfly latches across the lid seam
+  for (const x of [-0.5, 0.5]) {
+    B.add(M.steel, box(0.16, 0.2, 0.03, 0.01), T(x, 1.2, 0.44));
+    B.add(M.galv, box(0.1, 0.04, 0.05, 0.01), T(x, 1.28, 0.455));
+    B.add(M.galv, box(0.1, 0.03, 0.04, 0.008), T(x, 1.14, 0.45));
+    B.add(M.rubber, box(0.03, 0.2, 0.03, 0.005), T(x, 1.2, 0.465));
+  }
+  // side handles (recessed) and rear hinges
+  for (const sx of [-1, 1]) { B.add(M.rubber, box(0.04, 0.14, 0.34, 0.01), T(sx * 0.705, 1.0, 0)); B.add(M.galv, tube([n.x + sx * 0.74, 1.0, n.z - 0.15], [n.x + sx * 0.74, 1.0, n.z + 0.15], 0.018, 6), null); }
+  for (const x of [-0.5, 0.5]) B.add(M.steel, box(0.16, 0.12, 0.05, 0.01), T(x, 1.25, -0.43));
+  // vent grille on the right side + pressure-relief valve on the lid
+  for (let k = 0; k < 6; k++) B.add(M.rubber, box(0.012, 0.012, 0.3, 0), T(0.705, 0.45 + k * 0.045, -0.1));
+  B.add(M.steel, box(0.014, 0.34, 0.36, 0.004), T(0.703, 0.57, -0.1));
+  B.add(M.galv, cyl(0.03, 0.03, 0.04, 10), T(-0.5, 1.36, -0.1));
+  // hazard strip along the lower front
+  B.add(M.rubber, plane(1.2, 0.1, 1, 1), T(0, 0.28, 0.413));
+  for (let x = -0.56; x < 0.56; x += 0.1) B.add(M.yellow, hazardStripGeo(0.05, 0.1, 0.07), T(x + 0.035, 0.28, 0.415));
+  // antenna: boot, base mount, telescoping segments with joint rings, guy wires
+  B.add(M.steel, box(0.24, 0.05, 0.24, 0.01), T(0.45, 1.36, -0.2));
+  B.add(M.rubber, cyl(0.06, 0.09, 0.2, 10), T(0.45, 1.46, -0.2));
   B.add(M.galv, cyl(0.03, 0.045, 3.2, 8), T(0.45, 2.9, -0.2));
+  for (const y of [2.0, 2.9, 3.7]) B.add(M.steel, cyl(0.05, 0.05, 0.06, 10), T(0.45, y, -0.2));
   for (const a of [0, 2.1, 4.2]) B.add(M.galv, cyl(0.012, 0.012, 1.2, 6), T(0.45 + Math.sin(a) * 0.25, 3.6, -0.2 + Math.cos(a) * 0.25, 0, Math.cos(a) * 0.35, -Math.sin(a) * 0.35));
-  B.add(M.steel, box(0.5, 0.35, 0.25), T(-0.35, 1.5, 0.1));
+  B.add(M.steel, box(0.5, 0.35, 0.25, 0.04), T(-0.35, 1.5, 0.1));
+  for (const x of [-0.5, -0.2]) B.add(M.galv, cyl(0.02, 0.02, 0.06, 8), T(x, 1.37, 0.1, 0, Math.PI / 2));
   B.add(M.rubber, catenary([n.x - 0.6, 0.4, n.z + 0.4], [n.x - 2.8, 0.03, n.z + 1.8], 0.25, 0.025, 14, 6), null);
+  B.add(M.rubber, catenary([n.x - 0.7, 0.9, n.z + 0.36], [n.x - 0.6, 0.4, n.z + 0.4], 0.05, 0.022, 6, 6), null);
+  B.add(M.steel, box(0.12, 0.12, 0.12, 0.02), T(-0.7, 0.92, 0.4));   // gland
+  // bezel around the status panel + switch row
+  for (const [w, h, y] of [[0.52, 0.035, 1.025], [0.52, 0.035, 0.675]]) B.add(M.steel, box(w, h, 0.02, 0.005), T(0, y, 0.415));
+  for (const x of [-0.245, 0.245]) B.add(M.steel, box(0.035, 0.38, 0.02, 0.005), T(x, 0.85, 0.415));
+  for (const x of [-0.18, -0.06, 0.06, 0.18]) B.add(M.galv, cyl(0.022, 0.022, 0.03, 8), T(x, 0.62, 0.43, 0, Math.PI / 2));
   // status panel (emissive, updated by game state)
   const panelMat = new THREE.MeshStandardMaterial({ color: 0x050505, emissive: new THREE.Color(1, 0.12, 0.05), emissiveIntensity: 8, roughness: 0.3 });
   const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), panelMat);
@@ -407,6 +473,7 @@ function buildNode(root, B, M, n) {
   const ledMat = new THREE.MeshStandardMaterial({ color: 0x220000, emissive: new THREE.Color(1, 0.05, 0.02), emissiveIntensity: 40 });
   const led = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), ledMat);
   led.position.set(0.45, 4.55, -0.2); g.add(led);
+  for (const x of [-0.18, 0, 0.18]) { const l2 = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6), ledMat); l2.position.set(x, 1.1, 0.425); g.add(l2); }
   const light = new THREE.PointLight(0xff2a10, 25, 6, 2);
   light.position.set(0, 1.2, 0.8); g.add(light);
   root.add(g);

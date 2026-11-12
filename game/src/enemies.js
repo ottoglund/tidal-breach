@@ -23,7 +23,8 @@ function materials() {
     uniform: mat('camo_emr', { tile: 0.42, color: 0x9a9a92 }),
     vest: mat('ratnik_green', { tile: 0.35 }),
     knit: mat('olive_knit', { tile: 0.12 }), // olive balaclava
-    glove: mat('fabric_glove', { tile: 0.15, color: 0x5a5a5a }),
+    glove: mat('fabric_glove', { tile: 0.15, color: 0x5a5a5a }),   // black rubber / hard shell parts
+    gloveFab: mat('glove_green', { tile: 0.12, color: 0xb4b4a4 }),  // olive cordura glove fabric
     boot: mat('boot_leather', { tile: 0.25, color: 0x4a4440 }),
     gun: mat('gunmetal'),
     wood: mat('ak_wood', { tile: 0.3 }),
@@ -32,6 +33,42 @@ function materials() {
     visor: new THREE.MeshPhysicalMaterial({ color: 0x07080a, roughness: 0.06, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.03 }), // tinted lenses
   };
   return shared;
+}
+
+
+/**
+ * Lofted handguard along -Z. secs: [{z, hw, ht, hb, cy}] half width, half height above/below centre cy.
+ * Cross-section is a super-ellipse (p) so it reads as a rounded rectangle, not a tube. groove(z, side)
+ * returns an inward offset for the underside (finger grooves) ; flutes = longitudinal rib count (0 = none).
+ */
+function loft(secs, N, p = 3.2, groove = null, flutes = 0, fluteAmp = 0.0011) {
+  const pos = [], uv = [], idx = [];
+  const e = 2 / p;
+  secs.forEach((q, i) => {
+    let acc = 0;
+    for (let j = 0; j <= N; j++) {
+      const a = (j % N) / N * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+      let x = q.hw * Math.sign(c) * Math.pow(Math.abs(c), e), y = q.cy + (sn > 0 ? q.ht : q.hb) * Math.sign(sn) * Math.pow(Math.abs(sn), e);
+      if (groove && sn < -0.25) y += groove(q.z) * Math.min(1, (-sn - 0.25) * 3);
+      if (flutes) { const f = fluteAmp * Math.cos(a * flutes); x += Math.cos(a) * f; y += Math.sin(a) * f; }
+      pos.push(x, y, q.z);
+      uv.push((j / N) * 2 * (q.hw + (q.ht + q.hb) / 2) * 1.6, -q.z);
+    }
+  });
+  const R = N + 1;
+  for (let i = 0; i < secs.length - 1; i++) for (let j = 0; j < N; j++) { const a = i * R + j, b = a + 1, c = a + R, d = c + 1; idx.push(a, b, c, b, d, c); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // orientation check: normals must point away from the axis
+  const n = g.attributes.normal, P = g.attributes.position, k = Math.floor(secs.length / 2) * R;
+  if (n.getX(k) * (P.getX(k) - 0) + (n.getY(k)) * (P.getY(k) - secs[Math.floor(secs.length / 2)].cy) < 0) {
+    const ix = g.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
+    g.computeVertexNormals();
+  }
+  return g;
 }
 
 // Kalashnikov family at real scale. Barrel toward -Z, origin near the magazine well.
@@ -64,10 +101,29 @@ function kalashnikov(S, variant) {
       ? [[rcyl(0.012, 0.045, 0.003, 14), xform(0, 0.0, -0.565, 0, Z)]]
       : [[rcyl(0.0135, 0.085, 0.004, 16), xform(0, 0.0, -0.585, 0, Z)], [box(0.03, 0.006, 0.012), xform(0, 0.0, -0.57)]]),
   ], S.gun);
+  // handguards: lofted rounded-rectangle sections (not tubes). Lower: wide, flat-sided, wraps the barrel from below
+  // with finger grooves on the underside; upper: shallow shell over the gas tube with a rounded crown.
+  const lower = loft([
+    { z: -0.152, hw: 0.0215, ht: 0.0, hb: 0.0, cy: -0.012 },
+    { z: -0.156, hw: 0.0225, ht: 0.018, hb: 0.021, cy: -0.012 },
+    { z: -0.17, hw: 0.0235, ht: 0.026, hb: 0.024, cy: -0.011 },
+    ...Array.from({ length: 14 }, (_, i) => { const z = -0.19 - i * 0.0125; return { z, hw: 0.0235 - i * 0.0002, ht: 0.026 - i * 0.0003, hb: 0.0235 - i * 0.0002, cy: -0.011 }; }),
+    { z: -0.368, hw: 0.0215, ht: 0.0245, hb: 0.021, cy: -0.011 },
+    { z: -0.374, hw: 0.019, ht: 0.02, hb: 0.017, cy: -0.011 },
+    { z: -0.376, hw: 0.0, ht: 0.0, hb: 0.0, cy: -0.011 },
+  ], akm ? 14 : 18, akm ? 3.4 : 3.0, akm ? (z => 0.0034 * Math.pow(0.5 + 0.5 * Math.cos((z + 0.2) / 0.0235 * Math.PI * 2), 1.6) * (z < -0.19 && z > -0.34 ? 1 : 0)) : null, akm ? 0 : 14);
+  const upper = loft([
+    { z: -0.168, hw: 0.0, ht: 0.0, hb: 0.0, cy: 0.04 },
+    { z: -0.172, hw: 0.0175, ht: 0.016, hb: 0.014, cy: 0.04 },
+    { z: -0.19, hw: 0.0185, ht: 0.0175, hb: 0.016, cy: 0.04 },
+    { z: -0.28, hw: 0.0185, ht: 0.0175, hb: 0.016, cy: 0.04 },
+    { z: -0.38, hw: 0.0175, ht: 0.0165, hb: 0.0155, cy: 0.039 },
+    { z: -0.402, hw: 0.0155, ht: 0.0145, hb: 0.014, cy: 0.039 },
+    { z: -0.405, hw: 0.0, ht: 0.0, hb: 0.0, cy: 0.039 },
+  ], 12, 2.6, null, akm ? 0 : 12, 0.0009);
   add([
-    // lower handguard: rounded, slightly wider at the front with finger grooves
-    [rcyl(0.026, 0.2, 0.008, 16), xform(0, -0.006, -0.27, 0, Z, 0, 1.05, 1, 1.0)],
-    [rcyl(0.019, 0.17, 0.006, 14), xform(0, 0.036, -0.26, 0, Z, 0, 1.05, 1, 0.8)],    // upper handguard over the gas tube
+    [lower, null],
+    [upper, null],
     [box(0.032, 0.1, 0.044, 0.012), xform(0, -0.082, 0.112, 0, -0.32)],               // pistol grip (raked back)
     ...(akm
       ? [[box(0.042, 0.065, 0.25, 0.014), xform(0, -0.022, 0.27, 0, 0.1)], [box(0.046, 0.13, 0.03, 0.012), xform(0, -0.05, 0.395, 0, 0.1)]]
@@ -85,7 +141,7 @@ function kalashnikov(S, variant) {
 export function createGuard(variant = 'ak74') {
   const S = materials();
   const root = new THREE.Group();
-  const { mesh, bones, rest } = createSoldierMesh({ camo: S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor });
+  const { mesh, bones, rest } = createSoldierMesh({ camo: S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab });
   root.add(mesh);
   const rifle = kalashnikov(S, variant);
   root.add(rifle);
@@ -179,6 +235,8 @@ const HAND_L_Q = (() => {
 })();
 const GRIP_IN_HAND_R = new THREE.Vector3(-0.03, -0.097, 0.004);
 const GRIP_IN_HAND_L = new THREE.Vector3(0.03, -0.097, 0.0);
+const BUTT = new THREE.Vector3(0, -0.05, 0.41);       // buttpad centre in rifle space
+const BUTT_LOW = new THREE.Vector3(0.18, -0.07, -0.13); // sling carry: butt position in chest space
 const EYE = new THREE.Vector3(0.034, 0.128, -0.078);
 
 // ------------------------------------------------------------------ alive pose
@@ -217,10 +275,10 @@ function poseAlive(g, st, dt) {
   qE(0.01 * breath * (1 - 0.5 * A) - 0.03 * A - 0.04 * run * m + hit * 0.18 + kick * 0.04, -twist * 0.5 - blade * 0.2 + hit * 0.2 * s.hitSide, 0, B[BI.chest].quaternion);
   B[BI.chest].position.y += 0.0025 * breath;
   // clavicles: slight shrug/protraction when shouldering
-  qE(0, 0.06 * A, 0.14 * A + 0.01 * breath, B[BI.clavR].quaternion);
+  qE(0, 0.06 * A, 0.3 * A + 0.01 * breath, B[BI.clavR].quaternion);
   qE(0, -0.12 - 0.3 * A, -0.04 * A - 0.01 * breath, B[BI.clavL].quaternion);
   // neck flexes forward into the cheek weld
-  qE(-0.04 - 0.62 * A + hit * 0.25, 0, -0.14 * A, B[BI.neck].quaternion);
+  qE(-0.04 - 0.72 * A + hit * 0.25, 0, -0.14 * A, B[BI.neck].quaternion);
   fkFrom(g, 0);
 
   // ---- head: gaze-stabilised in model space
@@ -264,11 +322,13 @@ function poseAlive(g, st, dt) {
 
   // ---- rifle: patrol low-ready (anchored to the chest) -> shouldered (anchored to the eye)
   const ch = s.mm[BI.chest];
-  _m.compose(_a.set(0.0, -0.08, -0.22), qE(-0.42, 0.85, 0.35, _q), UNIT);
+  // sling carry: butt tucked against the right ribs under the arm, muzzle down-left across the body
+  qE(-0.25, 1.2, 0.0, _q);
+  _m.compose(_a.copy(BUTT_LOW).sub(_b.copy(BUTT).applyQuaternion(_q)), _q, UNIT);
   _m2.multiplyMatrices(ch, _m);
   const pLow = _pLow.setFromMatrixPosition(_m2), qLow = _qLow.setFromRotationMatrix(_m2);
   const qAim = qE(0.012 * breath + kick * 0.06 + hit * 0.25, 0.01 * Math.sin(t * 0.9 + s.seed), 0, _qAim);
-  const pAim = _pAim.copy(EYE).applyMatrix4(s.mm[BI.head]).sub(_b.set(0, 0.066, 0.2 - kick * 0.03).applyQuaternion(qAim));
+  const pAim = _pAim.copy(EYE).applyMatrix4(s.mm[BI.head]).sub(_b.set(0, 0.104, 0.2 - kick * 0.03).applyQuaternion(qAim));
   const rq = g.rifle.quaternion.slerpQuaternions(qLow, qAim, A);
   g.rifle.position.lerpVectors(pLow, pAim, A);
   g.rifle.updateMatrix();
@@ -356,6 +416,7 @@ function poseDeath(g, st) {
 /** Pose a guard. st: {walk, speed(0..1), aim(0..1), flash, hit, dead (0 alive, then s/0.9), fallDir} */
 export function poseGuard(g, st) {
   const s = g.s;
+  /*TMPDBG*/ { const q = new URLSearchParams(location.search); if (q.get('gaim')) st = { ...st, aim: +q.get('gaim') }; }
   const now = performance.now() / 1000;
   const dt = s.t ? clamp(now - s.t, 0, 0.1) : 0.016;
   s.t = now; s.time += dt;

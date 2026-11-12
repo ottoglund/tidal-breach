@@ -143,23 +143,34 @@ def camo_m90(save, n=1024, seed=181, tile=0.45):
     finish(save, 'camo_m90', out, n, r, tile, dirt=0.3, structure='ripstop')
 
 
+def cool_grade(save, sat=0.88, tint=(0.95, 1.0, 1.03), gain=1.0):
+    """Wrap a save() so the albedo is desaturated and cooled (kills the warm khaki cast that the
+    shared dust/mud colours in finish() add). Applied to the saved albedo only."""
+    def g(name, alb, nrm, orm):
+        lum = (alb * np.array([0.3, 0.55, 0.15], np.float32)).sum(-1, keepdims=True)
+        out = (lum + (alb - lum) * sat) * np.array(tint, np.float32) * gain
+        save(name, np.clip(out, 0, 1), nrm, orm)
+    return g
+
+
 def camo_emr(save, n=1024, seed=191, tile=0.4):
-    """Russian digital-flora style: grey-green ground, light green, olive, brown and black
-    pixel clusters (~3 mm pixels), organic branching cluster shapes with ragged pixel edges."""
+    """Russian digital-flora style: cool grey-green ground, olive-green, dark olive, desaturated
+    brown and near-black pixel clusters (~3 mm pixels), organic branching cluster shapes with
+    ragged pixel edges. Overall mean is a cool olive-grey, not khaki."""
     r = Rng(seed)
-    colors = [_srgb('#8b8e6e'), _srgb('#6f7a4e'), _srgb('#56603a'), _srgb('#5a4838'), _srgb('#24251f')]
+    colors = [_srgb('#7c8873'), _srgb('#62775a'), _srgb('#46563a'), _srgb('#4d4038'), _srgb('#1a1d19')]
     px = 8
     m = n // px
     base = np.broadcast_to(colors[0], (n, n, 3)).copy()
-    for layer, (thr, lo, hi, warp_s) in enumerate([(0.3, 1.5, m / 3, 6), (0.75, 2, m / 3, 5), (1.0, 2, m / 2.5, 4), (1.3, 3, m / 2, 3)]):
+    for layer, (thr, lo, hi, warp_s) in enumerate([(0.3, 1.5, m / 3, 6), (0.7, 2, m / 3, 5), (0.95, 2, m / 2.5, 4), (1.25, 3, m / 2, 3)]):
         f = fbm(m, r, 2.3, lo=lo, hi=hi, aniso=(1.0, 0.75))
         f = warp(f, fbm(m, r, 2.0, lo=2, hi=m / 4), fbm(m, r, 2.0, lo=2, hi=m / 4), warp_s)
         f = f + r.standard_normal((m, m)) * 0.28           # ragged, dithered pixel edges
         mask = np.kron((f > thr).astype(np.float32), np.ones((px, px)))[:n, :n] > 0.5
         base[mask] = colors[layer + 1]
     base = blur(base, 0.5)
-    base = base * 0.93 + 0.07 * base.mean(-1, keepdims=True)
-    finish(save, 'camo_emr', base, n, r, tile, dirt=0.35, structure='ripstop')
+    base = base * 0.95 + 0.05 * base.mean(-1, keepdims=True)
+    finish(cool_grade(save, 0.85, (0.99, 1.0, 0.99)), 'camo_emr', base, n, r, tile, dirt=0.3, structure='ripstop')
 
 
 def plain(save, name, hexcol, n=512, seed=201, dirt=0.2, tile=0.3, structure='ripstop', sheen=0.0, rough_base=0.88):

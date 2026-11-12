@@ -11,7 +11,7 @@ import { CONTAINER } from '../props.js';
 import { terminalTractor, trailer40, TRAILER, straddleCarrier, forklift } from './vehicles.js';
 import { emptyPallets, wrappedGoods, ibc, lampPost, cctv, plugPost, reeferUnit, lifeRing, ropeCoil, dunnage, plasticSheet, signPost, fenceRun } from './yard.js';
 import { stsCrane } from './cranes.js';
-import { freefallLifeboat, lifeboatRamp, gangway } from './ship.js';
+import { freefallLifeboat, lifeboatRamp, gangway, anchor, deckCrane, windlass, funnel, bridgeDetail } from './ship.js';
 import { atlasPlane, signAtlas, paintAtlas, grimeAtlas, chainLinkTexture } from './atlas.js';
 
 const T = xform;
@@ -34,7 +34,7 @@ export function vehicleLoads() {
 }
 
 export function dressPort(ctx) {
-  const { root, B, G, M, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS } = ctx;
+  const { root, B, G, M, hullHalf, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS } = ctx;
   const r = prng(20241112);
   const rr = (a, b) => a + (b - a) * r();
   const { L: CL, W: CW, H: CH } = CONTAINER;
@@ -52,6 +52,12 @@ export function dressPort(ctx) {
     lens: new THREE.MeshStandardMaterial({ color: 0x5c6266, roughness: 0.06, metalness: 0.7, emissive: new THREE.Color(1, 0.93, 0.82), emissiveIntensity: 0.2 }),
     tail: emissive(0x300000, [1, 0.05, 0.03], 2.2),
     amber: emissive(0x4a2200, [1, 0.42, 0.05], 1.4),
+    beaconLit: emissive(0x6a3000, [1, 0.45, 0.04], 9, 0.25),
+    blueLit: emissive(0x001a40, [0.1, 0.35, 1], 6, 0.25),
+    greenLit: emissive(0x002a10, [0.05, 1, 0.25], 4, 0.3),
+    fork: plainMat(0xe0b81c, 0.42, 0.1, { wet: 'surface' }),
+    refl: emissive(0xc8c8bc, [0.8, 0.8, 0.7], 0.45, 0.3),
+    dirt: plainMat(0x2b2822, 0.95),
     display: emissive(0x001a08, [0.2, 1, 0.35], 3.0),
     bulk: emissive(0x222222, [1, 0.8, 0.55], 6.0, 0.2),
     cardboard: plainMat(0x77573a, 0.88),
@@ -116,6 +122,8 @@ export function dressPort(ctx) {
   forklift(kit(T(fl.x, 0, fl.z, -HALF_PI)));
   guardBlock('forklift', fl.x - 0.5, fl.z, 3.6, 1.35, 2.2);
   aoAdd(fl.x - 0.2, fl.z, 3.0, 1.8, 0);
+  root.add(lampGlow(new THREE.Vector3(fl.x + 0.6, 2.35, fl.z), 0xff9a1c, 1.5, 3.5));       // warning beacon halo
+  root.add(lampGlow(new THREE.Vector3(fl.x - 1.3, 0.88, fl.z), 0x3a7bff, 0.6, 2.0));       // blue front safety spot
 
   // =====================================================================
   // 2. Reefers: machinery ends on the white boxes + power cables + plug posts
@@ -287,6 +295,46 @@ export function dressPort(ctx) {
     }
     W0('galv', tube([QUAY_E - 0.35, 1.05, z - 0.27], [QUAY_E - 0.35, 1.05, z + 0.27], 0.022, 8));
   }
+  // rubber fender faces: UHMW pads + bolts + restraint chains on the big cone fenders, D-fenders between them
+  for (let z = 30; z > -86; z -= 12) {
+    W0('hdpe', box(0.04, 2.2, 1.9, 0.01), T(QUAY_E + 1.22, -1.2, z));
+    for (const dy of [-0.8, 0, 0.8]) for (const dz of [-0.7, 0.7]) W0('galv', cyl(0.035, 0.035, 0.03, 8), T(QUAY_E + 1.25, -1.2 + dy, z + dz, 0, 0, HALF_PI));
+    for (const sz of [-1, 1]) {
+      W0('steel', catenary([QUAY_E + 1.15, -0.05, z + sz * 0.85], [QUAY_E - 0.12, 0.12, z + sz * 0.95], 0.45, 0.012, 10, 5));
+      W0('galv', box(0.08, 0.08, 0.08, 0.01), T(QUAY_E - 0.12, 0.1, z + sz * 0.95));
+    }
+    const zd = z - 6;
+    if ([22, -18, -58].every(q => Math.abs(zd - q) > 1.8)) {
+      W0('rubber', box(0.34, 2.8, 0.42, 0.11), T(QUAY_E + 0.17, -1.3, zd));
+      for (const dy of [-0.9, 0, 0.9]) W0('galv', cyl(0.03, 0.03, 0.03, 8), T(QUAY_E + 0.35, -1.3 + dy, zd, 0, 0, HALF_PI));
+    }
+  }
+  // safety chains between stanchions on either side of each ladder opening
+  for (const z of [22, -18, -58]) {
+    const px = [QUAY_E - 0.5, QUAY_E - 1.7];
+    for (const x of px) for (const sz of [-1, 1]) {
+      W0('yellow', cyl(0.035, 0.035, 0.95, 8), T(x, 0.475, z + sz * 1.15));
+      W0('yellow', cyl(0.05, 0.05, 0.03, 8), T(x, 0.97, z + sz * 1.15));
+      W0('steel', box(0.14, 0.02, 0.14, 0), T(x, 0.01, z + sz * 1.15));
+    }
+    for (const x of px) W0('steel', catenary([x, 0.82, z - 1.15], [x, 0.82, z + 1.15], 0.28, 0.011, 12, 5));
+    for (const sz of [-1, 1]) W0('steel', catenary([px[0], 0.82, z + sz * 1.15], [px[1], 0.82, z + sz * 1.15], 0.1, 0.011, 8, 5));
+  }
+  // kerb paint wear: bare concrete showing through the yellow capping line, chips and scrapes
+  for (let z = 30; z > -86; z -= 0.4 + r() * 1.4) {
+    const len = rr(0.15, 1.1);
+    W0('concrete', box(rr(0.1, 0.22), 0.004, len, 0), T(QUAY_E - 0.125 + rr(-0.02, 0.02), 0.2222, z));
+  }
+  for (let x = -35; x < 36; x += 0.5 + r() * 1.6) W0('concrete', box(rr(0.2, 1.0), 0.004, rr(0.08, 0.2), 0), T(x, 0.2222, QUAY_S - 0.125 + rr(-0.02, 0.02)));
+  // puddles lying along the capping beam where the apron falls toward the edge
+  const puddleMat = new THREE.MeshStandardMaterial({ color: 0x0a0d10, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.92, alphaMap: puddleTexture(), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, envMapIntensity: 1.3 });
+  const PUD = new (B.constructor)();
+  for (let z = 28; z > -84; z -= 5 + r() * 9) {
+    const w = rr(0.9, 1.6), d = rr(2.2, 5.5), x = QUAY_E - 0.5 - w / 2 - rr(0.05, 0.4);
+    PUD.add(puddleMat, plane(w, d, 1, 1), T(x, 0.007, z, rr(-0.05, 0.05), -HALF_PI), { shadow: false });
+  }
+  for (let x = -26; x < 34; x += 7 + r() * 11) PUD.add(puddleMat, plane(rr(2.2, 5), rr(0.9, 1.5), 1, 1), T(x, 0.007, QUAY_S - 0.5 - 0.6, rr(-0.04, 0.04), -HALF_PI), { shadow: false });
+  PUD.build(root).forEach(m => { m.castShadow = false; m.receiveShadow = true; m.layers.set(1); m.renderOrder = 1; });
 
   // =====================================================================
   // 12. North boundary: chain-link fence with gate, ground beyond the yard
@@ -326,6 +374,50 @@ export function dressPort(ctx) {
     for (const [z, h] of [[24.0, 8.4], [27.5, 6.0]]) for (const s of [-1, 1]) W0('white', box(0.3, h, 0.3, 0), T(47.1 + s * 1.25, deckY + h / 2, z));
     for (const [z, h] of [[24.0, 8.4], [27.5, 6.0]]) W0('white', box(2.8, 0.3, 0.3, 0), T(47.1, deckY + h - 0.15, z));
   }
+  {
+    // ---- detail pass: hatch covers, deck cranes, windlass, anchor + hawse, funnel/bridge, draft marks
+    const AX = 47.1, AZ = 18;
+    for (let bay = 0; bay < 6; bay++) {
+      const zc = 5 - bay * 12.6;
+      W0('steel', box(13.0, 0.1, 12.3, 0.012), T(AX, deckY + 0.04, zc));                  // hatch cover panel
+      for (const sx of [-1, 1]) {
+        W0('red', box(0.26, 0.55, 12.5, 0.04), T(AX + sx * 6.6, deckY + 0.3, zc));         // hatch coaming
+        W0('galv', box(0.3, 0.03, 12.5, 0), T(AX + sx * 6.6, deckY + 0.585, zc));
+      }
+      W0('red', box(13.2, 0.07, 0.14, 0.01), T(AX, deckY + 0.075, zc + 6.3));              // cross joint
+      for (const sx of [-1, 1]) for (const dz of [-4.5, 0, 4.5]) W0('steel', box(0.3, 0.14, 0.2, 0.02), T(AX + sx * 6.15, deckY + 0.14, zc + dz));  // cleats
+    }
+    // deck pipework along both sides, supported on brackets
+    for (const sx of [-1, 1]) {
+      W0('galv', tube([AX + sx * 7.45, deckY + 0.4, 12.5], [AX + sx * 7.45, deckY + 0.4, -52], 0.055, 8));
+      W0('red', tube([AX + sx * 7.7, deckY + 0.25, 12.5], [AX + sx * 7.7, deckY + 0.25, -52], 0.04, 8));
+      for (let z = 12; z > -52; z -= 4) W0('steel', box(0.5, 0.45, 0.06, 0.005), T(AX + sx * 7.55, deckY + 0.22, z));
+    }
+    // two deck cranes on the port (quay) side, jibs stowed fore-aft
+    for (const z of [-8, -34]) deckCrane(kit(T(AX - 7.45, deckY, z, 0)));
+    // foredeck windlass + hawse pipe with the anchor stowed against the plating (both sides)
+    windlass(kit(T(AX, deckY, -66.2)));
+    for (const sx of [-1, 1]) {
+      const z = -66.4, hh = hullHalf(z), slope = (hullHalf(z + 0.5) - hullHalf(z - 0.5));
+      const nx = sx * 1, nz = -slope;                       // outward normal tilts toward the bow
+      const ry = Math.atan2(nx, nz);
+      anchor(kit(T(AX + sx * (hh + 0.03), deckY - 0.25, z, ry)));
+    }
+    // funnel, bridge detail, masts, radar
+    funnel(kit(T(AX + 2.5, deckY + 16.0, AZ + 2.5)));
+    bridgeDetail(W0, AX, AZ, deckY);
+    for (const [px, py, pz] of [[AX - 9.3, deckY + 15.5, AZ - 2.3], [AX + 9.3, deckY + 15.5, AZ - 2.3]]) root.add(lampGlow(new THREE.Vector3(px, py, pz), px < AX ? 0xff2010 : 0x20ff50, 0.9, 2.5));
+    root.add(lampGlow(new THREE.Vector3(AX, deckY + 16.6 + 7.2, AZ - 1.0), 0xfff2d8, 1.2, 3));
+    // draft marks (white decimetre figures on the hull at bow, midships and stern, port side)
+    const dm = draftMarkMaterial();
+    for (const z of [-60, -22, 23.5]) {
+      const hx = hullHalf(z), sl = (hullHalf(z + 0.5) - hullHalf(z - 0.5));
+      const g = new THREE.PlaneGeometry(0.5, 3.0);
+      const m = new THREE.Mesh(g, dm);
+      m.position.set(AX - hx - 0.035, -8.2 + 6.1, z); m.rotation.y = Math.atan2(-1, -sl);
+      root.add(m);
+    }
+  }
   const tier0 = deckBoxes.filter(c => Math.abs(c.y - (deckY + 0.1)) < 0.01);
   for (const c of tier0) for (const e of [-1, 1]) {
     const zE = c.z + e * (CL / 2 + 0.06);
@@ -345,4 +437,45 @@ export function dressPort(ctx) {
 
   if (warnings.length) console.warn('[dress] placement warnings:\n' + warnings.join('\n'));
   return { warnings };
+}
+
+// Soft elliptical alpha for puddle decals.
+let _puddleTex = null;
+function puddleTexture() {
+  if (_puddleTex) return _puddleTex;
+  const n = 128, c = document.createElement('canvas'); c.width = c.height = n;
+  const g = c.getContext('2d'), img = g.createImageData(n, n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const dx = (x + 0.5) / n * 2 - 1, dy = (y + 0.5) / n * 2 - 1;
+    // irregular edge: low-frequency wobble on the radius
+    const a = Math.atan2(dy, dx), rad = 0.82 + 0.1 * Math.sin(a * 3 + 1.3) + 0.06 * Math.sin(a * 7 + 0.4);
+    const d = Math.hypot(dx, dy) / rad;
+    const v = Math.min(1, Math.max(0, (1 - d) * 5)) * 255;
+    const i = (y * n + x) * 4; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  _puddleTex = new THREE.CanvasTexture(g.canvas);
+  return _puddleTex;
+}
+
+// Hull draft marks: decimetre figures, 10 cm high, every 20 cm from 4.6 m to 7.6 m (draught 6.0 at the waterline).
+let _draftMat = null;
+function draftMarkMaterial() {
+  if (_draftMat) return _draftMat;
+  const ppm = 256, w = 128, h = 3.0 * ppm;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = '#e9e8e0'; g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.font = `700 ${Math.round(0.14 * ppm)}px Arial, Helvetica, sans-serif`;
+  for (let d = 4.6; d <= 7.61; d += 0.2) {
+    const y = (7.6 - d) * ppm;
+    const whole = Math.abs(d - Math.round(d)) < 0.01;
+    g.fillText(whole ? String(Math.round(d)) : String(Math.round(d * 10) % 10), whole ? 54 : 16, y - 0.05 * ppm);
+    g.fillRect(whole ? 6 : 8, y - 2, whole ? 40 : 22, 3);   // tick at the waterline of that mark
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  _draftMat = new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.6, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+  return _draftMat;
 }
