@@ -108,6 +108,13 @@ export class Weapon {
     lens.position.set(0, 0, -0.07); this.gun.add(lens);
     const dot = new THREE.Mesh(new THREE.CircleGeometry(0.00075, 16), new THREE.MeshBasicMaterial({ color: new THREE.Color(12, 0.3, 0.2), toneMapped: false }));
     dot.position.set(0, 0, -0.069); this.gun.add(dot);
+    // faint glow around the LED dot (reflected off the lens coating)
+    const gc = document.createElement('canvas'); gc.width = gc.height = 64;
+    const gx = gc.getContext('2d'), gg = gx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gg.addColorStop(0, 'rgba(255,60,40,0.9)'); gg.addColorStop(0.15, 'rgba(255,40,30,0.35)'); gg.addColorStop(1, 'rgba(255,0,0,0)');
+    gx.fillStyle = gg; gx.fillRect(0, 0, 64, 64);
+    const halo = new THREE.Mesh(new THREE.PlaneGeometry(0.006, 0.006), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(gc), color: new THREE.Color(3, 1, 1), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    halo.position.set(0, 0, -0.0685); dot.add(halo); halo.position.set(0, 0, 0.0005);
     this.dot = dot;
 
     // STANAG magazine (separate for the reload) – slight curve

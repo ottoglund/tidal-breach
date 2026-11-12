@@ -152,6 +152,8 @@ async function boot() {
         // capture mode: stop the realtime loop and render single frames on demand (slow software GPUs)
         hold: (on) => { hold = !!on; },
         ads: (v) => { game.player.ads = v; weapon.ads = v; },
+        layer: (name, on) => { ({ rain, splashes, water })[name].visible = !!on; },
+        fx: (on) => { pipe.camera.layers[on ? 'enable' : 'disable'](3); },
         renderFrame: (t = 10) => { const t0 = performance.now(); renderAt(t, 0.016); renderer.getContext().finish(); return performance.now() - t0; },
       }), configurable: false,
     });

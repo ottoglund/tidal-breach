@@ -341,6 +341,9 @@ export class Game {
     if (lvl > 0) col.multiplyScalar(1 / lvl);
     this.weapon.update(dt, { ads: p.ads > 0.5 && this.mode === 'play', bob: this.bob, moving: this.moving && this.mode === 'play', sprinting: this.sprinting, lookDX: this.lookDX, lookDY: this.lookDY, reloading: p.reloading > 0 ? 1 - p.reloading / 1.65 : -1, time, lightLevel: Math.min(1.5, lvl), lightColor: col });
     this.weapon.root.visible = this.mode === 'play' || this.mode === 'pause';
+    // aiming through the red dot: no HUD crosshair at all, only the illuminated dot in the optic
+    const aiming = this.weapon.ads > 0.15;
+    if (aiming !== this._crossHidden) { this._crossHidden = aiming; $('cross').style.visibility = aiming ? 'hidden' : 'visible'; }
     this.lookDX = 0; this.lookDY = 0;
     if (this.mode === 'play') { this.drawMini(); this.drawMarkers(); }
     if (time > this.markerUntil) $('hitmarker').style.opacity = '0';
@@ -358,8 +361,6 @@ export class Game {
     const near = this.nodes.find(n => !n.done && dist(p, n) < 3.15), atExit = count === 3 && dist(p, this.extract) < 4.4;
     $('interact').style.display = near || atExit ? 'block' : 'none';
     $('interact').textContent = near ? '[ E / USE ]  SABOTERA SIGNALNOD' : '[ E / USE ]  EVAKUERA';
-    $('cross').classList.toggle('aim', p.ads > 0.65);
-    $('cross').style.opacity = p.ads > 0.65 ? '0' : '1';
     const now = performance.now() / 1000;
     if (now > this.toastUntil) $('toast').style.opacity = '0';
     if (now > this.killUntil) $('killfeedback').style.opacity = '0';
