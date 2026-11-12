@@ -14,15 +14,15 @@ function materials() {
   shared = {
     uniform: mat('camo_emr', { tile: 0.42, color: 0x9a9a92 }),
     vest: mat('ratnik_green', { tile: 0.35 }),
-    glove: mat('fabric_glove', { tile: 0.2 }),
+    glove: plainMat(0x161616, 0.75),
     boot: plainMat(0x121211, 0.5),
     helmet: mat('ratnik_green', { tile: 0.3 }),
-    skin: mat('olive_knit', { tile: 0.2, color: 0x6a6a5a }), // dark balaclava
+    skin: mat('olive_knit', { tile: 0.2 }), // olive balaclava
     gun: mat('gunmetal'),
     wood: mat('ak_wood', { tile: 0.3 }),
     poly: mat('polymer', { tile: 0.25 }),
     plum: mat('plum_polymer', { tile: 0.2 }),
-    visor: new THREE.MeshStandardMaterial({ color: 0x0a0b0b, roughness: 0.08, metalness: 0.3 }), // ballistic goggles
+    visor: new THREE.MeshPhysicalMaterial({ color: 0x050607, roughness: 0.05, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.03 }), // tinted lenses
   };
   return shared;
 }
@@ -100,17 +100,38 @@ export function createGuard(variant = 'ak74') {
   const add = (parent, geo, material, shadow = true) => { const m = new THREE.Mesh(geo, material); m.castShadow = shadow; parent.add(m); return m; };
   // torso + plate carrier with pouches
   add(torso, M([[torsoGeo(), null]]), S.uniform);
+  // chest rig after the reference: shoulder harness, admin panel, belt line with AK mag pouches
   add(torso, M([
-    [box(0.4, 0.4, 0.26, 0.05), xform(0, 0.31, 0)],
-    [box(0.09, 0.13, 0.06), xform(-0.11, 0.2, -0.16)], [box(0.09, 0.13, 0.06), xform(0, 0.2, -0.16)], [box(0.09, 0.13, 0.06), xform(0.11, 0.2, -0.16)],
-    [box(0.14, 0.1, 0.06), xform(0.09, 0.38, -0.16)], [box(0.3, 0.3, 0.08), xform(0, 0.3, 0.16)],
-    [cyl(0.03, 0.03, 0.25, 8), xform(-0.12, 0.38, 0.22)],
+    ...[-1, 1].map(sx => [box(0.05, 0.42, 0.014, 0.006), xform(sx * 0.1, 0.33, -0.128, 0, 0.12, sx * 0.08)]),  // front harness straps
+    ...[-1, 1].map(sx => [box(0.05, 0.42, 0.014, 0.006), xform(sx * 0.1, 0.33, 0.125, 0, -0.12, -sx * 0.08)]), // back straps
+    ...[-1, 1].map(sx => [box(0.06, 0.03, 0.27, 0.01), xform(sx * 0.11, 0.56, 0, 0, 0, 0)]),                  // over the shoulders
+    [box(0.23, 0.2, 0.045, 0.012), xform(0, 0.31, -0.15)],                                                // admin / map panel
+    [box(0.21, 0.035, 0.05, 0.01), xform(0, 0.4, -0.16)],                                                 // panel flap
+    [box(0.07, 0.11, 0.045, 0.012), xform(0.135, 0.38, -0.135, 0, 0, 0.1)],                               // radio pouch
+    [box(0.44, 0.055, 0.3, 0.02), xform(0, 0.04, 0)],                                                     // belt
+    ...[-0.088, 0, 0.088].map(x => [box(0.078, 0.15, 0.065, 0.014), xform(x, 0.07, -0.18)]),               // triple AK mag pouches
+    ...[-1, 1].map(sx => [box(0.08, 0.14, 0.16, 0.035), xform(sx * 0.225, 0.02, -0.02)]),                  // side utility / dump pouches
+    [box(0.12, 0.12, 0.08, 0.03), xform(-0.12, 0.03, 0.16)],                                              // canteen
   ]), S.vest);
+  // magazine tops protruding from the pouches
+  add(torso, M([-0.088, 0, 0.088].map(x => [box(0.03, 0.05, 0.05, 0.006), xform(x, 0.165, -0.185, 0, 0.15)])), S.plum);
+  // jacket collar
+  add(torso, M([[box(0.2, 0.06, 0.16, 0.03), xform(0, 0.58, 0)]]), S.uniform);
   // head
   const head = new THREE.Group(); head.position.y = 0.62; torso.add(head);
-  add(head, M([[cyl(0.06, 0.065, 0.1, 10), xform(0, 0.03, 0)], [new THREE.SphereGeometry(0.11, 24, 18), xform(0, 0.15, 0, 0, 0, 0, 1, 1.12, 1.05)]]), S.skin);
-  add(head, M([[new THREE.SphereGeometry(0.135, 28, 14, 0, Math.PI * 2, 0, Math.PI * 0.55), xform(0, 0.19, 0.01)], [box(0.27, 0.025, 0.2), xform(0, 0.15, 0.02)]]), S.helmet);
-  add(head, M([[box(0.17, 0.045, 0.035, 0.015), xform(0, 0.15, -0.1)]]), S.visor, false); // goggles
+  // olive balaclava over the head and neck
+  add(head, M([[cyl(0.062, 0.068, 0.1, 16), xform(0, 0.03, 0)], [new THREE.SphereGeometry(0.108, 28, 20), xform(0, 0.155, -0.005, 0, 0, 0, 0.95, 1.14, 1.05)],
+    [box(0.09, 0.06, 0.05, 0.02), xform(0, 0.09, -0.085)]]), S.skin);  // chin / jaw
+  // electronic hearing protection: two cups and a headband over the top
+  const band = new THREE.TorusGeometry(0.118, 0.012, 8, 32, Math.PI);
+  add(head, M([
+    [rcyl(0.047, 0.04, 0.012, 32), xform(0.112, 0.15, 0.0, 0, 0, Math.PI / 2)],
+    [rcyl(0.047, 0.04, 0.012, 32), xform(-0.112, 0.15, 0.0, 0, 0, Math.PI / 2)],
+    [band, xform(0, 0.16, 0.0, 0, 0, 0)],
+  ]), S.vest);
+  // wrap-around dark shooting glasses
+  add(head, M([[box(0.075, 0.042, 0.012, 0.01), xform(0.037, 0.175, -0.104, -0.18)], [box(0.075, 0.042, 0.012, 0.01), xform(-0.037, 0.175, -0.104, 0.18)],
+    [box(0.006, 0.006, 0.1, 0.002), xform(0.1, 0.185, -0.05)], [box(0.006, 0.006, 0.1, 0.002), xform(-0.1, 0.185, -0.05)]]), S.visor, false);
   // arms
   const arm = (side) => {
     const sh = new THREE.Group(); sh.position.set(side * 0.23, 0.5, 0); torso.add(sh);
