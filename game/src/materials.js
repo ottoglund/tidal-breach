@@ -209,6 +209,11 @@ function addWet(material, mode, ground) {
       #endif
       diffuseColor.rgb *= mix(1.0, 0.68, wet * (0.45 + 0.55 * wUp));
       roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.62, wet * wUp);
+      #ifdef WET_GROUND
+        // specular anti-aliasing: fine aggregate normals must not sparkle at distance
+        float nVar = length(fwidth(vWetPos.xz)) * 2.0;
+        roughnessFactor = max(roughnessFactor, clamp(0.3 + nVar, 0.3, 0.6));
+      #endif
       diffuseColor.rgb *= mix(1.0, 0.7, puddle);
       roughnessFactor = mix(roughnessFactor, 0.02, puddle);
       metalnessFactor = mix(metalnessFactor, 0.0, puddle);

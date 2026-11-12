@@ -37,7 +37,7 @@ export function buildLevel(scene, quality) {
   const points = [];
 
   const M = {
-    asphalt: mat('asphalt', { wet: 'ground' }),
+    asphalt: mat('asphalt', { wet: 'ground', normalScale: 0.55 }),
     concrete: mat('concrete', { wet: 'ground' }),
     concreteWall: mat('concrete', { wet: 'surface', tile: 2.5 }),
     steel: mat('steel_dark'), red: mat('steel_red'), yellow: mat('crane_yellow'),
