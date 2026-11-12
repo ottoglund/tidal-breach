@@ -167,7 +167,7 @@ void main(){
   float axial = (1.0 - vT); axial = axial * axial * 0.85 + 0.15 * (1.0 - vT);
   float ground = smoothstep(0.0, 3.0, vY);
   float flicker = 0.92 + 0.08 * hsh(vec2(floor(uTime * 30.0), vT));
-  float nearFade = smoothstep(2.0, 12.0, vD); // no milky wash when the camera stands inside a beam
+  float nearFade = smoothstep(4.0, 22.0, vD); // no milky wash when the camera stands inside a beam
   float a = edge * axial * ground * flicker * uStrength * nearFade;
   gl_FragColor = vec4(uColor * a, 1.0);
 }`;

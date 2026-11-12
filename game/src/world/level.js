@@ -237,7 +237,7 @@ export function buildLevel(scene, quality) {
     spots.push({ pos: center.clone(), target: new THREE.Vector3(m.x + toward.x, 0, m.z), color: m.color, intensity: 12000, angle: 1.05, penumbra: 0.75 });
     for (const h of lm.heads) {
       root.add(lampGlow(h.pos, m.color, 2.2, 4));
-      root.add(lightCone(h.pos, h.dir, 24, 0.38, m.color, 0.028));
+      root.add(lightCone(h.pos, h.dir, 24, 0.38, m.color, 0.016));
     }
   }
 

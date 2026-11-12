@@ -82,7 +82,7 @@ export class Pipeline {
     wp.clear = false; wp.clearDepth = true;
     composer.addPass(wp);
     if (quality.bloom) {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.55, 0.65, 0.9);
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.42, 0.6, 1.25);
       composer.addPass(this.bloom);
     }
     composer.addPass(new OutputPass());
