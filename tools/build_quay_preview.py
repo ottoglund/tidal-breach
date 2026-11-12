@@ -159,6 +159,7 @@ function createOperatorWeapon() {
   paint.fillStyle = '#ffffff14';
   for (let y = 0; y < 256; y += 4) paint.fillRect(0, y, 256, 1);
   makeTex('operatorFabric', canvas);
+  makeTex('aimpointMark', makeLabel('AIMPOINT', 'white', 256, 64));
 
   const steel = mesh('gun');
   const fabric = mesh('operatorFabric');
@@ -207,6 +208,10 @@ function createOperatorWeapon() {
   tube(steel,x,opticY,-.295,-.347,.091,.059,edge);
   steel.box(x+.09,opticY,-.242,.039,.048,.058,black);
   steel.box(x,opticY+.084,-.24,.055,.041,.052,black);
+  steel.box(x,opticY,-.174,.009,.009,.003,[1.8,.09,.045]);
+  steel.box(x+.106,opticY,-.241,.045,.035,.071,edge);
+  steel.cylinder(x+.097,opticY,-.241,.022,.035,[.19,.21,.19],12);
+  trim.planeX(x+.094,opticY,-.24,.105,.035,[.82,.83,.78],1);
 
   // Cuffs and overlapping glove panels preserve a readable silhouette at night.
   fabric.box(.47,-.53,.12,.31,.33,.63,cloth,-.22,.28);
@@ -255,6 +260,8 @@ def build(source, enhanced):
                               RUSSIAN_ENEMY + "\ncreateRussianCamoTexture();\nconst enemyMesh=createRussianEnemy();")
         source = replace_once(source, "const gunMesh=createGun();",
                               OPERATOR_MODEL + "\nconst gunMesh=createOperatorWeapon();")
+        source = replace_once(source, "const enemyMesh=createEnemy();",
+                              source[source.index("const enemyMesh=createEnemy();"):source.index("const enemyMesh=createEnemy();")] + "const enemyMesh=createEnemy();") if False else source
         source = replace_once(source, ".115-player.ads*.13", ".115-player.ads*.3214")
         source = replace_once(source, "-.28+player.ads*.11", "-.28+player.ads*.2198")
         source = replace_once(source, "void main(){vec4 tex=texture2D(uTex,vUV);",
@@ -285,5 +292,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
