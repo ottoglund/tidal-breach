@@ -46,6 +46,20 @@ for (const z of [7,-5,-17]) {
 }
 """
 
+QUAY_NOISE = """
+float quayHash(vec2 cell) {
+  vec3 p = fract(vec3(cell.xyx)*vec3(.1031,.1030,.0973));
+  p += dot(p,p.yzx+19.19);
+  return fract((p.x+p.y)*p.z);
+}
+float quayNoise(vec2 p) {
+  vec2 cell = floor(p), blend = fract(p);
+  blend = blend*blend*(3.-2.*blend);
+  return mix(mix(quayHash(cell),quayHash(cell+vec2(1.,0.)),blend.x),
+             mix(quayHash(cell+vec2(0.,1.)),quayHash(cell+vec2(1.,1.)),blend.x),blend.y);
+}
+"""
+
 QUAY_SHADING = """
 // Use metre-scale surface coordinates so wear stays aligned across mesh faces.
 float quay = step(30.0,vPos.x)*step(-30.0,vPos.z)*step(vPos.z,20.0);
@@ -62,15 +76,18 @@ if (uWet > 1.5) {
   color = mix(vec3(.014,.028,.034),vec3(.078,.117,.147),grazing)
         + vec3(.29,.54,.64)*lamp*.55 + vec3(.10,.13,.13)*foam;
 } else if (quay > .5 && n.y > .6 && abs(vPos.y) < .12 && uWet > .3) {
-  float pools = sin(p.x*2.1+sin(p.y*.55))*cos(p.y*1.1)
-              + .34*sin(p.y*3.0+p.x);
-  float wet = smoothstep(.23,.60,pools);
+  float pools = .76*quayNoise(p*vec2(1.3,.61))+.24*quayNoise(p*vec2(4.6,3.1));
+  float wet = smoothstep(.50,.69,pools);
   float grain = sin(p.x*43.0)*sin(p.y*47.0);
   vec3 ripple = normalize(n+vec3(.035*sin(p.y*13.),0.,.035*cos(p.x*17.)));
   float facing = pow(1.-max(dot(ripple,eye),0.),4.);
   float reflection = pow(max(dot(ripple,normalize(normalize(l1)+eye)),0.),32.);
   color = color*(1.-wet*.42+grain*.06)
-        + wet*(vec3(.049,.078,.108)*facing+vec3(.21,.32,.36)*reflection);
+        + wet*(vec3(.035,.057,.078)*facing+vec3(.18,.27,.31)*reflection);
+} else if (quay > .5 && abs(n.x) > .7 && vPos.x > 41. && uEmit < .1) {
+  float runoff = quayNoise(vec2(vPos.z*2.9,vPos.y*.16));
+  float seams = smoothstep(.95,1.,cos(vPos.z*1.91));
+  color *= 1.-.25*runoff-.10*seams;
 }
 """
 
@@ -96,6 +113,12 @@ def build(source, enhanced):
     source = replace_once(source, "for(const geo of gunMesh)drawMesh(",
                           "if(!quayReference)for(const geo of gunMesh)drawMesh(")
     if enhanced:
+        source = replace_once(source, "void main(){vec4 tex=texture2D(uTex,vUV);",
+                              QUAY_NOISE + "void main(){vec4 tex=texture2D(uTex,vUV);")
+        for lamp in ("l0", "l2"):
+            half_vector = f"normalize({lamp})+eye"
+            source = replace_once(source, f"dot(n,{half_vector})",
+                                  f"dot(n,normalize({half_vector}))")
         source = replace_once(source, "float dist=length(vPos-uEye);",
                               QUAY_SHADING + "float dist=length(vPos-uEye);")
         source = replace_once(source, "const RENDERGROUPS=[];",
