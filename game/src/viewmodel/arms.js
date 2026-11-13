@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { parseTBMH } from '../characters/body.js';
 import { weaveGLSL, ripstop } from '../characters/cloth.js';
+import { SHADER } from '../quality.js';
 
 const URL_ARMS = 'assets/models/viewmodel_arms.bin';
 let ARMS = null;
@@ -56,7 +57,9 @@ export function armShading(m, kind) {
   const glove = kind === 'glove';
   // sleeve: same ripstop / twill yarn relief as the soldiers' uniforms (characters/cloth.js), aligned with the
   // camo_m90 texture grid (texture tile 0.45 m, material tile 0.45 m)
-  const weave = glove ? null : ripstop(0.45, 0.45);
+  // low preset (mobile): no yarn relief on the sleeve, no cordura basket weave / pebbled leather loop on the glove
+  const lite = SHADER.lite;
+  const weave = glove || lite ? null : ripstop(0.45, 0.45);
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 aux;\nvarying vec4 vAux;\nvarying vec2 vArmUv;')
@@ -96,7 +99,7 @@ export function armShading(m, kind) {
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.7 + 0.015, armSeam * dash * 0.45);
         // 1000D cordura basket weave (0.9 mm pitch) on the shell, pebbled synthetic leather on the palm; both
         // band-limited (fade out once a period shrinks to ~a pixel so they never shimmer)
-        vec2 wq = vArmUv / 0.0009;
+        ${lite ? `float weave = 0.5, pebble = 0.5;` : `vec2 wq = vArmUv / 0.0009;
         float wfw = max(fwidth(wq.x), fwidth(wq.y));
         float wv = sin(wq.x * 6.2832) * sin(wq.y * 6.2832);
         float weave = (0.5 + 0.5 * sign(wv) * pow(abs(wv), 0.6)) * (1.0 - smoothstep(0.25, 0.6, wfw));
@@ -107,7 +110,7 @@ export function armShading(m, kind) {
           vec2 o = vec2(fract(sin(dot(li + c, vec2(127.1, 311.7))) * 43758.5453), fract(sin(dot(li + c, vec2(269.5, 183.3))) * 43758.5453));
           peb = min(peb, length(c + o - lf));
         }
-        float pebble = smoothstep(0.0, 0.7, peb) * (1.0 - smoothstep(0.25, 0.6, max(fwidth(lq.x), fwidth(lq.y))));
+        float pebble = smoothstep(0.0, 0.7, peb) * (1.0 - smoothstep(0.25, 0.6, max(fwidth(lq.x), fwidth(lq.y))));`}
         armWeave = weave; armPalm = palm;
         diffuseColor.rgb *= 1.0 - 0.12 * (weave - 0.5) * (1.0 - palm) - 0.15 * pebble * palm;
         armH = -0.00045 * l1 + 0.0007 * smoothstep(0.0, -0.0015, s2) - 0.0003 * l2
@@ -153,7 +156,7 @@ export function armShading(m, kind) {
       reflectedLight.indirectDiffuse *= 0.55 + 0.45 * vAux.x;
       reflectedLight.indirectSpecular *= 0.5 + 0.5 * vAux.x;`);
   };
-  m.customProgramCacheKey = () => 'arm3' + kind;
+  m.customProgramCacheKey = () => 'arm3' + kind + (lite ? 'L' : '');
   return m;
 }
 

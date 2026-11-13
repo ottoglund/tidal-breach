@@ -15,6 +15,7 @@
 //         whorl, skinned with the head).
 import * as THREE from 'three';
 import { textures } from '../materials.js';
+import { SHADER } from '../quality.js';
 
 const NOISE = /* glsl */`
 float skH(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
@@ -79,7 +80,11 @@ export function skinShading(m, o = {}) {
   m.onBeforeCompile = (shader, renderer) => {
     prev?.(shader, renderer);
     Object.assign(shader.uniforms, U);
-    if (det) shader.defines = { ...(shader.defines || {}), SK_DETAIL: '' };
+    // low preset (SK_LITE): no pore / furrow micro-normal texture, no procedural creases / bump; the colour work
+    // (redness, brows, stubble, hair, eyes) stays
+    const lite = SHADER.lite;
+    if (det && !lite) shader.defines = { ...(shader.defines || {}), SK_DETAIL: '' };
+    if (lite) shader.defines = { ...(shader.defines || {}), SK_LITE: '' };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vSkP;\nvarying vec2 vSkUv;\nvarying vec3 vSkT;\nuniform vec3 uHeadC;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkP = position; vSkUv = uv;')
@@ -253,6 +258,7 @@ ${NOISE}`)
           // micro-relief strength by region: strongest on the nose and cheeks, faint on lids and lips, none on hair
           float lid = exp(-dot(e.xy / vec2(0.017, 0.011), e.xy / vec2(0.017, 0.011)));
           skDet = (0.75 + 0.35 * nose + 0.3 * cheek) * (1.0 - 0.75 * lid) * (1.0 - 0.8 * lips) * (1.0 - hd) * (1.0 - brow * 0.6);
+          #ifndef SK_LITE
           // fine creases (height in m): forehead lines, crow's feet, under-eye, nasolabial folds, neck lines
           float front = smoothstep(frontZ + 0.06, frontZ + 0.02, p.z);
           float wf = max(fwP, 0.0007);                           // never thinner than ~a pixel
@@ -277,6 +283,7 @@ ${NOISE}`)
           neck *= smoothstep(frontZ + 0.11, frontZ + 0.07, p.z) * step(p.y, eyeY - 0.15);
           skHgt = -0.00009 * fl - 0.00006 * crow - 0.00008 * ue - 0.0005 * nl - 0.00007 * neck;
           col *= 1.0 - 0.18 * clamp(fl * 0.6 + crow * 0.4 + ue * 0.5 + nl * 0.6 + neck * 0.3, 0.0, 1.0);
+          #endif
           skRough = clamp(mix(0.55, 0.42, skOil) + 0.1 * skStub + 0.12 * brow - 0.08 * lips + 0.06 * (n2 - 0.5) + 0.1 * hd, 0.3, 0.75);
         }
         #ifdef SK_DETAIL
@@ -310,11 +317,13 @@ ${NOISE}`)
         }
       }
       #endif
-      normal = skBump(-vViewPosition, normal, skHgt, faceDirection);`)
+      #ifndef SK_LITE
+      normal = skBump(-vViewPosition, normal, skHgt, faceDirection);
+      #endif`)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
       material.specularColor = vec3(skF0) * mix(1.0, skCav, 0.5);
       material.specularF90 = 1.0;`);
   };
-  m.customProgramCacheKey = () => 'skin3' + (det ? 'd' : '');
+  m.customProgramCacheKey = () => 'skin3' + (det ? 'd' : '') + (SHADER.lite ? 'L' : '');
   return m;
 }

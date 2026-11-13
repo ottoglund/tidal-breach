@@ -24,6 +24,8 @@
 //  - boot: leather creases across the vamp at the ball-of-foot flex line and scuffed, abraded toe caps.
 // All noise is evaluated in rest-pose model space (vFabP), so patterns do not swim when the skeleton moves.
 import * as THREE from 'three';
+import { SHADER } from '../quality.js';
+import { shareMapUv, uvShareKey } from '../materials.js';
 import { WET } from '../materials.js';
 import { soldierBody } from './body.js';
 
@@ -125,14 +127,19 @@ export function fabricShading(m, o = {}) {
   const dirt = o.dirt ?? 0.5, sheen = o.sheen ?? 0.12, soak = o.soak ?? 0.35, wrinkle = o.wrinkle ?? 0.5;
   const rough = o.rough ?? 0.25, wetTop = o.wetTop ?? 0.3, mudGloss = o.mudGloss ?? 0.45;
   // rib: knitted rib relief (balaclava / gaiter): vertical wales of this period (m) around the head, with stitch loops
-  const rib = o.rib ?? 0;
-  const weave = o.weave || null, gear = !!o.gear, boot = !!o.boot;
+  const ribFull = o.rib ?? 0;
+  const weaveFull = o.weave || null, gearFull = !!o.gear, bootFull = !!o.boot;
   const prev = m.onBeforeCompile;
   m.onBeforeCompile = (shader, renderer) => {
     prev?.(shader, renderer);
+    // quality tier: on the low preset (mobile GPUs) the micro relief (yarn weave, knit rib, drape), joint folds, seams,
+    // wear, edge wear and boot creases are skipped; mud, wet soak, roughness variation and sheen stay (FAB_LITE)
+    const lite = SHADER.lite;
+    const rib = lite ? 0 : ribFull, weave = lite ? null : weaveFull, gear = lite ? false : gearFull, boot = lite ? false : bootFull;
     shader.uniforms.uWetness = shader.uniforms.uWetness || WET.uWetness;
-    const body = o.body ? fabRig() : null;
+    const body = o.body && !lite ? fabRig() : null;
     const defs = { ...(shader.defines || {}), FAB: '' };
+    if (lite) defs.FAB_LITE = '';
     if (body) { defs.FAB_BODY = ''; Object.assign(shader.uniforms, body); }
     if (weave) defs.FAB_WEAVE = '';
     if (gear) defs.FAB_GEAR = '';
@@ -163,14 +170,22 @@ ${weaveGLSL(weave)}
         float gy = vFabP.y;
         vec2 pq = vec2(vFabP.x + vFabP.z * 0.7, vFabP.z - vFabP.x * 0.5);
         float fwP = length(fwidth(vFabP));                 // pixel footprint (m)
+        #ifdef FAB_LITE
+        float nz = fabN(pq * 7.0 + vFabP.y * 3.0);
+        #else
         float nz = fabN(pq * 7.0 + vFabP.y * 3.0) * 0.6 + fabN(pq * 23.0 + 5.0) * 0.4;
+        #endif
         // splashed mud: a heavy dark band from the boots up to the knee, flecks and streaks higher up
         float mud = smoothstep(${(0.5 * (0.6 + dirt)).toFixed(3)} + nz * 0.28, 0.0, gy - 0.05) * ${dirt.toFixed(3)};
+        #ifdef FAB_LITE
+        fabMud = clamp(mud, 0.0, 0.9);
+        #else
         float fleck = step(0.7, fabN(pq * 90.0 + vFabP.y * 61.0)) * smoothstep(1.0, 0.15, gy) * ${dirt.toFixed(3)} * (0.4 + nz);
         float drip = smoothstep(0.62, 0.9, fabN(vec2(pq.x * 31.0 + pq.y * 17.0, vFabP.y * 3.5))) * smoothstep(0.95, 0.3, gy) * ${(dirt * 0.5).toFixed(3)};
         fabMud = clamp(mud + fleck * 0.7 + drip, 0.0, 0.9);
         // drape: soft rumples (~5 cm) on top of the modelled folds
         fabHgt += ${(wrinkle * 0.0012).toFixed(5)} * (fabN(pq * 19.0 + vFabP.y * 13.0) - 0.5);
+        #endif
         ${rib ? `
         // knitted rib: wales run vertically; arc length around the head (bind pose, head axis near x = 0, z = -0.04)
         float arc = atan(vFabP.x, -(vFabP.z + 0.04)) * 0.09;
@@ -261,7 +276,11 @@ ${weaveGLSL(weave)}
           fabHgt -= 0.00015 * scuff;
         }
         #endif
+        #ifdef FAB_LITE
+        vec3 mudCol = vec3(0.105, 0.087, 0.063);
+        #else
         vec3 mudCol = mix(vec3(0.085, 0.07, 0.052), vec3(0.13, 0.105, 0.075), fabN(pq * 41.0));
+        #endif
         diffuseColor.rgb = mix(diffuseColor.rgb, mudCol, fabMud);
         // rain soak: water fills the yarn gaps, so the cloth scatters less light back out: darker and more saturated
         float up = clamp(vWetN.y * 0.5 + 0.5, 0.0, 1.0);
@@ -280,6 +299,7 @@ ${weaveGLSL(weave)}
       normal = normalize( tbn * mapN );`)
       .replace('#include <clearcoat_normal_fragment_begin>', `#include <clearcoat_normal_fragment_begin>
       {
+        #ifndef FAB_LITE
         // macro relief (drape, joint folds, seams, knit rib, boot creases) as a bump from screen-space derivatives
         vec3 dpx = dFdx(-vViewPosition), dpy = dFdy(-vViewPosition);
         vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx);
@@ -288,6 +308,9 @@ ${weaveGLSL(weave)}
         normal = normalize(abs(det) * normal - g);
         // roughness: patchy wear, wet mud and soaked cloth are glossier (not mirror-like)
         float rv = fabN(vFabP.xy * 17.0 + vFabP.z * 9.0) * 0.6 + fabN(vFabP.zy * 61.0) * 0.4 - 0.5;
+        #else
+        float rv = fabN(vFabP.xy * 17.0 + vFabP.z * 9.0) - 0.5;
+        #endif
         roughnessFactor = clamp(roughnessFactor * fabRoughK * (1.0 + ${rough.toFixed(3)} * 2.0 * rv) * (1.0 - ${mudGloss.toFixed(3)} * fabMud) * (1.0 - 0.3 * clamp(fabWet, 0.0, 1.0)), 0.18, 1.0);
       }`)
       .replace('#include <opaque_fragment>', `
@@ -300,8 +323,9 @@ ${weaveGLSL(weave)}
         outgoingLight += sh * (0.5 + 3.0 * lum);
       }
       #include <opaque_fragment>`);
+    shareMapUv(shader, m);
   };
-  m.customProgramCacheKey = () => 'fab3' + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss + rib + (weave ? weave.cells + '/' + weave.tile : '') + (o.body ? 'B' : '') + (gear ? 'G' : '') + (boot ? 'T' : '');
+  m.customProgramCacheKey = () => 'fab3' + (SHADER.lite ? 'L' : '') + uvShareKey(m) + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss + ribFull + (weaveFull ? weaveFull.cells + '/' + weaveFull.tile : '') + (o.body ? 'B' : '') + (gearFull ? 'G' : '') + (bootFull ? 'T' : '');
   return m;
 }
 

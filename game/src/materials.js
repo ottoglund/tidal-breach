@@ -85,6 +85,44 @@ function repeatClone(tex, rep) {
   return t;
 }
 
+// ---- varying saver -------------------------------------------------------------------------------------------------
+// three emits one `vXxxMapUv` varying per texture slot even when every slot uses the same UV transform (our PBR sets
+// are all repeatClone()s of one rep, uv channel 0), which costs three extra varying vec2 per material. Where the
+// transforms are identical the map / roughness / AO / normal slots read the albedo's varying instead: the values are
+// bit-identical (same matrix, same attribute), so this is visually a no-op. Needed to stay under the WebGL2 minimum of
+// 15 varying vectors for the heaviest character materials once shadowed spot lights add their coord varyings.
+const UV_SLOTS = [['aoMap', 'vAoMapUv', 'USE_AOMAP'], ['normalMap', 'vNormalMapUv', 'USE_NORMALMAP'], ['roughnessMap', 'vRoughnessMapUv', 'USE_ROUGHNESSMAP'], ['metalnessMap', 'vMetalnessMapUv', 'USE_METALNESSMAP']];
+function sharedUvSlots(m) {
+  const base = m.map;
+  if (!base) return [];
+  base.updateMatrix();
+  const out = [];
+  for (const slot of UV_SLOTS) {
+    const t = m[slot[0]];
+    if (!t) continue;
+    t.updateMatrix();
+    if (t.channel === base.channel && t.matrix.equals(base.matrix)) out.push(slot);
+  }
+  return out;
+}
+/** Program cache key part for shareMapUv (the set of shared slots is a property of the material's textures). */
+export const uvShareKey = (m) => 'u' + sharedUvSlots(m).map(s => s[1][1]).join('');
+/** Call last in an onBeforeCompile chain (after every injected snippet): alias equal-transform UV varyings to vMapUv. */
+export function shareMapUv(shader, m) {
+  const slots = sharedUvSlots(m);
+  if (!slots.length) return;
+  const C = THREE.ShaderChunk;
+  const dropVarying = (chunk) => slots.reduce((c, [, v]) => c.replace(new RegExp('\\s*varying vec2 ' + v + ';'), ''), chunk);
+  const dropAssign = (chunk) => slots.reduce((c, [, v]) => c.replace(new RegExp('#ifdef USE_\\w+\\s+' + v + ' = [^;]+;\\s*#endif'), ''), chunk);
+  // fragment side: later chunks (roughnessmap_fragment, normal_fragment_maps, injected code) still name the old varyings,
+  // so alias them with macros instead of renaming text
+  const alias = slots.map(([, v]) => '#define ' + v + ' vMapUv').join('\n');
+  shader.fragmentShader = shader.fragmentShader.replace('#include <uv_pars_fragment>', dropVarying(C.uv_pars_fragment) + '\n' + alias + '\n');
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <uv_pars_vertex>', dropVarying(C.uv_pars_vertex))
+    .replace('#include <uv_vertex>', dropAssign(C.uv_vertex));
+}
+
 const cache = new Map();
 /**
  * mat('asphalt', {wet:'ground'}) – textured PBR material with rain extension.
@@ -347,7 +385,9 @@ function addWet(material, mode, ground, macro) {
       #include <opaque_fragment>`);
     shader.fragmentShader = fs;
   };
-  material.customProgramCacheKey = () => 'wet-' + mode + (ground ? '-h' : '') + (macro ? '-' + macro : '') + '-v3';
+  const compileWet = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, r) => { compileWet(shader, r); shareMapUv(shader, material); };
+  material.customProgramCacheKey = () => 'wet-' + mode + (ground ? '-h' : '') + (macro ? '-' + macro : '') + '-v4' + uvShareKey(material);
 }
 
 export function updateWet(time) { WET.uTime.value = time; }

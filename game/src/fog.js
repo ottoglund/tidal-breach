@@ -40,16 +40,13 @@ export function installFog() {
   installed = true;
   const C = THREE.ShaderChunk;
   C.fog_pars_vertex = `#ifdef USE_FOG
-  varying float vFogDepth;
   varying vec3 vFogView;
 #endif`;
   C.fog_vertex = `#ifdef USE_FOG
-  vFogDepth = - mvPosition.z;
   vFogView = mvPosition.xyz;
 #endif`;
   C.fog_pars_fragment = `#ifdef USE_FOG
   uniform vec3 fogColor;
-  varying float vFogDepth;
   varying vec3 vFogView;
   #ifdef FOG_EXP2
     uniform float fogDensity;
@@ -60,6 +57,7 @@ export function installFog() {
   ${SCATTER_GLSL}
 #endif`;
   C.fog_fragment = `#ifdef USE_FOG
+  float vFogDepth = - vFogView.z;   // = three's vFogDepth; derived here to save a varying
   #ifdef FOG_EXP2
     float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
   #else

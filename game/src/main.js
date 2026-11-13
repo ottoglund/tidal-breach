@@ -1,6 +1,6 @@
 // TIDAL BREACH v0.2 – boot, lighting rig, main loop, QA hooks and perf overlay.
 import * as THREE from 'three';
-import { pickQuality, saveQuality } from './quality.js';
+import { pickQuality, saveQuality, applyShaderTier } from './quality.js';
 import { loadTextures, updateWet, WET } from './materials.js';
 import { Pipeline, LAYER } from './renderer.js';
 import { buildLevel } from './world/level.js';
@@ -30,6 +30,7 @@ async function boot() {
     $('menuNote').textContent = 'LIGGANDE LÄGE REKOMMENDERAS · ANVÄND HÖRLURAR';
   }
   const quality = pickQuality(isTouch);
+  applyShaderTier(quality);
   document.querySelectorAll('.quality button').forEach(b => {
     b.classList.toggle('on', b.dataset.q === quality.name);
     b.onclick = () => { saveQuality(b.dataset.q); const u = new URL(location.href); u.searchParams.set('q', b.dataset.q); location.href = u.toString(); };
