@@ -12,6 +12,12 @@ python3 -m http.server 8000
 # then open http://localhost:8000/game/
 ```
 
+On Windows without Python, run the bundled PowerShell server from the repository folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\serve.ps1
+```
+
 ES modules and textures cannot load from `file://`. Graphics presets: `?q=low|medium|high` (or the menu buttons). Press **F9** (or add `?perf=1`) for the FPS/draw-call overlay.
 
 **v0.1 classic (WebGL 1 fallback, `index.html`):** open `index.html` in a modern WebGL-capable browser; no build step needed. For iPhone, use a web browser in landscape orientation. Desktop: WASD move, mouse look, left-click fire, right-click aim, R reload, E interact, Shift sprint, C crouch, Esc pause, M map. On mobile: virtual joystick, touch-look, weapon and action buttons.
