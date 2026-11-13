@@ -258,7 +258,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet } = {}) {
 }
 
 /** OPFOR guard (API used by game.js): variant 'ak74' | 'akm'. */
-export function createGuard(variant = 'ak74') { /*TMPDBG*/ { const q = new URLSearchParams(location.search).get('hv'); if (q) return createSoldier({ side: 'hv', weapon: 'ak4c', helmet: q === 'helmet' }); }
+export function createGuard(variant = 'ak74') {
   return createSoldier({ side: 'opfor', weapon: variant }); }
 
 // ------------------------------------------------------------------ math helpers

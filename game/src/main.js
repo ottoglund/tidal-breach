@@ -165,6 +165,8 @@ async function boot() {
         // deterministic simulation step (independent of render speed)
         step: (sec) => { const n = Math.ceil(sec / 0.02); for (let i = 0; i < n; i++) game.update(0.02, performance.now() / 1000 + i * 0.02); },
         freeze: (on) => { game.frozen = !!on; },
+        squad: (on) => game.squad.setEnabled(on),
+        squadState: () => game.squad.members.map(m => ({ x: m.x, z: m.z, mag: m.mag, target: !!m.target })),
         peaceful: () => { for (const e of game.enemies) { e.alive = false; e.deathAt = -1e9; } },
         perf: () => ({ fps: perf.fps, ms: perf.ms, quality: quality.name, renderer: glInfo, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }),
         quality: quality.name,

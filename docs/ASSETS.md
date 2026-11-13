@@ -41,8 +41,10 @@ the set's real tile size (physically scaled slopes).
 | camo_m90 | albedo, normal, orm | player-side uniform; procedural splinter pattern in the colours of the Swedish M90 (no image copied), 6.5 mm ripstop |
 | camo_emr | albedo, normal, orm | opposing-force uniform; procedural digital pattern in Russian-style flora colours (no image copied), ~3 mm pixels |
 | olive_knit, glove_green, khaki_webbing | albedo, normal, orm | balaclava (knit), gloves (cordura), sling (webbing) |
-| ratnik_green, boot_leather | albedo, normal, orm | OPFOR vest/helmet cover (cordura), boots (pebbled leather) |
-| ak_wood, plum_polymer | albedo, normal, orm | AK furniture (laminated wood, plum polymer) |
+| ratnik_green, boot_leather | albedo, normal, orm | soldier rigs/pouches (olive cordura with 25 mm stitched MOLLE/PALS webbing rows), boots (dark pebbled leather with creases); used by OPFOR and Home Guard soldiers |
+| ak_wood, plum_polymer | albedo, normal, orm | AK furniture (dark reddish-brown laminated birch, satin; plum polymer) |
+
+Soldier insignia (Swedish flag, generic dark "HV" shield) are drawn at runtime on a canvas in `game/src/enemies.js` (original simple graphics, no copied artwork).
 | water | normal | harbour water ripples |
 | puddles | mask | world-scale puddle / wetness distribution |
 | marking | mask | worn road-paint alpha |

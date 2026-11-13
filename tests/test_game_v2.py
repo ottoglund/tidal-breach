@@ -181,6 +181,7 @@ def test_strafe_direction(game):
 
 def test_enemies_engage_and_damage(game):
     page, errors = game
+    qa(page, "squad(false)")  # comrades would otherwise take the fight off the player
     qa(page, "view(15, -2, 3.14, 0)")  # near guard at (15,-9)
     qa(page, "step(12)")
     s = state(page)
@@ -193,4 +194,18 @@ def test_renders_frames(game):
     ms = qa(page, "renderFrame(5)")
     assert ms >= 0
     qa(page, "renderFrame(5.1)")
+    assert not errors
+
+
+def test_squad_follows_and_engages(game):
+    page, errors = game
+    sq = qa(page, "squadState()")
+    assert len(sq) == 2
+    s = state(page)
+    assert all(abs(m["x"] - s["x"]) < 6 and abs(m["z"] - s["z"]) < 6 for m in sq), "comrades start next to the player"
+    # walk the player toward Node A; comrades must follow in formation
+    qa(page, "view(1, 0, 0, 0)")
+    qa(page, "step(8)")
+    sq = qa(page, "squadState()")
+    assert all(abs(m["x"] - 1) < 9 and abs(m["z"] - 0) < 9 for m in sq), f"comrades did not follow: {sq}"
     assert not errors

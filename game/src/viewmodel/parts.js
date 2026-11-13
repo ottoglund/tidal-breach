@@ -61,7 +61,7 @@ export function finger(out, p, d, axis, curls, lens, radii, flat = 0.92) {
     D.applyAxisAngle(axis, curls[i]);
     const Q = P.clone().addScaledVector(D, lens[i]);
     out.push([seg(P, Q, radii[i], radii[i + 1], flat, 10), null]);
-    if (i > 0) out.push([ell(P, [radii[i] * 1.07, radii[i] * 1.0, radii[i] * 1.07], [0, 0, 0], 10, 6), null]);   // knuckle (joint) bulge
+    if (i > 0) out.push([ell(P, [radii[i] * 1.03, radii[i] * 1.0, radii[i] * 1.03], [0, 0, 0], 10, 6), null]);   // knuckle (joint) bulge
     P = Q;
   }
   return { tip: P, dir: D };

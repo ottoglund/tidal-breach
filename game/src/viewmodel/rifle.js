@@ -68,11 +68,11 @@ export function buildRifle(gun, m) {
     [rcyl(0.0075, 0.004, 0.0015, 16), xform(-0.0185, lowMid + 0.006, 0.042, 0, 0, A)],
     [box(0.003, 0.006, 0.028, 0.001), xform(-0.0215, lowMid + 0.006, 0.054)],
     // cocking-lever tube (left, above the barrel) with the folding cocking handle
-    [rcyl(0.0066, 0.272, 0.0012, 14), xform(-0.0205, bore + 0.0155, hgZ0 - 0.136 + 0.01, 0, A)],
-    [rcyl(0.0074, 0.012, 0.002, 14), xform(-0.0205, bore + 0.0155, hgZ1 - 0.004, 0, A)],         // tube end cap
-    [rcyl(0.0052, 0.0075, 0.0012, 12), xform(-0.0285, bore + 0.0155, -0.205, 0, 0, A)],          // handle pivot boss
-    [box(0.004, 0.006, 0.036, 0.0015), xform(-0.0325, bore + 0.0155, -0.222)],                    // folded handle (lies along the tube)
-    [box(0.0045, 0.0085, 0.008, 0.002), xform(-0.0325, bore + 0.0155, -0.242)],                   // handle knob
+    [rcyl(0.0078, 0.272, 0.0015, 16), xform(-0.0215, bore + 0.0255, hgZ0 - 0.136 + 0.01, 0, A)],
+    [rcyl(0.0086, 0.012, 0.002, 16), xform(-0.0215, bore + 0.0255, hgZ1 - 0.004, 0, A)],         // tube end cap
+    [rcyl(0.0052, 0.0075, 0.0012, 12), xform(-0.0295, bore + 0.0255, -0.205, 0, 0, A)],          // handle pivot boss
+    [box(0.004, 0.006, 0.036, 0.0015), xform(-0.0335, bore + 0.0255, -0.222)],                    // folded handle (lies along the tube)
+    [box(0.0045, 0.0085, 0.008, 0.002), xform(-0.0335, bore + 0.0255, -0.242)],                   // handle knob
     // barrel stub, front sight block with hood and post
     [rcyl(0.0095, 0.09, 0.001, 20), xform(0, bore, -0.445, 0, A)],
     [box(0.021, 0.021, 0.03, 0.004), xform(0, bore + 0.0075, -0.472)],
@@ -90,8 +90,6 @@ export function buildRifle(gun, m) {
     // side rails on the handguard (short Picatinny stubs) and the retaining ring at its front
     ...[-1, 1].flatMap(s => Array.from({ length: 5 }, (_, i) => [sb(0.0034, 0.011, 0.0065), xform(s * 0.0245, bore - 0.004, hgZ0 - 0.095 - i * 0.0158)])),
     [box(0.043, 0.043, 0.01, 0.004), xform(0, bore, hgZ1 + 0.006)],
-    // rear sling attachment on the stock plate
-    [box(0.01, 0.016, 0.03, 0.003), xform(0, lowMid - 0.002, 0.15)],
   ];
   const body = add(metal, m.steel, 1);
 
@@ -119,19 +117,18 @@ export function buildRifle(gun, m) {
     [box(0.034, 0.012, 0.04, 0.004), new THREE.Matrix4().multiplyMatrices(gm, xform(0, -0.058, 0))],
     // Ak 4C stock: adjustable steel tube, sliding polymer body, cheek riser, butt
     [box(0.030, 0.044, 0.08, 0.008), xform(0, recvMid - 0.004, 0.17)],
-    [box(0.036, 0.074, 0.11, 0.012), xform(0, recvMid - 0.006, 0.245, 0, -0.05)],
-    [box(0.022, 0.016, 0.105, 0.006), xform(0, recvMid + 0.033, 0.245, 0, -0.05)],        // cheek riser
-    [box(0.04, 0.114, 0.024, 0.01), xform(0, recvMid - 0.012, 0.318, 0, 0.1)],
+    [box(0.034, 0.064, 0.11, 0.012), xform(0, recvMid - 0.006, 0.245, 0, -0.05)],
+    [box(0.022, 0.014, 0.105, 0.006), xform(0, recvMid + 0.029, 0.245, 0, -0.05)],        // cheek riser
+    [box(0.038, 0.104, 0.024, 0.01), xform(0, recvMid - 0.012, 0.318, 0, 0.1)],
   ], m.poly, 0.1);
-  add([[box(0.044, 0.118, 0.012, 0.005), xform(0, recvMid - 0.012, 0.333, 0, 0.1)]], m.rubber);   // butt pad
+  add([[box(0.042, 0.108, 0.012, 0.005), xform(0, recvMid - 0.012, 0.333, 0, 0.1)]], m.rubber);   // butt pad
   add([
     [rcyl(0.0132, 0.07, 0.002, 18), xform(0, recvMid - 0.001, 0.145, 0, A)],                   // sliding stock tube
-    [box(0.039, 0.006, 0.012, 0.002), xform(0, recvMid - 0.045, 0.19)],                        // length-adjust latch
   ], m.steel, 1);
 
   // ---------- magazine: STRAIGHT stamped-steel 20-round 7.62 (separate for the reload) ----------
   const mag = new THREE.Group();
-  const H = 0.17;                                                                // length below the origin
+  const H = 0.19;                                                                // length below the origin
   mag.add(new THREE.Mesh(merge([
     [box(0.0235, H, 0.052, 0.003), xform(0, -H / 2, 0)],
     [box(0.0262, 0.012, 0.056, 0.003), xform(0, -H - 0.003, 0)],                // floorplate

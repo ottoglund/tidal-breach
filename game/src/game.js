@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { BOUNDS, SPAWN, NODES, EXTRACT, ENEMY_SPAWNS } from './world/level.js';
 import { createGuard, poseGuard } from './enemies.js';
+import { createSoldier, poseSoldier } from './characters/squad.js';
+import { Squad } from './friendlies.js';
 
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -34,6 +36,8 @@ export class Game {
     this.lookDX = 0; this.lookDY = 0;
     this.hitFlash = 0;
     this.reset();
+    // Hemvärnet comrades (Grön 2 with balaclava/earmuffs, Grön 3 with helmet)
+    this.squad = new Squad(this, i => createSoldier({ side: 'hv', weapon: 'ak4c', helmet: i === 1 }), poseSoldier);
     this.bindInput();
   }
 
@@ -43,6 +47,7 @@ export class Game {
     for (const e of this.enemies) e.model.root.visible = false;
     this.enemies.length = 0;
     ENEMY_SPAWNS.forEach(e => this.spawnEnemy(...e));
+    this.squad?.reset();
     this.nodes.forEach(n => { n.done = false; this.nodeVisual(n); });
     this.recoil = 0; this.bob = 0; this.round = 0; this.lastFire = 0; this.toastUntil = 0; this.killUntil = 0; this.markerUntil = 0;
     $('uplinkState').textContent = 'JAMMED';
@@ -324,11 +329,13 @@ export class Game {
       e.flash = Math.max(0, e.flash - dt);
       e.hit = Math.max(0, e.hit - dt * 5);
     }
+    this.squad.update(dt, time);
     this.updateHud(time);
   }
 
   // ------------------------------------------------------------------ presentation
   syncVisuals(time, dt) {
+    this.squad.sync();
     const p = this.player, cam = this.camera;
     const bobY = this.mode === 'play' ? Math.sin(this.bob * 2) * 0.025 * (this.moving ? 1 : 0.1) * (1 - p.ads * 0.7) : 0;
     const shake = (this.camShake || 0) * 0.02;
@@ -390,6 +397,7 @@ export class Game {
     const toX = x => 90 + (x - p.x) * k, toY = z => 90 + (z - p.z) * k;
     for (const b of this.blockers) { c.fillStyle = '#65778168'; c.fillRect(toX(b.x1), toY(b.z1), Math.max(1, (b.x2 - b.x1) * k), Math.max(1, (b.z2 - b.z1) * k)); }
     for (const e of this.enemies) { if (!e.alive || dist(e, p) > 23) continue; c.fillStyle = '#f38b70'; c.beginPath(); c.arc(toX(e.x), toY(e.z), 3.1, 0, Math.PI * 2); c.fill(); }
+    for (const f of this.squad.minimapDots()) { c.fillStyle = '#8fe08a'; c.beginPath(); c.arc(toX(f.x), toY(f.z), 3.1, 0, Math.PI * 2); c.fill(); }
     for (const n of this.nodes) { if (n.done) continue; c.fillStyle = '#ffc17d'; c.save(); c.translate(toX(n.x), toY(n.z)); c.rotate(Math.PI / 4); c.fillRect(-3.3, -3.3, 6.6, 6.6); c.restore(); }
     if (this.nodes.every(n => n.done)) { c.fillStyle = '#91ead8'; c.fillRect(toX(this.extract.x) - 5, toY(this.extract.z) - 5, 10, 10); }
     c.translate(90, 90); c.rotate(p.yaw); c.fillStyle = '#e8f9f7'; c.beginPath(); c.moveTo(0, -9); c.lineTo(-5, 6); c.lineTo(0, 3); c.lineTo(5, 6); c.closePath(); c.fill(); c.setTransform(1, 0, 0, 1, 0, 0);
