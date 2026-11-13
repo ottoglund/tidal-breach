@@ -13,7 +13,7 @@ import { buildRightHand, buildLeftHand, LEFT_ANCHOR } from './viewmodel/hands.js
 import { buildArms, armShading } from './viewmodel/arms.js';
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-const _c = new THREE.Color(), _warm = new THREE.Color(0xffd0a0);
+const _c = new THREE.Color(), _warm = new THREE.Color(0xffd0a0), _white = new THREE.Color(0xffffff);
 
 /** Viewmodel material: a private clone of a world material, brightened for the HDR weapon pass. */
 function vm(set, opts, tint, extra = {}) {
@@ -136,12 +136,15 @@ export class Weapon {
     this.flashLight = new THREE.PointLight(0xffb060, 0, 3, 2);
     this.flashLight.position.set(0, bore, -0.62); this.gun.add(this.flashLight);
 
-    // ---- viewmodel lighting: hemisphere + warm key (follows the lamps near the player) + cool rim + wet-quay bounce ----
+    // ---- viewmodel lighting: hemisphere + warm key (follows the lamps near the player) + cool rim + wet-quay bounce + soft scene-driven fill ----
     this.hemi = new THREE.HemisphereLight(0x6a7888, 0x241f1a, 1.0); scene.add(this.hemi);
     this.ambient = new THREE.AmbientLight(0x3a4150, 0.6); scene.add(this.ambient);
     this.key = new THREE.DirectionalLight(0xffc890, 1.0); this.key.position.set(0.55, 1, 0.45); scene.add(this.key);
     this.rim = new THREE.DirectionalLight(0x9fb8d6, 1.1); this.rim.position.set(-0.8, 0.35, -0.7); scene.add(this.rim);
     this.bounce = new THREE.DirectionalLight(0x8c7a66, 0.35); this.bounce.position.set(0.1, -1, 0.3); scene.add(this.bounce);
+    // soft fill from the upper left / front, coloured and scaled by the lamps around the player (not a head-lamp: it
+    // is off-axis, weak, and goes down with the scene light so a dark corner stays dark)
+    this.fill = new THREE.DirectionalLight(0xffffff, 0.3); this.fill.position.set(-0.55, 0.65, 0.5); scene.add(this.fill);
 
     this.ads = 0; this.recoil = 0; this.recoilV = 0; this.kickRot = 0; this.swayX = 0; this.swayY = 0; this.flashT = 0; this.sprint = 0;
     // hip: low right; ADS: red-dot centred on the camera axis, tube ~9 cm in front of the eye
@@ -264,7 +267,9 @@ export class Weapon {
     const lc = s.lightColor, mx = Math.max(lc.r, lc.g, lc.b, 1e-3);
     _c.setRGB(lc.r / mx, lc.g / mx, lc.b / mx).lerp(_warm, 0.45);
     this.key.color.copy(_c);
-    this.hemi.intensity = 1.5 + lvl * 0.5;
+    this.hemi.intensity = 1.6 + lvl * 0.6;
+    this.fill.color.copy(_c).lerp(_white, 0.5);
+    this.fill.intensity = 0.25 + lvl * 0.55;
     this.rim.intensity = 1.8 + lvl * 0.5;
     this.scene.environmentIntensity = 1.2 + lvl * 0.4;
     this.dot.visible = a > 0.3;

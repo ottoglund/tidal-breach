@@ -19,7 +19,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(__file__))
 from noise import (Rng, fbm, blur, blur_dir, voronoi, warp, smoothstep,
-                   normal_from_height, ao_from_height, lines_mask, norm01)
+                   normal_from_height, ao_from_height, lines_mask, norm01, scatter, normal_from_height_m)
 import ground
 import paint as paint_mod
 import textiles
@@ -288,6 +288,40 @@ def puddles(n=512, seed=171):
     save('puddles', np.stack([p] * 3, -1), None, None)
 
 
+def skin_detail(n=512, tile=0.024, seed=231):
+    """Skin micro-relief for the soldiers' faces (characters/skin.js), tiled in the face's metric UVs.
+
+    Height field in metres over a 24 mm tile (47 um texels): pores (0.08-0.2 mm pits on a jittered ~0.55 mm grid,
+    some elongated), the polygonal network of fine skin furrows (Worley cell borders, ~0.7 mm and ~2 mm cells,
+    20-35 um deep) and a faint fbm undulation. Output: R, G = tangent-space normal X, Y (OpenGL +Y, z rebuilt in
+    the shader), B = cavity (0.5 = flat, darker = recessed) for micro-occlusion. Lossless.
+    """
+    r = Rng(seed)
+    px = tile / n
+    # pores: ~44 per row (0.55 mm pitch), radius 0.09-0.2 of a cell -> 0.05-0.11 mm, 40-60 um deep, soft walls
+    pd, pid = scatter(n, 44, r.r, rad=(0.11, 0.22), aniso=(1.0, 1.5), jitter=0.95)
+    pdepth = r.r.uniform(0.6, 1.0, 44 * 44)[pid]
+    pores = -70e-6 * pdepth * np.exp(-(pd / 0.8) ** 2 * 2.0)
+    # fine furrows: borders of two domain-warped Worley networks (cells ~0.7 mm and ~2 mm), shallow V grooves that
+    # fade in and out along their length (skin lines are broken, not a continuous mesh)
+    f1, f2, _ = voronoi(n, 34, r.r, jitter=1.0)
+    f1b, f2b, _ = voronoi(n, 12, r.r, jitter=1.0)
+    wx, wy = fbm(n, r, 2.0, lo=3, hi=20), fbm(n, r, 2.0, lo=3, hi=20)
+    g1 = warp(np.exp(-((f2 - f1) / 0.06) ** 2), wx, wy, 5.0)
+    g2 = warp(np.exp(-((f2b - f1b) / 0.05) ** 2), wy, wx, 9.0)
+    brk = smoothstep(0.3, 0.7, norm01(fbm(n, r, 1.6, lo=4, hi=30)))
+    furrow = -(10e-6 * g1 + 18e-6 * g2) * (0.3 + 0.9 * brk)
+    und = (norm01(fbm(n, r, 2.4, lo=1, hi=24)) - 0.5) * 20e-6
+    h = blur(pores + furrow + und, 0.6).astype(np.float32)
+    nm = normal_from_height_m(h, px)
+    cav = np.clip(0.5 + (h - blur(h, 6.0)) / 80e-6, 0, 1)
+    img = np.stack([nm[..., 0] * 0.5 + 0.5, nm[..., 1] * 0.5 + 0.5, cav], -1)
+    im = Image.fromarray((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8))
+    p = os.path.join(OUT, 'skin_detail_normal.webp')
+    im.save(p, 'WEBP', lossless=True, quality=100, method=6)
+    print('  wrote', os.path.relpath(p), f'{os.path.getsize(p) // 1024} KB')
+
+
 SETS = {
     'asphalt': asphalt, 'concrete': concrete, 'hull': hull, 'cladding': cladding, 'wood': wood,
     'rubber': rubber, 'castiron': castiron, 'rope': rope, 'galvanized': galvanized, 'water': water,
@@ -311,6 +345,7 @@ SETS = {
     'ratnik_green': lambda: textiles.plain(textiles.cool_grade(save, 0.85, (1.0, 1.0, 0.97)), 'ratnik_green', '#444b36', 512, 205, 0.22, 0.35, 'molle', 0.06),   # OPFOR vest / helmet cover
     'boot_leather': lambda: plain_fabric('boot_leather', '#3a2e24', seed=206, dirt=0.45, tile=0.3, structure='leather', rough_base=0.62),
     'ak_wood': ak_wood, 'plum_polymer': plum_polymer,
+    'skin_detail': skin_detail,
 }
 
 if __name__ == '__main__':

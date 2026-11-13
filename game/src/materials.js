@@ -43,7 +43,7 @@ export const SETS = {
   ak_wood: { tile: 0.3, kind: 'dielectric' },
   plum_polymer: { tile: 0.2, kind: 'dielectric' },
 };
-const SINGLE = ['water_normal', 'puddles_albedo', 'marking_albedo', 'yardmask_albedo'];
+const SINGLE = ['water_normal', 'puddles_albedo', 'marking_albedo', 'yardmask_albedo', 'skin_detail_normal'];
 
 export const textures = {};
 export const WET = {

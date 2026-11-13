@@ -46,8 +46,10 @@ float armLine(float s, float halfW) {          // anti-aliased line on the zero 
 
 /**
  * Glove / sleeve shading on top of a MeshStandardMaterial with the cordura / camo texture set:
- * occlusion from the baked cavity term, stitched seams (sharp lines with a small groove and dashed thread), the padded
- * knuckle strip (raised, slightly darker, outlined), the suede palm (darker, smoother) and the sleeve tab.
+ * occlusion from the baked cavity term (also used as a bump so folds and creases read), stitched seams (sharp lines
+ * with a small groove and lighter dashed thread), the padded knuckle strip (raised, slightly darker, outlined), a
+ * band-limited cordura basket weave, the pebbled synthetic-leather palm (darker, satin), a grazing-angle fabric sheen,
+ * and the sleeve tab.
  */
 export function armShading(m, kind) {
   const glove = kind === 'glove';
@@ -56,7 +58,7 @@ export function armShading(m, kind) {
       .replace('#include <common>', '#include <common>\nattribute vec4 aux;\nvarying vec4 vAux;\nvarying vec2 vArmUv;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvAux = aux; vArmUv = uv;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec4 vAux;\nvarying vec2 vArmUv;\nfloat armH = 0.0, armSeam = 0.0, armPad = 0.0;\n${BUMP}`)
+      .replace('#include <common>', `#include <common>\nvarying vec4 vAux;\nvarying vec2 vArmUv;\nfloat armH = 0.0, armSeam = 0.0, armPad = 0.0, armWeave = 0.5, armPalm = 0.0;\n${BUMP}`)
       .replace('#include <map_fragment>', `#include <map_fragment>
       {
         float ao = vAux.x;
@@ -86,7 +88,27 @@ export function armShading(m, kind) {
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(dot(diffuseColor.rgb, vec3(0.33))), 0.18);
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.12, 1.1, 1.0) + 0.012, armPad * 0.35 * (1.0 - palm));
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.045, 0.035), (1.0 - ao) * 0.35);
-        armH = -0.00045 * l1 + 0.0007 * smoothstep(0.0, -0.0015, s2) - 0.0003 * l2;
+        // stitches: lighter thread dashes riding in the seam groove
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.7 + 0.015, armSeam * dash * 0.45);
+        // 1000D cordura basket weave (0.9 mm pitch) on the shell, pebbled synthetic leather on the palm; both
+        // band-limited (fade out once a period shrinks to ~a pixel so they never shimmer)
+        vec2 wq = vArmUv / 0.0009;
+        float wfw = max(fwidth(wq.x), fwidth(wq.y));
+        float wv = sin(wq.x * 6.2832) * sin(wq.y * 6.2832);
+        float weave = (0.5 + 0.5 * sign(wv) * pow(abs(wv), 0.6)) * (1.0 - smoothstep(0.25, 0.6, wfw));
+        vec2 lq = vArmUv / 0.0012, li = floor(lq), lf = fract(lq);
+        float peb = 1.0;
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+          vec2 c = vec2(float(i), float(j));
+          vec2 o = vec2(fract(sin(dot(li + c, vec2(127.1, 311.7))) * 43758.5453), fract(sin(dot(li + c, vec2(269.5, 183.3))) * 43758.5453));
+          peb = min(peb, length(c + o - lf));
+        }
+        float pebble = smoothstep(0.0, 0.7, peb) * (1.0 - smoothstep(0.25, 0.6, max(fwidth(lq.x), fwidth(lq.y))));
+        armWeave = weave; armPalm = palm;
+        diffuseColor.rgb *= 1.0 - 0.12 * (weave - 0.5) * (1.0 - palm) - 0.15 * pebble * palm;
+        armH = -0.00045 * l1 + 0.0007 * smoothstep(0.0, -0.0015, s2) - 0.0003 * l2
+             + 0.00005 * weave * (1.0 - palm) - 0.00006 * pebble * palm   // weave / grain relief
+             - 0.0012 * (1.0 - ao);                                       // fabric pulled into the folds and creases
         ` : `
         float s1 = (vAux.y - 0.5) / 30.0;                         // metres from the hem stitching / tab outline
         float l1 = armLine(s1, 0.0005);
@@ -101,12 +123,23 @@ export function armShading(m, kind) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
       normal = armBump(-vViewPosition, normal, armH, faceDirection);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-      roughnessFactor = clamp(roughnessFactor * (1.0 - 0.15 * armPad${glove ? ' - 0.12 * vAux.w' : ''}), 0.3, 1.0);`)
+      roughnessFactor = clamp(roughnessFactor * (1.0 - 0.15 * armPad${glove ? ' - 0.1 * (armWeave - 0.5)' : ''}), 0.3, 1.0);
+      ${glove ? 'roughnessFactor = mix(roughnessFactor, 0.5, armPalm * 0.8);          // leather palm: satin' : ''}`)
+      .replace('#include <opaque_fragment>', `
+      {
+        // fabric / leather sheen: grazing-angle lift scaled by the light already reaching the surface, so the glove
+        // reads as cloth in the dark viewmodel lighting instead of a flat matte shape
+        float nv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
+        float rim = pow(1.0 - nv, 3.0);
+        float lum = dot(outgoingLight, vec3(0.3, 0.55, 0.15));
+        outgoingLight += mix(diffuseColor.rgb, vec3(0.5), 0.4) * rim * ${glove ? '(0.25 + 0.25 * armPalm)' : '0.15'} * (0.4 + 2.5 * lum);
+      }
+      #include <opaque_fragment>`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
       reflectedLight.indirectDiffuse *= 0.55 + 0.45 * vAux.x;
       reflectedLight.indirectSpecular *= 0.5 + 0.5 * vAux.x;`);
   };
-  m.customProgramCacheKey = () => 'arm1' + kind;
+  m.customProgramCacheKey = () => 'arm2' + kind;
   return m;
 }
 

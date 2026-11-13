@@ -12,7 +12,7 @@ import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG } from './characters/soldier.js';
 import { fabricShading } from './characters/cloth.js';
-import { skinShading } from './characters/skin.js';
+import { skinShading, LOOKS } from './characters/skin.js';
 import { soldierBody } from './characters/body.js';
 
 function M(list) {
@@ -80,9 +80,9 @@ function materials() {
     // satin nylon / polymer hardware (buckles, soles, glove shells, strap tails): smoother than cloth, scuffed at the bottom
     glove: fabricShading(mat('polymer', { tile: 0.25, color: 0x4a4c50, roughness: 0.85 }), { dirt: 0.7, sheen: 0.0, soak: 0.2, wrinkle: 0.0, rough: 0.35, wetTop: 0.3, mudGloss: 0.5 }),
     metal: mat('gunmetal', { tile: 0.25, color: 0xc4c4c0, roughness: 0.75 }),   // buckles, snaps, D-rings, slides, eyelets
-    // skin (+ short hair and eyeballs, same draw call): wrap-lit, mottled, redder cheeks / nose / lips, darker eyelid
-    // creases, stubble (characters/skin.js)
-    skin: skinShading(plainMat(0x8c7066, 0.66), eyes),
+    // skin (+ short hair and eyeballs, same draw call), one material per look (skin tone, hair and iris colour; same
+    // shader program): characters/skin.js
+    skins: LOOKS.map(l => skinShading(plainMat(l.skin, 0.5), { ...eyes, hair: l.hair, iris: l.iris })),
     gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
     boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3 }),
     gun: mat('gunmetal'),
@@ -265,19 +265,20 @@ function ak4c(S) {
 function buildRifle(S, weapon) { return weapon === 'ak4c' ? ak4c(S) : kalashnikov(S, weapon === 'akm' ? 'akm' : 'ak74'); }
 
 /**
- * createSoldier({ side: 'opfor' | 'hv', weapon: 'ak74' | 'akm' | 'ak4c', helmet?: boolean })
+ * createSoldier({ side: 'opfor' | 'hv', weapon: 'ak74' | 'akm' | 'ak4c', helmet?: boolean, look?: number })
  *  side 'opfor': EMR camo, earmuffs + glasses.  side 'hv': Swedish Home Guard, M90 camo, sleeve patches (flag left,
- *  generic HV shield right); helmet defaults to ~40 % random (true = M90-covered helmet, false = earmuffs + balaclava).
+ *  generic HV shield right); helmet defaults to ~40 % random (true = M90-covered helmet, false = earmuffs, bare head).
+ *  look: index into characters/skin.js LOOKS (skin tone, hair, eyes) for the bare-headed soldiers; random by default.
  * Returns the same object as createGuard (root, rifle, flash, flashMesh, mesh, bones, rest, s); pose it with
  * poseGuard / poseSoldier using the identical state object.
  */
-export function createSoldier({ side = 'opfor', weapon, helmet } = {}) {
+export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
   const S = materials();
   const hv = side === 'hv';
   weapon = weapon || (hv ? 'ak4c' : 'ak74');
   const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
   const root = new THREE.Group();
-  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skin, metal: S.metal }, kind);
+  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[hv ? (look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length : 0], metal: S.metal }, kind);
   root.add(mesh);
   const rifle = buildRifle(S, weapon);
   root.add(rifle);

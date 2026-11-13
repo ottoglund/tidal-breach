@@ -45,8 +45,9 @@ the set's real tile size (physically scaled slopes).
 | olive_knit, glove_green, khaki_webbing | albedo, normal, orm | balaclava (knit), gloves (cordura), sling (webbing) |
 | ratnik_green, boot_leather | albedo, normal, orm | soldier rigs/pouches (olive cordura with 25 mm stitched MOLLE/PALS webbing rows), boots (dark pebbled leather with creases); used by OPFOR and Home Guard soldiers |
 | ak_wood, plum_polymer | albedo, normal, orm | AK furniture (dark reddish-brown laminated birch, satin; plum polymer) |
+| skin_detail | normal (lossless; R, G = tangent-space normal X / Y, B = cavity) | soldiers' faces: skin micro-relief over a 24 mm tile (47 um texels) - pores on a jittered ~0.55 mm grid and broken, domain-warped Worley furrows, height in metres; tiled in the face's metric UVs by `game/src/characters/skin.js` (`make_textures.py skin_detail`) |
 
-Soldier materials reuse the sets above; no new texture files were added for the close-range soldier pass, the MakeHuman body or the first-person arms. Additional soldier surfaces are shader-/material-only: skin, eyes and short hair (`game/src/characters/skin.js`: procedural mottling, redness, eyelid creases, eyebrows, stubble, iris / sclera, hair strands and hairline, wrap lighting; all evaluated from the bind-pose position, no image data), the knitted rib relief of the balaclava (`game/src/characters/cloth.js`, procedural), metal hardware (`gunmetal` set, recoloured), satin polymer hardware (`polymer` set, recoloured) and the sunglass lenses (semi-transparent physical material plus a stylised procedural reflection in `game/src/enemies.js`, not a captured or photographic reflection). The first-person glove seams, knuckle strip, suede palm, wear and sleeve stitching are drawn by `game/src/viewmodel/arms.js` from per-vertex data in the arms file (no textures beyond `glove_green` / `camo_m90`).
+Soldier materials reuse the sets above; the only texture added for the people is `skin_detail` (synthesised, see the table). Additional soldier surfaces are shader-/material-only: skin, eyes and short hair (`game/src/characters/skin.js`: albedo per look in the measured light-skin range, procedural mottling, capillary redness, small moles, eyelid creases, eyebrows, stubble tinted by the hair colour, procedural forehead / crow's-feet / under-eye / nasolabial / neck creases as a bump, skin specular F0 0.028 with an oily T-zone, iris / sclera / lid shadow, scalp hair-density fade, hair strands with Kajiya-Kay style anisotropic highlights, wrap lighting; all evaluated from the bind-pose position, no image data except `skin_detail`; four looks - skin tone, hair and iris colour - in `LOOKS`), the knitted rib relief of the balaclava (`game/src/characters/cloth.js`, procedural), metal hardware (`gunmetal` set, recoloured), satin polymer hardware (`polymer` set, recoloured) and the sunglass lenses (semi-transparent physical material plus a stylised procedural reflection in `game/src/enemies.js`, not a captured or photographic reflection). The first-person glove seams and stitches, knuckle strip, cordura basket weave, pebbled synthetic-leather palm, fold relief, fabric sheen, wear and sleeve stitching are drawn by `game/src/viewmodel/arms.js` from per-vertex data in the arms file (no textures beyond `glove_green` / `camo_m90`). The Home Guard helmet on the bare head (shell, rails, shroud, counterweight, Y-strap and chin strap laid on the face surface) is generated in `game/src/characters/soldier.js` (`helmetMH`, `chinStrap`) from the body asset's own head vertices.
 
 Soldier insignia (Swedish flag, generic dark "HV" shield) are drawn at runtime on a canvas in `game/src/enemies.js` (original simple graphics, no copied artwork).
 | water | normal | harbour water ripples |
@@ -78,7 +79,7 @@ What the build does to the CC0 data (all own processing): applies the targets
 (adult male, muscle 0.70, weight 0.40, 50 % ideal proportions), drops the helper
 geometry (keeps the two eyeballs), converts decimetres to metres at a 1.79 m
 stature, curls the fingers into a rifle grip, offsets the skin into clothing
-(jacket, trousers bloused over boots, boots with smoothed toe boxes and a rubber sole,
+(jacket, trousers bloused over boots, boots with smoothed toe boxes - the toe region is pushed out to its local hull, the cap wall and dome are moved onto an analytic super-ellipse toe cap, and the shading normals of the boot fronts are smoothed after decimation - and a rubber sole,
 gloves, a 5 mm knit balaclava stretched over the lips and nose tip with an eye
 opening, the knit below the jaw doubling as a neck gaiter), adds a second,
 bare head (the undressed MakeHuman face and neck plus a short-hair shell) for
@@ -106,10 +107,10 @@ What the build does (all own processing): selects the MakeHuman hand and forearm
 of each side, subdivides the sleeve once (Catmull-Clark), places the hands on the
 Ak 4C in the viewmodel's gun space (right hand on the pistol grip with the index
 along the receiver, left hand under the handguard with the thumb along its left
-side), closes every finger by searching MCP / PIP / DIP angles against a
-signed-distance model of the rifle (linear-blend skinning with the MakeHuman
+side), slims the fingers (radius x 0.86 about each phalanx axis), closes every finger by searching MCP / PIP / DIP angles against a
+signed-distance model of the rifle (the left index is solved toward a wrap target round the handguard) (linear-blend skinning with the MakeHuman
 finger weights; the A-pose finger spread is closed), swings the forearm toward
-the old viewmodel's elbow direction, dresses a 2.4 mm cordura glove (longer
+the old viewmodel's elbow direction, dresses a 1.8 mm cordura glove (longer
 fingertips, padded knuckle strip, gauntlet with strap) and a baggy M90 sleeve
 (bunched folds, snug hemmed cuff with a tab, inner lip showing the cloth
 thickness), and bakes per-vertex ambient occlusion (rays against a voxelised

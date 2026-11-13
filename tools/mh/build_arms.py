@@ -11,11 +11,11 @@ for each arm:
     the index finger laid along the receiver, left hand under the handguard with the thumb along its left side
  3. closes the A-pose finger spread and searches MCP / PIP / DIP flexion per finger (linear-blend skinning with the
     MakeHuman finger weights) so every phalanx touches the rifle (signed-distance model of the receiver, grip, guard,
-    magazine and handguard) without cutting into it; a finger that cannot wrap rests relaxed; the thumb and the right
-    index are solved toward target points with a collision penalty
+    magazine and handguard) without cutting into it; a finger that cannot wrap rests relaxed; the thumbs and both
+    index fingers are solved toward target points with a collision penalty (left index: wrapped round the handguard)
  4. swings the forearm about the wrist toward the elbow direction of the old viewmodel; the MakeHuman wrist / forearm
     weights blend the bend over the wrist (no pinch)
- 5. dresses the arm: cordura glove (2.5 mm over the skin, longer fingertips, padded knuckle strip, gauntlet cuff with
+ 5. dresses the arm: slims the fingers (radius x 0.86 about each phalanx axis), cordura glove (1.8 mm over the skin, longer fingertips, padded knuckle strip, gauntlet cuff with
     a hook-and-loop strap), M90 sleeve (baggy, bunched folds behind the cuff, a snug hemmed cuff with a tab, an inner
     lip that shows the cloth thickness)
  6. writes per-vertex shading data (aux, u8 x 4): cavity / contact occlusion, a signed seam field (side seams of the
@@ -46,7 +46,8 @@ GRIP_C = np.array([0.0, -0.176, 0.07])
 GRIP_TILT = -0.3
 GR = rot_axis([1, 0, 0], GRIP_TILT)          # grip local -> gun
 GRIP_PROFILE = [(0.0105, -0.054), (0.0135, -0.044), (0.0145, -0.02), (0.0142, 0.0), (0.0155, 0.02), (0.0165, 0.04), (0.0165, 0.05)]
-GLOVE_T = 0.0024                             # glove material over the skin
+GLOVE_T = 0.0018                             # glove material over the skin (thin tactical glove)
+FINGER_SLIM = 0.86                           # finger radius scale about the phalanx axis
 GAP = 0.0004
 
 
@@ -248,7 +249,7 @@ SIDES = {
               thumb=np.array([-0.029, -0.150, 0.050]), index=np.array([0.0215, -0.132, -0.022])),
     'L': dict(S=-1, wrist=np.array([-0.092, -0.118, -0.165]), mcp=np.array([-0.008, -0.103, -0.228]), palm=np.array([0.3, 1.0, 0.0]),
               elbow=np.array([-0.24, -0.40, 0.12]), twist=0.0,
-              thumb=np.array([-0.033, BORE + 0.003, -0.300]), index=None),
+              thumb=np.array([-0.033, BORE + 0.003, -0.300]), index=np.array([0.03, -0.066, -0.262])),
 }
 
 
@@ -305,6 +306,23 @@ def build_arm(B, W, Wmh, pos, R, sd):
         G = smooth(G, nbg, 1, 0.5)
         G = smooth(G, nbg, 1, -0.52)
     Gw = wsel(gmap)
+    # slimmer fingers: the MakeHuman macro fingers (muscle / weight targets) are thick for a gloved hand; pull every
+    # finger vertex toward its phalanx axis (FINGER_SLIM), blended by the finger weights so the palm is unchanged
+    slim = np.zeros(len(G))
+    tgt = np.zeros_like(G)
+    for b, (idx, w) in Gw.items():
+        if not b.startswith('finger'):
+            continue
+        a_, b_ = hs(H[b]), hs(T[b])
+        ab = b_ - a_
+        t_ = np.clip(((G[idx] - a_) @ ab) / (ab @ ab), 0.0, 1.0)
+        axp = a_ + t_[:, None] * ab
+        tgt[idx] += w[:, None] * (axp + (G[idx] - axp) * FINGER_SLIM)
+        slim[idx] += w
+    m_ = slim > 1e-6
+    tgt[m_] /= slim[m_, None]
+    k_ = np.clip(slim, 0, 1)[:, None]
+    G = np.where(m_[:, None], G * (1 - k_) + tgt * k_, G)
     G_rest = G.copy()
 
     # ---- sleeve: one Catmull-Clark step (positions + skin weights interpolate linearly)
@@ -371,7 +389,7 @@ def build_arm(B, W, Wmh, pos, R, sd):
     for f in (2, 3, 4, 5):
         names = [f'finger{f}-{k}.{sd}' for k in (1, 2, 3)]
         heads = [hs(H[b]) for b in names]
-        if sd == 'R' and f == 2:
+        if f == 2 and cfg['index'] is not None:
             continue                                         # index solved toward its target below
         axes = []
         for k in range(3):
@@ -388,19 +406,26 @@ def build_arm(B, W, Wmh, pos, R, sd):
         rad = rot_axis([1.0, 0, 0], spread * 0.9)
         if abs(ang_of(rad @ d_f) - ang_of(d_m)) > abs(spread):
             rad = rot_axis([1.0, 0, 0], -spread * 0.9)
+        # the left index (first finger round the handguard, knuckle below its left edge) also searches abduction about
+        # the palm normal so it can wrap the handguard like the other fingers instead of resting straight forward
+        rads = [rad] if not (sd == 'L' and f == 2) else [rot_axis([1.0, 0, 0], a) @ rad for a in np.linspace(-0.45, 0.45, 7)]
         best = None
-        for t1 in T1:
-            r1 = rad @ rot_axis(axes[0], -t1 * S)
-            for t2 in T2:
-                r2 = rot_axis(axes[1], -t2 * S)
-                for k3 in K3:
-                    xf = chain(heads, [r1, r2, rot_axis(axes[2], -t2 * k3 * S)])
-                    e = 0.0002 * (t1 + t2)
-                    for (A, p, q), P0, wk in zip(xf, smp, (1.0, 1.4, 2.2)):
-                        dmin = rifle_sdf(to_gun((P0 - p) @ A.T + q, c)).min() - GLOVE_T - GAP
-                        e += 400 * max(0.0, -dmin - 0.001) + wk * max(0.0, dmin)
-                    if best is None or e < best[0]:
-                        best = (e, xf, (t1, t2, k3))
+        for rad_ in rads:
+            for t1 in T1:
+                r1 = rad_ @ rot_axis(axes[0], -t1 * S)
+                for t2 in T2:
+                    r2 = rot_axis(axes[1], -t2 * S)
+                    for k3 in K3:
+                        xf = chain(heads, [r1, r2, rot_axis(axes[2], -t2 * k3 * S)])
+                        e = 0.0002 * (t1 + t2)
+                        for (A, p, q), P0, wk in zip(xf, smp, (1.0, 1.4, 2.2)):
+                            dmin = rifle_sdf(to_gun((P0 - p) @ A.T + q, c)).min() - GLOVE_T - GAP
+                            e += 400 * max(0.0, -dmin - 0.001) + wk * max(0.0, dmin)
+                        if best is None or e < best[0]:
+                            best = (e, xf, (t1, t2, k3))
+        if os.environ.get('ARMDBG'):
+            print(sd, f, 'wrap best', round(best[0], 4), np.round(best[2], 2), 'gaps',
+                  [round(float(rifle_sdf(to_gun((P0 - p) @ A.T + q, c)).min() - GLOVE_T - GAP), 4) for (A, p, q), P0 in zip(best[1], smp)])
         if best[0] > 0.012:
             # no wrap found (the finger runs along the rifle): relaxed, slightly curled finger resting on it
             relax = None
@@ -414,7 +439,9 @@ def build_arm(B, W, Wmh, pos, R, sd):
         for b, xf in zip(names, best[1]):
             xfs[b] = xf
         if os.environ.get('ARMDBG'):
-            print(sd, 'finger', f, 'angles', np.round(best[2], 2), 'err', round(best[0], 4))
+            A_, p_, q_ = best[1][-1]
+            print(sd, 'finger', f, 'angles', np.round(best[2], 2), 'err', round(best[0], 4),
+                  'tip gun', np.round(to_gun(A_ @ (hs(T[names[2]]) - p_) + q_, c)[0], 3))
 
     # ---- thumb (and the right index): target search with a collision penalty on the joints and phalanx vertices
     def solve(f, target, ranges, flex_axis_hint):
@@ -444,14 +471,23 @@ def build_arm(B, W, Wmh, pos, R, sd):
                         best = (err, xf)
         for b, xf in zip(names, best[1]):
             xfs[b] = xf
+        if os.environ.get('ARMDBG'):
+            A, p, q = best[1][-1]
+            pts = np.vstack([((G[s] - xp) @ Ax.T + xq) for s, (Ax, xp, xq) in zip(smp, best[1])])
+            print(sd, 'solve', f, 'tip', np.round(to_gun(A @ (tip - p) + q, c)[0], 4), 'target', tg,
+                  'pen sum', round(float(np.clip(GLOVE_T + GAP - rifle_sdf(to_gun(pts, c)), 0, None).sum()), 4))
         return best[0]
 
     e_th = solve(1, cfg['thumb'], (np.linspace(-1.4, 1.4, 22), np.linspace(-1.3, 1.3, 22), np.linspace(-0.4, 0.9, 7)),
                  np.array([-S, 0, 0.0]))
     e_ix = None
     if cfg['index'] is not None:
-        e_ix = solve(2, cfg['index'], (np.linspace(-0.3, 1.0, 14), np.linspace(-0.35, 0.35, 8), np.linspace(-0.1, 0.9, 8)),
-                     np.array([-S, 0, 0.0]))
+        # right: trigger finger laid along the receiver; left: wrapped round the handguard next to the middle finger
+        rng = (np.linspace(-0.3, 1.0, 14), np.linspace(-0.35, 0.35, 8), np.linspace(-0.1, 0.9, 8)) if sd == 'R' else \
+            (np.linspace(-0.6, 1.2, 19), np.linspace(-0.6, 0.6, 13), np.linspace(0.2, 2.2, 21))
+        e_ix = solve(2, cfg['index'], rng, np.array([-S, 0, 0.0]))
+        if os.environ.get('ARMDBG'):
+            print(sd, 'index err', round(float(e_ix), 4))
 
     # ---- skin the glove (hand space), then hand space -> gun space
     Gp = lbs(G, Gw, xfs)

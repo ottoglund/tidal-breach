@@ -731,17 +731,48 @@ function setupBody() {
     return m.equals(new THREE.Matrix4()) ? null : m;
   });
   const L = A.landmarks, H = L.head;
+  const headM = headMatrix(H);
+  FIT = { A, xf, headM, torso: L.torso, limb: L.limb, head: H };
+  // the bare head of the Home Guard variant (face + short hair) is ~1 cm smaller than the balaclava head the landmarks
+  // describe: its own measurements refit the helmet / earmuffs, and its surface carries the chin strap
+  FIT.bare = bareHead(A, H.eyeY);
+  FIT.headMBare = FIT.bare ? headMatrix({ ...H, ...FIT.bare.H }) : headM;
+  return FIT;
+}
+
+/** Old procedural head -> MakeHuman head (landmarks H: eyeY, top, browFront, back, halfWidth). */
+function headMatrix(H) {
   const hc = [0, H.eyeY, (H.browFront + H.back) / 2];
-  const headM = new THREE.Matrix4().makeTranslation(hc[0], hc[1], hc[2])
+  return new THREE.Matrix4().makeTranslation(hc[0], hc[1], hc[2])
     .multiply(new THREE.Matrix4().makeScale(H.halfWidth / OLD_HEAD.hw, (H.top - H.eyeY) / (OLD_HEAD.crown - OLD_HEAD.c[1]), (H.back - H.browFront) / OLD_HEAD.depth))
     .multiply(new THREE.Matrix4().makeTranslation(-OLD_HEAD.c[0], -OLD_HEAD.c[1], -OLD_HEAD.c[2]));
-  FIT = { A, xf, headM, torso: L.torso, limb: L.limb, head: H };
-  return FIT;
+}
+
+/**
+ * Bare-head ('face' + 'hair' groups of the close LOD, bind pose = rest pose for the head) measurements, defined like
+ * tools/mh/build_soldier.py landmarks(), plus the face vertices (for strap projection). null if the groups are missing.
+ */
+function bareHead(A, eyeY) {
+  const Lc = A.lods.close, P = Lc.attrs.position, ix = Lc.index.array;
+  const ids = new Set();
+  for (const gr of Lc.groups) if (gr.name === 'face' || gr.name === 'hair') for (let k = gr.start; k < gr.start + gr.count; k++) ids.add(ix[k]);
+  if (!ids.size) return null;
+  let top = -1e9, browFront = 1e9, back = -1e9, halfWidth = 0;
+  const pts = [];
+  for (const i of ids) {
+    const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+    pts.push(x, y, z);
+    if (y < eyeY - 0.06) continue;
+    top = Math.max(top, y);
+    if (Math.abs(y - (eyeY + 0.02)) < 0.008) { halfWidth = Math.max(halfWidth, Math.abs(x)); if (Math.abs(x) < 0.03) browFront = Math.min(browFront, z); }
+    if (Math.abs(y - (eyeY - 0.005)) < 0.008) back = Math.max(back, z);
+  }
+  return { H: { top, browFront, back, halfWidth }, pts: new Float32Array(pts) };
 }
 
 /** Refit a gear piece authored for the procedural body (identity-rest space) onto the MakeHuman body. */
 function fitGear(g, bone) {
-  if (bone === BI.head || bone === BI.neck) { g.applyMatrix4(FIT.headM); return; }
+  if (bone === BI.head || bone === BI.neck) { g.applyMatrix4(FIT.headCur || FIT.headM); return; }
   if (bone !== BI.hips && bone !== BI.spine && bone !== BI.chest) return;
   // torso gear: rigid shift so the piece keeps its stand-off from the jacket surface (front / back / side)
   g.computeBoundingBox();
@@ -857,8 +888,12 @@ export function soldierGeometry(kind = 'opfor') {
   }
   // OPFOR wear tinted shooting glasses over the balaclava; the bare-headed Home Guard soldiers do not (the glasses
   // are fitted to the balaclava head)
+  // the helmet is refitted to the bare head (it sits on the hair and pads); the earmuffs keep the balaclava-head fit,
+  // where the cushions already close over the MakeHuman ears
+  if (FIT) FIT.headCur = helmet ? FIT.headMBare : FIT.headM;
   rig(B, { helmet, glasses: kind === 'opfor' });
   if (kind !== 'opfor') hvInsignia(B, helmet);
+  if (FIT) FIT.headCur = null;
   const g = geoCache[kind] = B.build();
   g.computeBoundingSphere();
   if (FIT) g.userData.far = farGeometry(kind);
@@ -924,6 +959,7 @@ function helmetShell(B) {
     [1.855, 0.034, 0.04, 0.042],
     [1.862, 0.004, 0.004, 0.004],
   ];
+  if (FIT && FIT.bare) { helmetMH(B); return; }
   const rings = H.map(([y, rx, rf, rb]) => ring(V(0, y, 0.004), rx, rf, rb, [[hd, 1]], 2.5));
   B.tube('camo', rings, 24, null, (pt, i, a) => {
     // front brim sweeps down, back lip kicks out, sides cut high above the ears
@@ -940,4 +976,179 @@ function helmetShell(B) {
   B.rigid('black', box(0.05, 0.03, 0.02, 0.008), xf(0, 1.56, -0.04), hd);       // chin cup
   // rear counterweight / net pouch
   B.rigid('black', box(0.1, 0.03, 0.025, 0.008), xf(0, 1.69, 0.125), hd);
+}
+
+/** Outermost bare-head point along the ray c + t d (face / hair vertices within `rad` of the ray); -1 if none. */
+function headRay(c, d, rad = 0.0035, yMin = -1e9) {
+  const P = FIT.bare.pts;
+  let best = -1;
+  for (let i = 0; i < P.length; i += 3) {
+    if (P[i + 1] < yMin) continue;
+    const vx = P[i] - c.x, vy = P[i + 1] - c.y, vz = P[i + 2] - c.z;
+    const t = vx * d.x + vy * d.y + vz * d.z;
+    if (t <= best) continue;
+    const ex = vx - d.x * t, ey = vy - d.y * t, ez = vz - d.z * t;
+    if (ex * ex + ey * ey + ez * ez < rad * rad) best = t;
+  }
+  return best;
+}
+
+/**
+ * Mid-cut combat helmet (hjälm 18 type) built on the bare MakeHuman head: the shell follows the head surface (rays
+ * from a point inside the skull onto the face / hair vertices, smoothed, + 20 mm for the pads and the 8 mm shell),
+ * with the rim ~2 cm above the eyebrows, arched ear cut-outs and a lower nape; an inner wall and a rolled edge give
+ * the shell its thickness. Front NVG shroud, side rails, rear counterweight pouch and the Y-strap / chin strap
+ * (chinStrap) complete it. Bind space (the head bone's bind and rest frames coincide), bypassing the gear refit.
+ */
+function helmetMH(B) {
+  const hd = BI.head, eyeY = FIT.head.eyeY, Hb = FIT.bare.H;
+  const C = V(0, eyeY + 0.015, (Hb.browFront + Hb.back) / 2);
+  const NA = 36, NE = 11;
+  // rim height above the eyes by azimuth (0 = front, pi = back): brow, temple, ear arch, behind the ear, nape
+  const TT = [0, 0.55, 1.1, 1.38, 1.62, 1.86, 2.1, 2.36, 2.7, Math.PI], YY = [0.04, 0.036, 0.016, 0.006, 0.026, 0.03, 0.022, -0.004, -0.026, -0.032];
+  const rimY = (th) => { th = Math.abs(th); for (let k = 1; k < TT.length; k++) if (th <= TT[k]) { const t = (th - TT[k - 1]) / (TT[k] - TT[k - 1]), u = t * t * (3 - 2 * t); return YY[k - 1] + (YY[k] - YY[k - 1]) * u; } return YY[YY.length - 1]; };
+  const dir = (th, ph) => V(Math.sin(th) * Math.cos(ph), Math.sin(ph), -Math.cos(th) * Math.cos(ph));
+  // grid: rows from the rim (k = 0) to the crown; head radius per node, then a convex-ish smoothing
+  const R = [], D = [];
+  for (let k = 0; k <= NE; k++) {
+    const rr = [], dd = [];
+    for (let j = 0; j < NA; j++) {
+      const th = -Math.PI + (j / NA) * Math.PI * 2;
+      const ph0 = Math.asin(Math.max(-0.9, Math.min(0.9, (eyeY + rimY(th) - C.y) / 0.1)));
+      const f = k / NE, ph = ph0 + (Math.PI / 2 - 0.02 - ph0) * (1 - Math.pow(1 - f, 1.25));
+      const d = dir(th, ph);
+      let r = headRay(C, d, 0.006, eyeY - 0.06);
+      if (r < 0) r = 0.095;
+      rr.push(r); dd.push(d);
+    }
+    R.push(rr); D.push(dd);
+  }
+  for (let it = 0; it < 6; it++) {
+    const Rn = R.map(r => r.slice());
+    for (let k = 0; k <= NE; k++) for (let j = 0; j < NA; j++) {
+      const n = [R[k][(j + 1) % NA], R[k][(j + NA - 1) % NA], R[Math.max(k - 1, 0)][j], R[Math.min(k + 1, NE)][j]];
+      Rn[k][j] = Math.max(R[k][j], 0.5 * R[k][j] + 0.125 * n.reduce((a, b) => a + b, 0));
+    }
+    for (let k = 0; k <= NE; k++) R[k] = Rn[k];
+  }
+  const OUT = 0.02, TH = 0.008, LIP = 0.004;
+  const P = (k, j, off) => C.clone().addScaledVector(D[k][j], R[k][j] + off);
+  const pos = [], uv = [], idx = [];
+  const put = (p, u, v) => { pos.push(p.x, p.y, p.z); uv.push(u, v); return pos.length / 3 - 1; };
+  const grid = (off, flip, v0) => {
+    const base = pos.length / 3;
+    for (let k = 0; k <= NE; k++) for (let j = 0; j <= NA; j++) put(P(k, j % NA, off), (j / NA) * 0.66, v0 + k * 0.02);
+    for (let k = 0; k < NE; k++) for (let j = 0; j < NA; j++) {
+      const a = base + k * (NA + 1) + j, b = a + 1, c = a + NA + 1, d = c + 1;
+      if (flip) idx.push(a, b, c, b, d, c); else idx.push(a, c, b, b, c, d);
+    }
+    return base;
+  };
+  grid(OUT, false, 0);
+  grid(OUT - TH, true, 0.4);
+  // rolled rim edge: outer rim -> a little below and outward -> inner rim
+  const base = pos.length / 3;
+  for (let j = 0; j <= NA; j++) {
+    const jj = j % NA, d = D[0][jj];
+    const po = P(0, jj, OUT), pi = P(0, jj, OUT - TH);
+    const down = V(0, -LIP, 0);
+    put(po, (j / NA) * 0.66, 0.8); put(po.clone().add(down).addScaledVector(d, 0.0015), (j / NA) * 0.66, 0.805);
+    put(pi.clone().add(down), (j / NA) * 0.66, 0.81); put(pi, (j / NA) * 0.66, 0.815);
+  }
+  for (let j = 0; j < NA; j++) for (let s = 0; s < 3; s++) {
+    const a = base + j * 4 + s, b = a + 1, c = a + 4, d = c + 1;
+    idx.push(a, b, c, b, d, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const f = B.fit; B.fit = null;
+  B.rigid('camo', g, null, hd);
+  // shell points for the hardware: azimuth th, row fraction k (0 = rim), stand-off over the outer shell
+  const at = (th, k, off = 0) => {
+    const j = ((Math.round((th + Math.PI) / (Math.PI * 2) * NA) % NA) + NA) % NA;
+    return { p: P(k, j, OUT + off), n: D[k][j] };
+  };
+  const place = (geo, s, key, roll = 0) => {
+    const m = new THREE.Matrix4().lookAt(V(0, 0, 0), s.n.clone().negate(), V(0, 1, 0));
+    m.multiply(new THREE.Matrix4().makeRotationZ(roll)).setPosition(s.p);
+    B.rigid(key, geo, m, hd);
+  };
+  place(box(0.05, 0.03, 0.012, 0.004), at(0, 1, 0.004), 'black');                  // NVG shroud
+  for (const sd of [-1, 1]) {
+    for (const t of [1.05, 1.3, 2.25, 2.5]) place(box(0.03, 0.012, 0.007, 0.002), at(sd * t, 1, 0.003), 'black', sd * (t < 2 ? -0.35 : 0.35)); // rail segments
+  }
+  place(box(0.1, 0.045, 0.024, 0.008), at(Math.PI, 2, 0.01), 'web');              // counterweight / pouch
+  B.fit = f;
+  chinStrap(B);
+}
+
+/**
+ * Helmet retention harness on the bare MakeHuman head: a Y-strap on each side (in front of and behind the ear, joining
+ * below it) and the chin strap, each a flat ribbon laid on the face surface (projected outward from a point inside
+ * the head onto the face / hair vertices, 1.6 mm stand-off), so it touches the skin instead of floating. Bind space
+ * (the head bone's bind and rest frames coincide), so it bypasses the procedural-gear refit.
+ */
+function chinStrap(B) {
+  const P = FIT.bare.pts, eyeY = FIT.head.eyeY, zc = FIT.A.headC ? FIT.A.headC[2] : -0.05;
+  const C = V(0, eyeY - 0.035, zc - 0.03);
+  const _v = V(), _d = V();
+  const surf = (q) => {          // outermost face vertex within 3.5 mm of the ray C -> q, plus the stand-off
+    _d.copy(q).sub(C).normalize();
+    let best = -1;
+    for (let i = 0; i < P.length; i += 3) {
+      _v.set(P[i] - C.x, P[i + 1] - C.y, P[i + 2] - C.z);
+      const t = _v.dot(_d);
+      if (t <= 0) continue;
+      if (_v.addScaledVector(_d, -t).lengthSq() < 0.0035 * 0.0035 && t > best) best = t;
+    }
+    if (best < 0) best = q.distanceTo(C);
+    return { p: C.clone().addScaledVector(_d, best + 0.0016), n: _d.clone() };
+  };
+  const ribbon = (ctrl, w, key) => {
+    const curve = new THREE.CatmullRomCurve3(ctrl.map(c => V(...c)));
+    const S = curve.getSpacedPoints(Math.max(8, Math.round(curve.getLength() / 0.006))).map(surf);
+    // light smoothing of the projected polyline (vertex spacing on the face is ~4 mm)
+    for (let it = 0; it < 2; it++) for (let i = 1; i < S.length - 1; i++) {
+      const m = S[i - 1].p.clone().add(S[i + 1].p).multiplyScalar(0.5);
+      const keepOut = m.clone().sub(C).dot(S[i].n) < S[i].p.clone().sub(C).dot(S[i].n) ? S[i].p : m;
+      S[i].p = keepOut;
+    }
+    const pos = [], nor = [], idx = [], th = 0.0018;
+    S.forEach((s, i) => {
+      const t = S[Math.min(i + 1, S.length - 1)].p.clone().sub(S[Math.max(i - 1, 0)].p).normalize();
+      const n = s.n.clone().addScaledVector(t, -s.n.dot(t)).normalize();
+      const b = V().crossVectors(t, n).normalize();
+      for (const [sb, sn] of [[-1, 1], [1, 1], [1, -1], [-1, -1]]) {
+        const p = s.p.clone().addScaledVector(b, sb * w / 2).addScaledVector(n, (sn - 1) * th / 2);
+        pos.push(p.x, p.y, p.z);
+        const nn = sn > 0 ? n : b.clone().multiplyScalar(sb);
+        nor.push(nn.x, nn.y, nn.z);
+      }
+      if (i) for (let k = 0; k < 3; k++) { const a = (i - 1) * 4 + k, c = i * 4 + k; idx.push(a, a + 1, c + 1, a, c + 1, c); }
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const f = B.fit; B.fit = null;
+    B.rigid(key, g, null, BI.head);
+    B.fit = f;
+    return S;
+  };
+  for (const s of [-1, 1]) {
+    const J = [s * 0.066, eyeY - 0.052, zc - 0.012];                          // junction below the ear
+    ribbon([[s * 0.085, eyeY + 0.03, zc - 0.03], [s * 0.083, eyeY + 0.0, zc - 0.028], [s * 0.077, eyeY - 0.03, zc - 0.02], J], 0.014, 'black');
+    ribbon([[s * 0.084, eyeY + 0.03, zc + 0.045], [s * 0.08, eyeY + 0.0, zc + 0.035], [s * 0.072, eyeY - 0.03, zc + 0.012], J], 0.014, 'black');
+    const S = ribbon([J, [s * 0.058, eyeY - 0.075, zc - 0.03], [s * 0.044, eyeY - 0.098, zc - 0.06], [s * 0.022, eyeY - 0.114, zc - 0.082], [0, eyeY - 0.12, zc - 0.09]], 0.018, 'black');
+    // side release buckle and slider at the junction, lying on the strap
+    const j = S[0], n = j.n;
+    const m = new THREE.Matrix4().lookAt(V(0, 0, 0), n, V(0, 1, 0)).setPosition(j.p.clone().addScaledVector(n, 0.003));
+    const f = B.fit; B.fit = null;
+    B.rigid('black', box(0.02, 0.026, 0.006, 0.002), m, BI.head);
+    B.fit = f;
+  }
 }

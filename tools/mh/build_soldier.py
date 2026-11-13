@@ -655,6 +655,61 @@ def dress(B, W, pos, R):
     for _ in range(100):
         v2 = smooth_field(v2, nb, tbv, 1, 0.6, tw_)
         v2 = smooth_field(v2, nb, tbv, 1, -0.63, tw_)
+    # Taubin keeps the long-wavelength toe lobes (they sit in its pass band): finally every toe-box vertex is pushed
+    # out to the toe region's supporting plane along its heavily smoothed normal (a local convex hull, as a stiff
+    # leather toe cap would be), which fills the notches between the toes and leaves no lobes
+    nT = vertex_normals(v2, F)
+    for sd in ('R', 'L'):
+        reg = bootv & (gw('foot' + sd) > 0.3) & (toe > 0.03) & (v2[:, 1] > 0.006)
+        idx = np.where(reg)[0]
+        if len(idx) < 20:
+            continue
+        nn = smooth_field(nT, nb, idx, 30, 0.5)[idx]
+        nn /= np.linalg.norm(nn, axis=1, keepdims=True) + 1e-12
+        Pt = v2[idx]
+        sup = (nn @ Pt.T).max(1)
+        push = np.clip(sup - np.sum(nn * Pt, 1), 0, 0.012)
+        wgt = np.clip(toe[idx] * 2.0, 0, 1) * sstep(0.006, 0.02, Pt[:, 1])
+        v2[idx] += nn * (push * wgt)[:, None]
+        # toe cap: the MakeHuman toes have only a few vertex rows, so the merged toes still show as lobes; the outer
+        # surface of the front of the boot is moved onto an analytic cap (super-ellipse outline that rounds over
+        # into a domed top), blended into the boot behind it
+        fwd = -R['foot' + sd][:, 2].copy(); fwd[1] = 0; fwd /= np.linalg.norm(fwd)
+        sdv = np.cross([0.0, 1.0, 0.0], fwd)
+        reg2 = bootv & (gw('foot' + sd) > 0.3)
+        rel = v2 - pos['foot' + sd]
+        fz, fx = rel @ fwd, rel @ sdv
+        tip = fz[reg2 & (v2[:, 1] > 0.012)].max()
+        cz = tip - 0.05
+        ring_ = reg2 & (np.abs(fz - cz) < 0.008) & (v2[:, 1] > 0.015) & (v2[:, 1] < 0.04)
+        cx = 0.5 * (fx[ring_].max() + fx[ring_].min())
+        a_ = 0.5 * (fx[ring_].max() - fx[ring_].min())
+        b_ = tip - cz
+        y0 = 0.018
+        ytop = np.percentile(v2[reg2 & (np.abs(fz - cz) < 0.01), 1], 95)
+        ci = np.where(reg2 & (fz > cz - 0.02) & (v2[:, 1] > 0.006))[0]
+        dx, dz = fx[ci] - cx, fz[ci] - cz
+        th_ = np.arctan2(dx, np.maximum(dz, 0.0))
+        Rth = (np.abs(np.sin(th_) / a_) ** 2.4 + np.abs(np.cos(th_) / b_) ** 2.4) ** (-1 / 2.4)
+        r_ = np.hypot(dx, np.maximum(dz, 0.0))
+        yv = v2[ci, 1]
+        u = np.clip((yv - y0) / (ytop - y0), 0, 1)
+        Ry = Rth * (1 - u ** 2.4) ** (1 / 2.4)                     # outline radius at this height
+        Hr = y0 + (ytop - y0) * np.clip(1 - np.clip(r_ / Rth, 0, 1) ** 2.4, 0, 1) ** (1 / 2.4)   # dome height here
+        nH = (nT[ci] @ sdv) * np.sin(th_) + (nT[ci] @ fwd) * np.cos(th_)
+        outer = nH > 0.2
+        top = (nT[ci, 1] > 0.55) & ~outer
+        wz = sstep(cz - 0.02, cz + 0.005, fz[ci]) * sstep(0.006, 0.014, yv)
+        dr = np.where(outer, (Ry - r_) * wz, 0.0)
+        dr = np.clip(dr, -0.006, 0.006)
+        rad = np.outer(np.sin(th_), sdv) + np.outer(np.cos(th_), fwd)
+        v2[ci] += rad * dr[:, None]
+        dy = np.where(top, np.clip(Hr - yv, -0.006, 0.006) * wz * (r_ < Rth), 0.0)
+        v2[ci, 1] += dy
+    tb2 = np.where(bootv & (toe > 0.03) & (v2[:, 1] > 0.012))[0]
+    for _ in range(20):
+        v2 = smooth_field(v2, nb, tb2, 1, 0.5, tw_)
+        v2 = smooth_field(v2, nb, tb2, 1, -0.53, tw_)
     # ... and round the toe outline down to the sole: horizontal-only smoothing (heights kept, the sole stays flat)
     tl = bootv & (toe > 0.03) & (v2[:, 1] < 0.07)
     tlw = np.clip(toe * 1.5, 0, 1) * tl
@@ -955,6 +1010,20 @@ def pack(lods, header):
 
 def build_lod(name, V, Wv, UV, F, Fuv, fmat):
     used_n = vertex_normals(V, F)
+    # boot toe caps: the coarse MakeHuman toe topology leaves faint per-toe facets after decimation; the shading
+    # normals of the front of each boot are smoothed (shading only, the silhouette is unchanged)
+    bm = np.array([m in ('boot', 'sole') for m in fmat])
+    if bm.any():
+        bvv = np.unique(F[bm].ravel())
+        nbl = neighbours(len(V), [tuple(f) for f in F[bm]])
+        wt = np.zeros(len(V))
+        for sgn in (1, -1):
+            sv = bvv[np.sign(V[bvv, 0]) == sgn]
+            if len(sv):
+                zf = V[sv, 2].min()
+                wt[sv] = sstep(zf + 0.085, zf + 0.04, V[sv, 2]) * sstep(0.006, 0.016, V[sv, 1]) * (1 - sstep(0.07, 0.1, V[sv, 1]))
+        used_n = smooth_field(used_n, nbl, bvv[wt[bvv] > 0], 8, 0.6, wt)
+        used_n /= np.linalg.norm(used_n, axis=1, keepdims=True) + 1e-12
     pv, pn, puv, pw, idx, groups = assemble(V, used_n, UV, Wv, F, Fuv, fmat)
     si, sw = quant_weights(pw)
     assert len(pv) < 65536
