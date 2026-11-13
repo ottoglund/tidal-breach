@@ -137,7 +137,7 @@ export class Weapon {
 
     this.ads = 0; this.recoil = 0; this.recoilV = 0; this.kickRot = 0; this.swayX = 0; this.swayY = 0; this.flashT = 0; this.sprint = 0;
     // hip: low right; ADS: red-dot centred on the camera axis, tube ~9 cm in front of the eye
-    this.hip = new THREE.Vector3(0.1, 0.012, -0.4);
+    this.hip = new THREE.Vector3(0.14, -0.15, -0.3); // low-ready at the hip: lower right, stock near the shoulder
     this.aim = new THREE.Vector3(0, 0, -0.2);
     this._p = new THREE.Vector3(); this._q = new THREE.Vector3(); this._m = new THREE.Matrix4();
   }
