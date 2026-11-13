@@ -77,7 +77,7 @@ function materials() {
     uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x9ea6a3 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.4, 0.42) }),
     uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0xaab2a6 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.45, 0.45) }),
     // rig / pouches: nylon cordura, a little smoother and shinier than the cotton-blend uniform, worn at the edges
-    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0x8f9a88, roughness: 0.86 }), { dirt: 0.45, sheen: 0.14, soak: 0.25, wrinkle: 0.3, rough: 0.2, wetTop: 0.5, gear: true }),
+    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0xc2cbb8, roughness: 0.86 }), { dirt: 0.45, sheen: 0.14, soak: 0.25, wrinkle: 0.3, rough: 0.2, wetTop: 0.5, gear: true }),
     // knit: fine rib (7 cm tile) with a strong normal map and a fuzzy sheen so the balaclava reads as wool over the
     // MakeHuman face shape, not as skin
     knit: fabricShading(mat('olive_knit', { tile: 0.07, color: 0xb2b8a2, normalScale: 1.8 }), { dirt: 0.2, sheen: 0.32, soak: 0.25, wrinkle: 0.35, rough: 0.15, wetTop: 0.55, mudGloss: 0.2, rib: 0.0032 }),

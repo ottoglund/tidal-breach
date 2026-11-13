@@ -196,7 +196,10 @@ ${NOISE}`)
           col = mix(col, mix(col * 0.32, hairC, cover), hmix);  // scalp shows between the strands, more on the sides
           skWrap = mix(1.0, 0.25, hmix * se); skRough = mix(0.5, 0.72 - 0.12 * strands, hmix * (0.4 + 0.6 * se));
           skHairK = (0.3 + 1.2 * clump * tuft) * cover * hmix * se; skF0 = mix(0.028, 0.02, hmix);
-          skHairTint = uHair / max(max(uHair.r, uHair.g), max(uHair.b, 0.02));
+          // secondary (transmitted) lobe: light that passed through the fibre once is filtered by the pigment, so it is
+          // as dark as the hair (previously normalised to the brightest channel, which gave dark-brown and black hair
+          // the same strong orange glow as auburn hair and made every look render as light brown)
+          skHairTint = min(uHair * 2.4, vec3(1.0));
         } else {
           // haemoglobin: cheeks, nose, ears (subtle, no orange push)
           float cheek = exp(-pow(length((p.xy - vec2(sx * 0.042, eyeY - 0.035)) / vec2(0.022, 0.02)), 2.0));
