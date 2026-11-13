@@ -174,7 +174,8 @@ export function locomote(L, root, st, dt, A, off) {
         const e = Math.hypot(f.x - _w.x, f.z - _w.z) + 0.3 * Math.abs(wrapPi(f.yaw - (Y + lead + _id.yaw)));
         const other = L.feet[f.side > 0 ? 1 : 0];
         const thr = (L.clock - other.land < 0.6) ? 0.05 : 0.13;        // second step of a shuffle squares up
-        if (e > thr && e - thr > bestE && L.clock - f.land > 0.12) { best = f; bestE = e - thr; f.tx = _w.x; f.tz = _w.z; f.tyaw = Y + lead + _id.yaw; }
+        const alt = other.land > f.land ? 0 : -0.06;                     // prefer alternating feet
+        if (e > thr && e - thr + alt > bestE && L.clock - f.land > 0.12) { best = f; bestE = e - thr + alt; f.tx = _w.x; f.tz = _w.z; f.tyaw = Y + lead + _id.yaw; }
       }
       if (best) {
         const f = best; f.air = true; f.mode = 1; f.k = 0; f.lx = f.x; f.lz = f.z; f.lyaw = f.yaw;
