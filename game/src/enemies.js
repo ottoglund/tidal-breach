@@ -12,6 +12,8 @@ import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG } from './characters/soldier.js';
 import { fabricShading } from './characters/cloth.js';
+import { skinShading, eyeShading, hairShading } from './characters/skin.js';
+import { soldierBody } from './characters/body.js';
 
 function M(list) {
   return mergeGeometries(list.map(([g, m]) => { const x = g.index ? g.toNonIndexed() : g.clone(); if (m) x.applyMatrix4(m); for (const k of Object.keys(x.attributes)) if (!['position', 'normal', 'uv'].includes(k)) x.deleteAttribute(k); return x; }));
@@ -66,6 +68,8 @@ function lensShading(m) {
 
 function materials() {
   if (shared) return shared;
+  const body = soldierBody() || {};
+  const eyes = { eyeR: body.eyeR, eyeL: body.eyeL };
   shared = {
     uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x8c9694 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
     uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0x9aa397 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
@@ -76,7 +80,10 @@ function materials() {
     // satin nylon / polymer hardware (buckles, soles, glove shells, strap tails): smoother than cloth, scuffed at the bottom
     glove: fabricShading(mat('polymer', { tile: 0.25, color: 0x4a4c50, roughness: 0.85 }), { dirt: 0.7, sheen: 0.0, soak: 0.2, wrinkle: 0.0, rough: 0.35, wetTop: 0.3, mudGloss: 0.5 }),
     metal: mat('gunmetal', { tile: 0.25, color: 0xc4c4c0, roughness: 0.75 }),   // buckles, snaps, D-rings, slides, eyelets
-    skin: fabricShading(plainMat(0x5e4538, 0.66), { dirt: 0.0, sheen: 0.25, soak: 0.1, wrinkle: 0.0, rough: 0.25, wetTop: 0.5, mudGloss: 0 }),
+    // skin: wrap-lit, mottled, redder cheeks / nose / lips, darker eyelid creases, stubble (characters/skin.js)
+    skin: skinShading(plainMat(0x9a7462, 0.52), eyes),
+    eye: eyeShading(new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.25, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.5 }), eyes),
+    hair: hairShading(plainMat(0x3a2c20, 0.7), 0x8a6858),
     gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
     boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3 }),
     gun: mat('gunmetal'),
@@ -84,7 +91,8 @@ function materials() {
     poly: mat('polymer', { tile: 0.25 }),
     plum: mat('plum_polymer', { tile: 0.2 }),
     patch: new THREE.MeshStandardMaterial({ map: patchTexture(), roughness: 0.9, metalness: 0 }),
-    visor: lensShading(new THREE.MeshPhysicalMaterial({ color: 0x0d0e10, roughness: 0.04, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 3.0 })), // tinted, semi-mirrored lenses
+    // tinted, semi-mirrored lenses; see-through enough to show the eyes behind them
+    visor: lensShading(new THREE.MeshPhysicalMaterial({ color: 0x0d0e10, roughness: 0.04, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 3.0, transparent: true, opacity: 0.62, depthWrite: false })),
   };
   return shared;
 }
@@ -270,7 +278,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet } = {}) {
   weapon = weapon || (hv ? 'ak4c' : 'ak74');
   const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
   const root = new THREE.Group();
-  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skin, metal: S.metal }, kind);
+  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, eye: S.eye, glove: S.gloveFab, patch: S.patch, skin: S.skin, hair: S.hair, metal: S.metal }, kind);
   root.add(mesh);
   const rifle = buildRifle(S, weapon);
   root.add(rifle);

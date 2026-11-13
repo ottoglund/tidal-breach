@@ -1,5 +1,6 @@
 // First-person Ak 4C (Swedish G3-derived 7.62x51 battle rifle) with an Aimpoint-style tube red-dot, olive gloves and M90-camouflage sleeves.
-// Geometry lives in ./viewmodel/ (rifle.js, hands.js, parts.js). Real-scale (~0.92 m overall).
+// Geometry lives in ./viewmodel/ (rifle.js, arms.js, hands.js, parts.js). Real-scale (~0.92 m overall). The arms are the
+// MakeHuman-derived posed forearms / hands (arms.js, built offline); hands.js is the procedural fallback.
 // Animation: aim-down-sights, sway, bob, recoil spring, sprint pose, magazine change with a hand that
 // drops to the vest, grabs a fresh magazine and seats it.
 import * as THREE from 'three';
@@ -9,6 +10,7 @@ import { mat } from './materials.js';
 import { merge, V } from './viewmodel/parts.js';
 import { buildRifle, DIM } from './viewmodel/rifle.js';
 import { buildRightHand, buildLeftHand, LEFT_ANCHOR } from './viewmodel/hands.js';
+import { buildArms, armShading } from './viewmodel/arms.js';
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const _c = new THREE.Color(), _warm = new THREE.Color(0xffd0a0);
@@ -70,11 +72,16 @@ export class Weapon {
     dot.add(halo); halo.position.set(0, 0, 0.0005);
     this.dot = dot;
 
-    // ---- hands ----
-    this.gun.add(buildRightHand(mats));
+    // ---- hands: MakeHuman-derived arms when the asset loaded, procedural hands otherwise ----
+    mats.armGlove = armShading(vm('glove_green', { tile: 0.12, roughness: 1 }, 1.9, { envMapIntensity: 0.6 }), 'glove');
+    mats.armGlove.color.setRGB(1.5, 1.45, 1.25);       // less saturated olive than the old procedural hands
+    mats.armSleeve = armShading(vm('camo_m90', { tile: 0.45, roughness: 1 }, 1.8, { envMapIntensity: 0.5 }), 'sleeve');
+    const arms = buildArms({ glove: mats.armGlove, sleeve: mats.armSleeve });
+    this.arms = arms;
+    this.gun.add(arms ? arms.right : buildRightHand(mats));
     // left hand sits in a pivot at the C-clamp centre so it can swing/rotate while holding the new magazine
     this.leftPivot = new THREE.Group();
-    const left = buildLeftHand(mats);
+    const left = arms ? arms.left : buildLeftHand(mats);
     left.position.copy(LEFT_ANCHOR).negate();
     this.leftPivot.add(left);
     this.leftPivot.position.copy(LEFT_ANCHOR);
@@ -260,5 +267,8 @@ export class Weapon {
     this.rim.intensity = 1.8 + lvl * 0.5;
     this.scene.environmentIntensity = 1.2 + lvl * 0.4;
     this.dot.visible = a > 0.3;
+    // QA inspection pose (only set through __TIDAL_QA__.vmView on ?qa=1 URLs): fixed gun placement in camera space
+    const v = this.qaView;
+    if (v) { this.gun.position.set(v.x, v.y, v.z); this.gun.rotation.set(v.rx || 0, v.ry || 0, v.rz || 0); }
   }
 }

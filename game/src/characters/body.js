@@ -17,10 +17,11 @@ let BODY = null;
 
 const TYPES = { f32: Float32Array, i16: Int16Array, u16: Uint16Array, u8: Uint8Array };
 
-function parse(buf) {
+/** Parse a 'TBMH' container (also used by the first-person arms, viewmodel/arms.js). */
+export function parseTBMH(buf) {
   const dv = new DataView(buf);
   const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
-  if (magic !== 'TBMH') throw new Error('soldier_body.bin: bad magic');
+  if (magic !== 'TBMH') throw new Error('TBMH: bad magic');
   const jl = dv.getUint32(8, true);
   const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 12, jl)));
   const base = 12 + jl;
@@ -43,13 +44,13 @@ export function loadSoldierBody() {
     const loader = new THREE.FileLoader();
     loader.setResponseType('arraybuffer');
     loader.load(URL_BODY, (buf) => {
-      try { BODY = parse(buf); resolve(true); } catch (e) { console.warn('soldier body: parse failed, procedural fallback', e); resolve(false); }
+      try { BODY = parseTBMH(buf); resolve(true); } catch (e) { console.warn('soldier body: parse failed, procedural fallback', e); resolve(false); }
     }, undefined, () => { console.warn('soldier body: not loaded, procedural fallback'); resolve(false); });
   });
 }
 
 /** Use an already loaded file (offline tools / tests). */
-export function setSoldierBody(buf) { BODY = parse(buf); }
+export function setSoldierBody(buf) { BODY = parseTBMH(buf); }
 
 /** The parsed body (null until loaded or when loading failed -> soldier.js falls back to the procedural body). */
 export const soldierBody = () => BODY;

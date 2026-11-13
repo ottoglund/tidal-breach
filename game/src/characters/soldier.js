@@ -47,7 +47,8 @@ export const LEN = { upper: 0.30, fore: 0.265, thigh: 0.44, shin: 0.405 };
 export const RIG = { hipY: 0.97, ankle: 0.085, eye: [0.034, 0.128, -0.078], gripR: [-0.03, -0.097, 0.004], gripL: [0.03, -0.097, 0.0], chest: [0, 1.25, 0.01], mh: false };
 
 // material group order of the skinned mesh
-export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove', 'patch', 'skin', 'metal'];
+// ('eye': MakeHuman eyeballs; 'hair': short-hair shell of the bare-headed Home Guard soldiers)
+export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'eye', 'glove', 'patch', 'skin', 'hair', 'metal'];
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const AX = V(1, 0, 0), NZ = V(0, 0, -1), PY = V(0, 1, 0), PZ = V(0, 0, 1);
@@ -752,12 +753,18 @@ function fitGear(g, bone) {
   g.translate(dx, 0, dz);
 }
 
-/** Append one LOD of the body asset; groups are mapped to builder material keys (all to `only` if given). */
-function addBody(B, lod, only) {
+/**
+ * Append one LOD of the body asset; groups are mapped to builder material keys (all to `only` if given). The close LOD
+ * holds two heads: 'knit' + 'skin' (balaclava with an eye opening, OPFOR) and 'face' + 'hair' (bare head with short
+ * hair, Swedish Home Guard); `kind` picks one.
+ */
+function addBody(B, lod, only, kind = 'opfor') {
   const { position, normal, uv, skinIndex, skinWeight } = lod.attrs;
   const ix = lod.index.array;
-  const map = { camo: 'camo', knit: 'knit', boot: 'boot', lens: 'lens', glove: 'glove', skin: 'skin', sole: 'black' };
+  const map = { camo: 'camo', knit: 'knit', boot: 'boot', lens: 'eye', eye: 'eye', glove: 'glove', skin: 'skin', sole: 'black', face: 'skin', hair: 'hair' };
+  const skip = kind === 'opfor' ? ['face', 'hair'] : ['knit', 'skin'];
   for (const gr of lod.groups) {
+    if (!only && skip.includes(gr.name)) continue;
     const G = B.g.get(only || map[gr.name] || 'camo');
     const remap = new Map();
     for (let k = gr.start; k < gr.start + gr.count; k++) {
@@ -839,7 +846,7 @@ export function soldierGeometry(kind = 'opfor') {
   const B = new SkinBuilder();
   const helmet = kind === 'hv_helmet';
   if (setupBody()) {
-    addBody(B, FIT.A.lods.close);
+    addBody(B, FIT.A.lods.close, null, kind);
     B.fit = fitGear; B.xf = FIT.xf;
     bodyGear(B);
   } else {

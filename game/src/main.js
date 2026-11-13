@@ -12,6 +12,7 @@ import { installFog, attachFogUniforms, updateFogLamps } from './fog.js';
 import { lodManager } from './world/props/lod.js';
 import { createSoldier, poseSoldier } from './characters/squad.js';
 import { loadSoldierBody } from './characters/body.js';
+import { loadViewmodelArms } from './viewmodel/arms.js';
 
 installFog(); // must run before any material compiles
 
@@ -36,8 +37,9 @@ async function boot() {
 
   const pipe = new Pipeline($('viewport'), quality);
   const { renderer, scene } = pipe;
-  // textures + the soldier body mesh (same-origin files, see docs/ASSETS.md); the body falls back to procedural on failure
-  await Promise.all([loadTextures(renderer, quality.anisotropy, f => { $('loadfill').style.width = Math.round(f * 85) + '%'; }), loadSoldierBody()]);
+  // textures + the soldier body and first-person arms meshes (same-origin files, see docs/ASSETS.md); both fall back to
+  // procedural geometry on failure
+  await Promise.all([loadTextures(renderer, quality.anisotropy, f => { $('loadfill').style.width = Math.round(f * 85) + '%'; }), loadSoldierBody(), loadViewmodelArms()]);
   $('loadtext').textContent = 'BYGGER HAMNEN…';
   await new Promise(r => setTimeout(r, 0));
 
@@ -179,6 +181,8 @@ async function boot() {
         // capture mode: stop the realtime loop and render single frames on demand (slow software GPUs)
         hold: (on) => { hold = !!on; },
         ads: (v) => { game.player.ads = v; weapon.ads = v; },
+        // viewmodel inspection: place the rifle + arms at a fixed camera-space pose ({x, y, z, rx, ry, rz}); null = normal
+        vmView: (o) => { weapon.qaView = o || null; },
         layer: (name, on) => { ({ rain, splashes, water })[name].visible = !!on; },
         fx: (on) => { pipe.camera.layers[on ? "enable" : "disable"](3); pipe.camera.layers[on ? "enable" : "disable"](5); },
         weapon: (on) => { pipe.weaponScene.visible = !!on; },

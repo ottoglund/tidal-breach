@@ -338,6 +338,23 @@ def game_weights(nv, weights):
     return W / W.sum(1, keepdims=True)
 
 
+def soften_wrists(B, W, pos, R):
+    """Spread the hand / forearm weight transition over ~9 cm around the wrist (MakeHuman's is ~3 cm, which pinches
+    the wrist when the hand bends or twists on the 19-bone game skeleton). Only the hand + forearm share is
+    redistributed; finger-curl geometry is unaffected (all of it is hand-weighted)."""
+    v = B['v']
+    W = W.copy()
+    for sd in ('R', 'L'):
+        ih, if_ = GI['hand' + sd], GI['farm' + sd]
+        tot = W[:, ih] + W[:, if_]
+        t = (v - pos['hand' + sd]) @ R['farm' + sd][:, 1]          # + toward the elbow
+        m = (tot > 0.5) & (t > -0.035) & (t < 0.07)
+        hw = 1 - sstep(-0.03, 0.06, t[m])
+        hw = np.maximum(hw, np.where(t[m] < -0.012, W[m, ih] / tot[m], 0))   # palm stays on the hand
+        W[m, ih], W[m, if_] = tot[m] * hw, tot[m] * (1 - hw)
+    return W
+
+
 # ------------------------------------------------------------------------------------------------ mesh helpers
 def tri_faces(faces):
     out = []
@@ -388,6 +405,7 @@ def sstep(a, b, x):
 def dress(B, W, pos, R):
     """Offsets the skin into a clothed figure and assigns a material per face. Works in the bind (A) pose."""
     v = B['v']
+    v0 = v.copy()                                   # undressed body (bare-head variant of the Swedish soldiers)
     faces, fkind = B['faces'], B['fkind']
     body = [f for f, k in zip(faces, fkind) if k == 'body']
     bv = np.unique(np.concatenate([np.array(f) for f in body]))
@@ -425,7 +443,7 @@ def dress(B, W, pos, R):
     fmat = []
     for f, k in zip(faces, fkind):
         if k != 'body':
-            fmat.append('lens')            # eyeballs: dark glossy (behind tinted shooting glasses)
+            fmat.append('eye')             # eyeballs (seen through the tinted shooting glasses)
             continue
         f = np.array(f)
         if eye_open[f].sum() * 2 > len(f):
@@ -458,6 +476,30 @@ def dress(B, W, pos, R):
     toe = sstep(0.06, 0.14, -(v[:, 2] - 0.0)) * (v[:, 1] < 0.09) * (foot > 0.5)
     mask = np.clip(ear * 1.0 + mouth * 1.0 + nose_tip * 0.8, 0, 1)
     v = smooth_field(v, nb, bv, 40, 0.5, mask)
+    # balaclava shell: knit is ~5 mm thick and stretches over the face instead of following it. Lips, philtrum, nostrils
+    # and nose tip are smoothed away (Taubin, no shrinkage), then concave spots are bridged (local hull, 2.5 cm)
+    knit_v = is_head & ~eye_open
+    lowface = knit_v * (1 - sstep(eyeY - 0.03, eyeY - 0.01, v[:, 1])) * (v[:, 2] < eyeZ + 0.035)
+    km = np.clip(mouth * 1.0 + nose_tip * 1.0 + 0.7 * lowface, 0, 1) * knit_v
+    kv = bv[km[bv] > 0]
+    for _ in range(45):
+        v = smooth_field(v, nb, kv, 1, 0.6, km)
+        v = smooth_field(v, nb, kv, 1, -0.62, km)
+    nn_ = vertex_normals(v, F)
+    nn_ = smooth_field(nn_, nb, bv, 4, 0.5)
+    nn_ /= np.linalg.norm(nn_, axis=1, keepdims=True) + 1e-12
+    hk = np.where(knit_v)[0]
+    if len(hk):
+        P, Nn = v[hk], nn_[hk]
+        lift_k = np.zeros(len(hk))
+        for a0 in range(0, len(hk), 512):
+            pa, na = P[a0:a0 + 512], Nn[a0:a0 + 512]
+            dd = P[None, :, :] - pa[:, None, :]
+            dist = np.linalg.norm(dd, axis=2)
+            hh = np.einsum('ijk,ik->ij', dd, na)
+            hh = np.where(dist < 0.025, hh * (1 - dist / 0.025) * 1.5, 0)
+            lift_k[a0:a0 + 512] = np.clip(hh.max(1), 0, 0.006)
+        v[hk] += Nn * lift_k[:, None]
     # boot toe box: Taubin smoothing (no shrinkage) of the whole foot below the ankle, strongest over the toes
     fm = np.clip((foot > 0.3) * (1 - sstep(0.07, 0.12, v[:, 1])) * (0.5 + toe), 0, 1)
     fv = bv[fm[bv] > 0]
@@ -544,7 +586,7 @@ def dress(B, W, pos, R):
     off += cam * collar * 0.013
     # knit: bridges over the lips / chin, hangs loose around the neck (with a few soft horizontal rings)
     neck_k = (1 - sstep(eyeY - 0.13, eyeY - 0.09, y)) * vmat['knit']
-    off += np.where(vmat['knit'], 0.0045 + 0.004 * mouth + 0.009 * neck_k + 0.0025 * neck_k * np.cos((y - eyeY) * 2 * np.pi / 0.03), 0)
+    off += np.where(vmat['knit'], 0.005 + 0.0015 * mouth + 0.009 * neck_k + 0.0025 * neck_k * np.cos((y - eyeY) * 2 * np.pi / 0.03), 0)
     # sewn crown seam (front to back over the top of the head) and soft creases where the knit gathers at the temples
     crown = vmat['knit'] * sstep(eyeY + 0.03, eyeY + 0.06, y)
     off += crown * 0.0016 * np.exp(-(v[:, 0] / 0.005) ** 2)
@@ -596,19 +638,71 @@ def dress(B, W, pos, R):
     v2[low] += hor[low] * (0.004 * (1 - sstep(0.012, 0.03, v2[low, 1])))[:, None]
     v2[bootv, 1] = np.maximum(v2[bootv, 1], 0.0)
     v2[bootv & (v2[:, 1] < 0.012), 1] = 0.0
+    # toe box: a last Taubin pass over the upper boot toe removes the faint toe ridges the offset brings back
+    tb = bootv & (v2[:, 1] > 0.014) & (toe > 0.05)
+    tw_ = np.clip(toe * 1.2, 0, 1) * tb
+    tbv = np.where(tb)[0]
+    for _ in range(40):
+        v2 = smooth_field(v2, nb, tbv, 1, 0.6, tw_)
+        v2 = smooth_field(v2, nb, tbv, 1, -0.63, tw_)
     # rubber sole: boot faces along the bottom edge
     for i, (f, m) in enumerate(zip(faces, fmat)):
         if m == 'boot' and v2[np.array(f), 1].max() < 0.024:
             fmat[i] = 'sole'
-    B['v'] = v2
-    B['fmat'] = fmat
+    fmat = list(fmat)
+
+    # --- bare-head variant for the Swedish soldiers (no balaclava): the undressed MakeHuman head and neck as 'face'
+    # (same skin material), plus a short-hair shell over the scalp as 'hair'. Both are appended as separate vertices;
+    # soldier.js uses either knit + skin (OPFOR) or face + hair (Home Guard).
+    headf = [i for i, m in enumerate(fmat) if m in ('knit', 'skin')]
+    hv_ = np.unique(np.concatenate([np.array(faces[i]) for i in headf]))
+    n0 = vertex_normals(v0, F)
+    n0 = smooth_field(n0, nb, hv_, 3, 0.5)
+    n0 /= np.linalg.norm(n0, axis=1, keepdims=True) + 1e-12
+    # hairline (short back and sides): height of the hairline as a function of the angle around the head
+    zc = headC[2]
+    p_ = v0 - [0, eyeY, zc]
+    th = np.abs(np.arctan2(p_[:, 0], -p_[:, 2]))                      # 0 = forehead, pi = nape
+    hl = np.interp(th, [0.0, 0.45, 0.8, 1.05, 1.2, 1.38, 1.62, 1.95, 2.3, np.pi],
+                   [0.064, 0.06, 0.047, 0.038, -0.012, -0.012, 0.012, 0.0, -0.05, -0.078])
+    dens = sstep(0.0, 0.014, p_[:, 1] - hl)
+    earm = np.zeros(len(v0))
+    for sx in (1, -1):
+        ec = np.array([0.074 * sx, eyeY - 0.014, zc + 0.012])
+        earm = np.maximum(earm, 1 - sstep(0.026, 0.036, np.linalg.norm((v0 - ec) * [0.55, 1, 1.15], axis=1)))
+    dens *= 1 - earm
+    top = sstep(eyeY + 0.04, eyeY + 0.1, v0[:, 1])
+    thick = 0.0009 + dens * (0.0022 + 0.0045 * top)
+    base = len(v2)
+    remap = -np.ones(len(v2), np.int64)
+    remap[hv_] = base + np.arange(len(hv_))
+    new_v = [v0[hv_]]
+    hair_f = [i for i in headf if (dens[np.array(faces[i])] > 0.0).all()]
+    hvh = np.unique(np.concatenate([np.array(faces[i]) for i in hair_f])) if hair_f else np.zeros(0, np.int64)
+    remap_h = -np.ones(len(v2), np.int64)
+    remap_h[hvh] = base + len(hv_) + np.arange(len(hvh))
+    new_v.append(v0[hvh] + n0[hvh] * thick[hvh, None])
+    add_f, add_t, add_m = [], [], []
+    for i in headf:
+        add_f.append([int(remap[x]) for x in faces[i]]); add_t.append(B['fuv'][i]); add_m.append('face')
+    for i in hair_f:
+        add_f.append([int(remap_h[x]) for x in faces[i]]); add_t.append(B['fuv'][i]); add_m.append('hair')
+    src = np.concatenate([hv_, hvh])
+    B['v'] = np.vstack([v2] + new_v)
+    B['faces'] = list(faces) + add_f
+    B['fuv'] = list(B['fuv']) + add_t
+    B['fkind'] = list(fkind) + ['body'] * len(add_f)
+    B['fmat'] = fmat + add_m
+    B['src'] = np.concatenate([np.arange(len(v2)), src])   # vertex -> original vertex (weights)
+    B['hairDensity'] = np.concatenate([np.zeros(len(v2)), np.zeros(len(hv_)), dens[hvh]])
     return {'eyeY': eyeY, 'eyeZ': eyeZ}
 
 
 # ------------------------------------------------------------------------------------------------ 8 decimation
 # decimation importance per material: errors on small / mostly hidden parts are cheaper (gloves are dense in the
 # MakeHuman hands, the eye-opening skin is behind the glasses), the clothed silhouette and the balaclava count fully
-IMPORTANCE = {'camo': 1.0, 'knit': 1.0, 'glove': 0.12, 'skin': 0.4, 'sole': 0.3, 'boot': 0.5, 'lens': 1.0}
+IMPORTANCE = {'camo': 1.0, 'knit': 1.0, 'glove': 0.12, 'skin': 0.4, 'sole': 0.3, 'boot': 0.5, 'eye': 1.0, 'face': 1.0,
+              'hair': 0.6}
 
 
 def decimate(V, F, Fuv, fmat, W, target, lock_extra=None, wpen=0.02):
@@ -737,7 +831,7 @@ def decimate(V, F, Fuv, fmat, W, target, lock_extra=None, wpen=0.02):
 
 
 # ------------------------------------------------------------------------------------------------ 9 assembly + export
-GROUP_ORDER = ['camo', 'knit', 'boot', 'sole', 'lens', 'glove', 'skin']
+GROUP_ORDER = ['camo', 'knit', 'boot', 'sole', 'eye', 'glove', 'skin', 'face', 'hair']
 
 
 def assemble(V, N, UV, Wn, F, Fuv, fmat):
@@ -850,7 +944,7 @@ def build_lod(name, V, Wv, UV, F, Fuv, fmat):
 
 def landmarks(V, F, fmat, W, pos, R, rest, info):
     """Body measurements in the identity-rest pose, used to refit the procedural gear in soldier.js."""
-    body = np.unique(F[[m != 'lens' for m in fmat]].ravel())
+    body = np.unique(F[[m not in ('eye', 'face', 'hair') for m in fmat]].ravel())
     P = V[body]
     Wb = W[body]
     # inverse bind: each vertex to its dominant bone's rest frame (torso / head bones: rest == bind)
@@ -905,7 +999,8 @@ def landmarks(V, F, fmat, W, pos, R, rest, info):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--preview', default=None, help='also pickle the intermediate data to this path (debugging)')
-    ap.add_argument('--close', type=int, default=19500, help='close LOD body triangle budget')
+    ap.add_argument('--close', type=int, default=23600,
+                    help='close LOD triangle budget (both head variants; one soldier uses ~19.5 k of it)')
     ap.add_argument('--far', type=int, default=2600, help='far LOD body triangle budget')
     a = ap.parse_args()
     B = load_body()
@@ -920,7 +1015,9 @@ def main():
     pos, R, rest = game_skeleton(B)
     grips = curl_hands(B, R, pos, weights)
     W = game_weights(len(B['v']), weights)
+    W = soften_wrists(B, W, pos, R)
     info = dress(B, W, pos, R)
+    W = W[B['src']]                      # appended bare-head / hair vertices inherit their source vertex weights
     V = B['v']
     F, Fuv, fm = [], [], []
     for f, t, m in zip(B['faces'], B['fuv'], B['fmat']):
@@ -936,13 +1033,15 @@ def main():
     extra = []
     vuv = {}
     for i, m in enumerate(fm):
-        if m not in ('glove', 'boot', 'sole'):
+        if m not in ('glove', 'boot', 'sole', 'hair'):
             continue
         for k in range(3):
             vi = F[i][k]
             if vi not in vuv:
                 p_ = V[vi]
-                if m == 'glove':
+                if m == 'hair':
+                    uv = (B['hairDensity'][vi], p_[1])      # u: hair density (0 at the hairline), v: height
+                elif m == 'glove':
                     sd = 'R' if p_[0] > 0 else 'L'
                     h = (p_ - pos['hand' + sd]) @ R['hand' + sd]
                     uv = (h[2] + 0.4 * h[0], h[1])
@@ -957,9 +1056,13 @@ def main():
     UVm = np.vstack([UVm, np.array(extra)])
     print('faces', len(F))
     Fc, Fuvc, fmc = decimate(V, F, Fuv, fm, W, a.close)
-    print('close LOD', len(Fc))
+    cnt = {m: fmc.count(m) for m in sorted(set(fmc))}
+    print('close LOD', len(Fc), cnt, 'balaclava variant', len(Fc) - cnt.get('face', 0) - cnt.get('hair', 0),
+          'bare-head variant', len(Fc) - cnt.get('knit', 0) - cnt.get('skin', 0))
     # far LOD: one material (drawn with the single camo material); seams / material borders need no lock
-    Ff, Fuvf, _ = decimate(V, Fc, Fuvc, ['camo'] * len(Fc), W, a.far, wpen=0.0)
+    base_head = [m not in ('face', 'hair') for m in fmc]          # far LOD: balaclava head for everyone
+    Fc_b, Fuvc_b = Fc[base_head], Fuvc[base_head]
+    Ff, Fuvf, _ = decimate(V, Fc_b, Fuvc_b, ['camo'] * len(Fc_b), W, a.far, wpen=0.0)
     print('far LOD', len(Ff))
     lods = [build_lod('close', V, W, UVm, Fc, Fuvc, fmc), build_lod('far', V, W, UVm, Ff, Fuvf, ['camo'] * len(Ff))]
     bones = []
