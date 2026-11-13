@@ -154,6 +154,7 @@ async function boot() {
 
   // ---- QA hooks: only on explicit ?qa=1 URLs
   if (params.get('qa') === '1') {
+    window.__SC = scene; // TEMP-DIAG
     game.qaMode = true;
     Object.defineProperty(window, '__TIDAL_QA__', {
       value: Object.freeze({
