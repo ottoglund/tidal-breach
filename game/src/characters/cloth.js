@@ -13,6 +13,8 @@ import { WET } from '../materials.js';
 export function fabricShading(m, o = {}) {
   const dirt = o.dirt ?? 0.5, sheen = o.sheen ?? 0.12, soak = o.soak ?? 0.35, wrinkle = o.wrinkle ?? 0.5;
   const rough = o.rough ?? 0.25, wetTop = o.wetTop ?? 0.3, mudGloss = o.mudGloss ?? 0.45;
+  // rib: knitted rib relief (balaclava / gaiter): vertical wales of this period (m) around the head, with stitch loops
+  const rib = o.rib ?? 0;
   const prev = m.onBeforeCompile;
   m.onBeforeCompile = (shader, renderer) => {
     prev?.(shader, renderer);
@@ -24,7 +26,7 @@ export function fabricShading(m, o = {}) {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vFabP;
-float fabMud = 0.0, fabWet = 0.0;
+float fabMud = 0.0, fabWet = 0.0, fabRib = 0.0;
 float fabH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float fabN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(fabH(i), fabH(i + vec2(1.0, 0.0)), f.x), mix(fabH(i + vec2(0.0, 1.0)), fabH(i + vec2(1.0, 1.0)), f.x), f.y); }`)
@@ -38,6 +40,14 @@ float fabN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f)
         float fleck = step(0.7, fabN(pq * 90.0 + vFabP.y * 61.0)) * smoothstep(1.0, 0.15, gy) * ${dirt.toFixed(3)} * (0.4 + nz);
         float drip = smoothstep(0.62, 0.9, fabN(vec2(pq.x * 31.0 + pq.y * 17.0, vFabP.y * 3.5))) * smoothstep(0.95, 0.3, gy) * ${(dirt * 0.5).toFixed(3)};
         fabMud = clamp(mud + fleck * 0.7 + drip, 0.0, 0.9);
+        ${rib ? `
+        // knitted rib: wales run vertically; arc length around the head (bind pose, head axis near x = 0, z = -0.04)
+        float arc = atan(vFabP.x, -(vFabP.z + 0.04)) * 0.09;
+        float wale = arc / ${rib.toFixed(4)};
+        float loopP = vFabP.y / ${(rib * 0.8).toFixed(4)} + 0.5 * step(0.5, fract(wale * 0.5));
+        fabRib = 0.62 * (0.5 + 0.5 * sin(wale * 6.2832)) + 0.38 * (0.5 + 0.5 * sin(loopP * 6.2832)) * (0.5 + 0.5 * sin(wale * 6.2832));
+        fabRib = mix(0.5, fabRib, 1.0 - smoothstep(0.2, 0.55, max(fwidth(wale), fwidth(loopP))));   // fade out before it aliases
+        diffuseColor.rgb *= 0.8 + 0.3 * fabRib;` : ''}
         vec3 mudCol = mix(vec3(0.085, 0.07, 0.052), vec3(0.13, 0.105, 0.075), fabN(pq * 41.0));
         diffuseColor.rgb = mix(diffuseColor.rgb, mudCol, fabMud);
         // rain soak: darker, slightly more saturated cloth, strongest on upper surfaces
@@ -55,6 +65,16 @@ float fabN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f)
         float c1 = abs(fabN(wp * vec2(1.0, 0.35)) - 0.5), c2 = abs(fabN(wp.yx * vec2(0.8, 0.3) + 9.0) - 0.5);
         vec3 pert = vec3(c1 - 0.25, c2 - 0.25, 0.0) * ${wrinkle.toFixed(3)} * 0.18;
         normal = normalize(normal + (viewMatrix * vec4(pert.x, 0.0, pert.y, 0.0)).xyz);
+        ${rib ? `
+        {
+          // rib relief as a bump (screen-space derivatives of the rib height)
+          float hR = fabRib * ${(rib * 0.25).toFixed(5)};
+          vec3 dpx = dFdx(-vViewPosition), dpy = dFdy(-vViewPosition);
+          vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx);
+          float det = dot(dpx, r1) * faceDirection;
+          vec3 g = sign(det) * (dFdx(hR) * r1 + dFdy(hR) * r2);
+          normal = normalize(abs(det) * normal - g);
+        }` : ''}
         // roughness: patchy wear, wet mud and soaked cloth are glossier (not mirror-like)
         float rv = fabN(vFabP.xy * 17.0 + vFabP.z * 9.0) * 0.6 + fabN(vFabP.zy * 61.0) * 0.4 - 0.5;
         roughnessFactor = clamp(roughnessFactor * (1.0 + ${rough.toFixed(3)} * 2.0 * rv) * (1.0 - ${mudGloss.toFixed(3)} * fabMud) * (1.0 - 0.3 * clamp(fabWet, 0.0, 1.0)), 0.18, 1.0);
@@ -70,6 +90,6 @@ float fabN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f)
       }
       #include <opaque_fragment>`);
   };
-  m.customProgramCacheKey = () => 'fab2' + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss;
+  m.customProgramCacheKey = () => 'fab2' + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss + rib;
   return m;
 }

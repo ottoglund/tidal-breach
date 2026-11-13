@@ -265,7 +265,9 @@ def curl_hands(B, R, pos, weights):
         Rh, wr = R['hand' + sd], pos['hand' + sd]
         hs = lambda p: (p - wr) @ Rh                       # model -> hand space
         mcp3 = hs(H['finger3-1.' + sd])
-        c = np.array([-(0.016 + GRIP_R) * S, mcp3[1] - 0.012, 0.0])
+        # grip axis seated in the palm just behind the knuckles (was 12 mm past them: the fingers only hooked the
+        # grip and the open palm read as palm-up from the side)
+        c = np.array([-(0.017 + GRIP_R) * S, mcp3[1] + 0.004, 0.0])
         grips[sd] = c
         D = GRIP_R + GRIP_T
         Z = np.array([0, 0, 1.0])
@@ -336,6 +338,11 @@ def game_weights(nv, weights):
     s = W.sum(1)
     W[s < 1e-6, GI['head']] = 1          # unweighted helper vertices (not used by the body)
     return W / W.sum(1, keepdims=True)
+
+
+# short-back-and-sides hairline: height above the eyes (m) by angle round the head from the forehead (rad)
+HAIR_TH = [0.0, 0.45, 0.8, 1.05, 1.2, 1.38, 1.62, 1.95, 2.3, np.pi]
+HAIR_HL = [0.058, 0.056, 0.045, 0.036, -0.012, -0.012, 0.012, 0.0, -0.05, -0.078]
 
 
 def soften_wrists(B, W, pos, R):
@@ -639,22 +646,36 @@ def dress(B, W, pos, R):
     v2[bootv, 1] = np.maximum(v2[bootv, 1], 0.0)
     v2[bootv & (v2[:, 1] < 0.012), 1] = 0.0
     # toe box: a last Taubin pass over the upper boot toe removes the faint toe ridges the offset brings back
-    tb = bootv & (v2[:, 1] > 0.014) & (toe > 0.05)
+    tb = bootv & (v2[:, 1] > 0.032) & (toe > 0.05)          # above the welt and the sole
     tw_ = np.clip(toe * 1.2, 0, 1) * tb
     tbv = np.where(tb)[0]
-    for _ in range(40):
+    for _ in range(100):
         v2 = smooth_field(v2, nb, tbv, 1, 0.6, tw_)
         v2 = smooth_field(v2, nb, tbv, 1, -0.63, tw_)
+    # ... and round the toe outline down to the sole: horizontal-only smoothing (heights kept, the sole stays flat)
+    tl = bootv & (toe > 0.03) & (v2[:, 1] < 0.07)
+    tlw = np.clip(toe * 1.5, 0, 1) * tl
+    tlv = np.where(tl)[0]
+    for _ in range(120):
+        y0_ = v2[:, 1].copy()
+        v2 = smooth_field(v2, nb, tlv, 1, 0.6, tlw)
+        v2 = smooth_field(v2, nb, tlv, 1, -0.63, tlw)
+        v2[:, 1] = y0_
     # rubber sole: boot faces along the bottom edge
     for i, (f, m) in enumerate(zip(faces, fmat)):
         if m == 'boot' and v2[np.array(f), 1].max() < 0.024:
             fmat[i] = 'sole'
     fmat = list(fmat)
+    # the knit below the jaw also serves as the neck gaiter of the bare-headed soldiers ('gaiter' = knit material)
+    gcut = eyeY - 0.135 + 0.045 * sstep(eyeZ + 0.03, eyeZ + 0.12, v0[:, 2])
+    for i, m in enumerate(fmat):
+        if m == 'knit' and (v0[np.array(faces[i]), 1] < gcut[np.array(faces[i])]).all():
+            fmat[i] = 'gaiter'
 
     # --- bare-head variant for the Swedish soldiers (no balaclava): the undressed MakeHuman head and neck as 'face'
     # (same skin material), plus a short-hair shell over the scalp as 'hair'. Both are appended as separate vertices;
     # soldier.js uses either knit + skin (OPFOR) or face + hair (Home Guard).
-    headf = [i for i, m in enumerate(fmat) if m in ('knit', 'skin')]
+    headf = [i for i, m in enumerate(fmat) if m in ('knit', 'skin', 'gaiter')]
     hv_ = np.unique(np.concatenate([np.array(faces[i]) for i in headf]))
     n0 = vertex_normals(v0, F)
     n0 = smooth_field(n0, nb, hv_, 3, 0.5)
@@ -663,8 +684,8 @@ def dress(B, W, pos, R):
     zc = headC[2]
     p_ = v0 - [0, eyeY, zc]
     th = np.abs(np.arctan2(p_[:, 0], -p_[:, 2]))                      # 0 = forehead, pi = nape
-    hl = np.interp(th, [0.0, 0.45, 0.8, 1.05, 1.2, 1.38, 1.62, 1.95, 2.3, np.pi],
-                   [0.064, 0.06, 0.047, 0.038, -0.012, -0.012, 0.012, 0.0, -0.05, -0.078])
+    # (same table in game/src/characters/skin.js, which cuts the hairline per pixel)
+    hl = np.interp(th, HAIR_TH, HAIR_HL)
     dens = sstep(0.0, 0.014, p_[:, 1] - hl)
     earm = np.zeros(len(v0))
     for sx in (1, -1):
@@ -677,7 +698,13 @@ def dress(B, W, pos, R):
     remap = -np.ones(len(v2), np.int64)
     remap[hv_] = base + np.arange(len(hv_))
     new_v = [v0[hv_]]
-    hair_f = [i for i in headf if (dens[np.array(faces[i])] > 0.0).all()]
+    # the shell reaches 1.5 cm past the hairline (and closer round the ears); the shader cuts the exact hairline
+    earx = np.zeros(len(v0))
+    for sx in (1, -1):
+        ec = np.array([0.074 * sx, eyeY - 0.014, zc + 0.012])
+        earx = np.maximum(earx, 1 - sstep(0.016, 0.02, np.linalg.norm((v0 - ec) * [0.55, 1, 1.15], axis=1)))
+    shell = (p_[:, 1] - hl > -0.015) & (earx < 0.5)
+    hair_f = [i for i in headf if shell[np.array(faces[i])].all()]
     hvh = np.unique(np.concatenate([np.array(faces[i]) for i in hair_f])) if hair_f else np.zeros(0, np.int64)
     remap_h = -np.ones(len(v2), np.int64)
     remap_h[hvh] = base + len(hv_) + np.arange(len(hvh))
@@ -694,14 +721,15 @@ def dress(B, W, pos, R):
     B['fkind'] = list(fkind) + ['body'] * len(add_f)
     B['fmat'] = fmat + add_m
     B['src'] = np.concatenate([np.arange(len(v2)), src])   # vertex -> original vertex (weights)
-    B['hairDensity'] = np.concatenate([np.zeros(len(v2)), np.zeros(len(hv_)), dens[hvh]])
-    return {'eyeY': eyeY, 'eyeZ': eyeZ}
+    B['hairUV'] = np.zeros((len(B['v']), 2))
+    B['hairUV'][base + len(hv_):] = np.column_stack([th[hvh], p_[hvh, 1]])
+    return {'eyeY': eyeY, 'eyeZ': eyeZ, 'headC': headC}
 
 
 # ------------------------------------------------------------------------------------------------ 8 decimation
 # decimation importance per material: errors on small / mostly hidden parts are cheaper (gloves are dense in the
 # MakeHuman hands, the eye-opening skin is behind the glasses), the clothed silhouette and the balaclava count fully
-IMPORTANCE = {'camo': 1.0, 'knit': 1.0, 'glove': 0.12, 'skin': 0.4, 'sole': 0.3, 'boot': 0.5, 'eye': 1.0, 'face': 1.0,
+IMPORTANCE = {'camo': 1.0, 'knit': 1.0, 'gaiter': 1.0, 'glove': 0.12, 'skin': 0.4, 'sole': 0.3, 'boot': 0.5, 'eye': 1.0, 'face': 1.0,
               'hair': 0.6}
 
 
@@ -831,7 +859,7 @@ def decimate(V, F, Fuv, fmat, W, target, lock_extra=None, wpen=0.02):
 
 
 # ------------------------------------------------------------------------------------------------ 9 assembly + export
-GROUP_ORDER = ['camo', 'knit', 'boot', 'sole', 'eye', 'glove', 'skin', 'face', 'hair']
+GROUP_ORDER = ['camo', 'knit', 'gaiter', 'boot', 'sole', 'eye', 'glove', 'skin', 'face', 'hair']
 
 
 def assemble(V, N, UV, Wn, F, Fuv, fmat):
@@ -1033,14 +1061,18 @@ def main():
     extra = []
     vuv = {}
     for i, m in enumerate(fm):
-        if m not in ('glove', 'boot', 'sole', 'hair'):
+        if m not in ('glove', 'boot', 'sole', 'hair', 'eye'):
             continue
         for k in range(3):
             vi = F[i][k]
             if vi not in vuv:
                 p_ = V[vi]
+                # face, hair and eyes share the skin material: v >= 1000 marks hair (u = angle round the head from
+                # the forehead, v - 1000 = height above the eyes), v >= 2000 marks the eyeballs
                 if m == 'hair':
-                    uv = (B['hairDensity'][vi], p_[1])      # u: hair density (0 at the hairline), v: height
+                    uv = (B['hairUV'][vi, 0], 1000.0 + B['hairUV'][vi, 1])   # angle round the head, height - eyes
+                elif m == 'eye':
+                    uv = (0.0, 2000.0)
                 elif m == 'glove':
                     sd = 'R' if p_[0] > 0 else 'L'
                     h = (p_ - pos['hand' + sd]) @ R['hand' + sd]
@@ -1076,6 +1108,7 @@ def main():
         'stature': STATURE, 'bones': bones,
         'eyeR': np.round(eyeR, 4).tolist(), 'eyeL': np.round(H['eye.L'], 4).tolist(),
         'grip': {k: np.round(g, 4).tolist() for k, g in grips.items()},
+        'headC': np.round(info['headC'], 4).tolist(),
         'landmarks': landmarks(V, F, fm, W, pos, R, rest, info),
     }
     data = pack(lods, header)

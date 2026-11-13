@@ -75,6 +75,15 @@ export function armShading(m, kind) {
         // wear: polished, lighter fabric on the knuckle strip and along the seams; grime in the hollows
         float wn = fract(sin(dot(floor(vArmUv * 260.0), vec2(12.9898, 78.233))) * 43758.5453);
         diffuseColor.rgb *= mix(1.0, 0.9 + 0.2 * wn, 0.5);
+        // macro wear: faded, dusty patches (5 cm) and darker oily grime (2 cm) so the cordura is not a uniform colour
+        vec2 q = vArmUv * 20.0;
+        vec2 iq = floor(q), fq = fract(q); fq = fq * fq * (3.0 - 2.0 * fq);
+        float h00 = fract(sin(dot(iq, vec2(127.1, 311.7))) * 43758.5453), h10 = fract(sin(dot(iq + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+        float h01 = fract(sin(dot(iq + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453), h11 = fract(sin(dot(iq + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+        float mac = mix(mix(h00, h10, fq.x), mix(h01, h11, fq.x), fq.y);
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.15, 1.12, 1.05) + vec3(0.02, 0.018, 0.012), smoothstep(0.6, 0.95, mac) * 0.5);
+        diffuseColor.rgb *= 1.0 - 0.25 * smoothstep(0.55, 0.0, mac) * (1.0 - palm);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(dot(diffuseColor.rgb, vec3(0.33))), 0.18);
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.12, 1.1, 1.0) + 0.012, armPad * 0.35 * (1.0 - palm));
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.045, 0.035), (1.0 - ao) * 0.35);
         armH = -0.00045 * l1 + 0.0007 * smoothstep(0.0, -0.0015, s2) - 0.0003 * l2;

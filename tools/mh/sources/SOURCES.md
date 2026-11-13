@@ -26,4 +26,5 @@ targets, rigs, weights, textures and proxies are CC0 while the program code is A
 | `LICENSE.makehuman.md` | `LICENSE.md` | edd99571ca62698f78c943fd4fffb159a413c315fa0d4819d3cec5cadaf8b4f1 |
 
 `fetch_sources.sh` downloads the same files again and checks these hashes. The game itself never contacts
-these hosts: it only loads the built `game/assets/models/soldier_body.bin` from its own origin.
+these hosts: it only loads the built `game/assets/models/soldier_body.bin` and `game/assets/models/viewmodel_arms.bin`
+(`tools/mh/build_arms.py`, same source files) from its own origin.

@@ -74,7 +74,8 @@ export class Weapon {
 
     // ---- hands: MakeHuman-derived arms when the asset loaded, procedural hands otherwise ----
     mats.armGlove = armShading(vm('glove_green', { tile: 0.12, roughness: 1 }, 1.9, { envMapIntensity: 0.6 }), 'glove');
-    mats.armGlove.color.setRGB(1.5, 1.45, 1.25);       // less saturated olive than the old procedural hands
+    mats.armGlove.color.setRGB(1.3, 1.25, 1.05);       // less saturated, darker olive than the old procedural hands
+    mats.armGlove.normalScale.set(1.6, 1.6);
     mats.armSleeve = armShading(vm('camo_m90', { tile: 0.45, roughness: 1 }, 1.8, { envMapIntensity: 0.5 }), 'sleeve');
     const arms = buildArms({ glove: mats.armGlove, sleeve: mats.armSleeve });
     this.arms = arms;

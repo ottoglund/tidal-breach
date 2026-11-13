@@ -47,8 +47,7 @@ export const LEN = { upper: 0.30, fore: 0.265, thigh: 0.44, shin: 0.405 };
 export const RIG = { hipY: 0.97, ankle: 0.085, eye: [0.034, 0.128, -0.078], gripR: [-0.03, -0.097, 0.004], gripL: [0.03, -0.097, 0.0], chest: [0, 1.25, 0.01], mh: false };
 
 // material group order of the skinned mesh
-// ('eye': MakeHuman eyeballs; 'hair': short-hair shell of the bare-headed Home Guard soldiers)
-export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'eye', 'glove', 'patch', 'skin', 'hair', 'metal'];
+export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove', 'patch', 'skin', 'metal'];
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const AX = V(1, 0, 0), NZ = V(0, 0, -1), PY = V(0, 1, 0), PZ = V(0, 0, 1);
@@ -585,7 +584,7 @@ function leg(B, side) {
   B.rigid('black', box(0.09, 0.012, 0.008), xf(x0, 0.006, 0.0), ft);
 }
 
-function rig(B, { helmet = false } = {}) {
+function rig(B, { helmet = false, glasses = true } = {}) {
   const { chest, spine, hips, head: hd } = BI;
   // padded shoulder harness straps (front / back / over the shoulder) with sewn edges, D-rings and metal adjusters
   for (const s of [-1, 1]) {
@@ -654,6 +653,7 @@ function rig(B, { helmet = false } = {}) {
     B.rigid('web', bandGeo, null, hd);
   } else helmetShell(B);
 
+  if (!glasses) return;
   // wrap-around shooting glasses: curved lens band + temples
   const lens = new THREE.BufferGeometry();
   const lp = [], li = [], ln = [], lu = [];
@@ -756,12 +756,13 @@ function fitGear(g, bone) {
 /**
  * Append one LOD of the body asset; groups are mapped to builder material keys (all to `only` if given). The close LOD
  * holds two heads: 'knit' + 'skin' (balaclava with an eye opening, OPFOR) and 'face' + 'hair' (bare head with short
- * hair, Swedish Home Guard); `kind` picks one.
+ * hair, Swedish Home Guard); `kind` picks one. 'gaiter' (the knit below the jaw) is worn by both. Face, hair and the
+ * eyeballs all use the skin material (one draw call; the shader tells them apart by their UVs, see characters/skin.js).
  */
 function addBody(B, lod, only, kind = 'opfor') {
   const { position, normal, uv, skinIndex, skinWeight } = lod.attrs;
   const ix = lod.index.array;
-  const map = { camo: 'camo', knit: 'knit', boot: 'boot', lens: 'eye', eye: 'eye', glove: 'glove', skin: 'skin', sole: 'black', face: 'skin', hair: 'hair' };
+  const map = { camo: 'camo', knit: 'knit', gaiter: 'knit', boot: 'boot', lens: 'skin', eye: 'skin', glove: 'glove', skin: 'skin', sole: 'black', face: 'skin', hair: 'skin' };
   const skip = kind === 'opfor' ? ['face', 'hair'] : ['knit', 'skin'];
   for (const gr of lod.groups) {
     if (!only && skip.includes(gr.name)) continue;
@@ -854,7 +855,9 @@ export function soldierGeometry(kind = 'opfor') {
     arm(B, 1); arm(B, -1); hand(B, 1); hand(B, -1);
     leg(B, 1); leg(B, -1);
   }
-  rig(B, { helmet });
+  // OPFOR wear tinted shooting glasses over the balaclava; the bare-headed Home Guard soldiers do not (the glasses
+  // are fitted to the balaclava head)
+  rig(B, { helmet, glasses: kind === 'opfor' });
   if (kind !== 'opfor') hvInsignia(B, helmet);
   const g = geoCache[kind] = B.build();
   g.computeBoundingSphere();
