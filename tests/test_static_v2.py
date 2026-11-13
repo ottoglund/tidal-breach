@@ -54,6 +54,29 @@ class GameV2SourceChecks(unittest.TestCase):
         self.assertIn("CC0", assets)
         self.assertTrue((ROOT / "tools/mh/sources/SOURCES.md").exists())
 
+    def test_low_preset_uses_lite_shaders(self):
+        q = SRC["src/quality.js"]
+        low, medium, high = (re.search(name + r": \{.*?\n  \},", q, re.S).group(0) for name in ("low", "medium", "high"))
+        self.assertIn("liteShading: true", low)
+        self.assertIn("liteShading: false", medium)
+        self.assertIn("liteShading: false", high)
+        # every custom injection reads the tier and keeps its programs apart in the cache
+        for f in ("src/characters/cloth.js", "src/characters/skin.js", "src/viewmodel/arms.js"):
+            with self.subTest(file=f):
+                self.assertIn("SHADER.lite", SRC[f])
+                self.assertIn("customProgramCacheKey", SRC[f])
+        # the shader failure guard is wired up in main.js
+        self.assertIn("renderer.debug.onShaderError", SRC["src/main.js"])
+
+    def test_no_non_constant_shader_loops_or_mediump(self):
+        # WebGL2 allows dynamic loops, but the injections keep constant bounds (cheap to unroll on mobile GPUs) and
+        # rely on three's highp default (iOS Safari supports highp in fragment shaders)
+        for name, src in SRC.items():
+            if name.startswith(("src/characters/", "src/viewmodel/")) or name in ("src/fog.js", "src/materials.js"):
+                with self.subTest(file=name):
+                    self.assertNotRegex(src, r"mediump|lowp")
+                    self.assertNotRegex(src, r"for \(int \w+ = [^;]*; \w+ [<>=]+ (?!-?\d)[^;]*;")
+
     def test_legacy_fallback_link(self):
         self.assertIn("../index.html", HTML)
 

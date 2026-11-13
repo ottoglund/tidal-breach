@@ -1,6 +1,6 @@
 // TIDAL BREACH v0.2 – boot, lighting rig, main loop, QA hooks and perf overlay.
 import * as THREE from 'three';
-import { pickQuality, saveQuality, applyShaderTier } from './quality.js';
+import { pickQuality, saveQuality, applyShaderTier, SHADER } from './quality.js';
 import { loadTextures, updateWet, WET } from './materials.js';
 import { Pipeline, LAYER } from './renderer.js';
 import { buildLevel } from './world/level.js';
@@ -107,7 +107,22 @@ async function boot() {
 
   // warm up shaders before the player starts
   pipe.camera.position.set(0, 1.7, 24);
+  // shader failure guard: if a program fails to compile / link on this GPU (driver limit, e.g. too many varyings) while
+  // the full cloth / skin / arms shading is active, switch those materials to the lite variants and recompile once.
+  // (If the lite shaders also fail, three logs the error and that mesh is skipped; the game keeps running.)
+  let shaderFailures = 0, liteFallbackTimer = 0;
+  renderer.debug.onShaderError = (gl, program, vs, fs) => {
+    shaderFailures++;
+    console.warn('shader program failed to compile / link' + (SHADER.lite ? '' : '; switching to lite shading') + '\n' + String(gl.getProgramInfoLog(program) || '').slice(0, 400));
+    if (!SHADER.lite && !liteFallbackTimer) {
+      liteFallbackTimer = setTimeout(() => {
+        SHADER.lite = true;
+        for (const root of [scene, pipe.weaponScene]) root.traverse(o => { for (const m of [].concat(o.material || [])) m.needsUpdate = true; });
+      }, 0);
+    }
+  };
   renderer.compile(scene, pipe.camera);
+  renderer.compile(pipe.weaponScene, pipe.weaponCamera);
   $('loadfill').style.width = '100%';
   $('loading').style.display = 'none';
   $('startBtn').disabled = false;
@@ -175,10 +190,37 @@ async function boot() {
         step: (sec) => { const n = Math.ceil(sec / 0.02); for (let i = 0; i < n; i++) game.update(0.02, performance.now() / 1000 + i * 0.02); },
         freeze: (on) => { game.frozen = !!on; },
         squad: (on) => game.squad.setEnabled(on),
+        // QA: shortest walkable route (0.5 m grid, 0.8 m clearance, 8-connected) from the player to (tx, tz) as [[x, z], ...] waypoints
+        route: (tx, tz) => {
+          let ti2, tj2;
+          const C = 0.5, X0 = -35, Z0 = -86, W = Math.ceil(70 / C), H = Math.ceil(120 / C), id = (i, j) => j * W + i;
+          const free = (i, j) => i >= 0 && j >= 0 && i < W && j < H && !game.blocked(X0 + (i + 0.5) * C, Z0 + (j + 0.5) * C, 0.8);
+          const si = Math.floor((game.player.x - X0) / C), sj = Math.floor((game.player.z - Z0) / C), ti = Math.floor((tx - X0) / C), tj = Math.floor((tz - Z0) / C);
+          const g = new Map([[id(si, sj), 0]]), from = new Map(), open = [[0, si, sj]];
+          while (open.length) {
+            open.sort((a, b) => b[0] - a[0]);
+            const [, i, j] = open.pop();
+            if (Math.abs(i - ti) <= 1 && Math.abs(j - tj) <= 1) { ti2 = i; tj2 = j; break; }
+            for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+              const ni = i + di, nj = j + dj;
+              if (!free(ni, nj) || (di && dj && (!free(i + di, j) || !free(i, j + dj)))) continue;
+              const ng = g.get(id(i, j)) + (di && dj ? 1.414 : 1);
+              if (ng < (g.get(id(ni, nj)) ?? 1e9)) { g.set(id(ni, nj), ng); from.set(id(ni, nj), [i, j]); open.push([ng + Math.hypot(ni - ti, nj - tj), ni, nj]); }
+            }
+          }
+          if (ti2 === undefined) return null;
+          const pts = []; let cur = [ti2, tj2];
+          while (cur) { pts.push([X0 + (cur[0] + 0.5) * C, Z0 + (cur[1] + 0.5) * C]); cur = from.get(id(cur[0], cur[1])); }
+          pts.reverse();
+          // thin the polyline: keep a waypoint every ~4 m
+          return pts.filter((p, k) => k === pts.length - 1 || k % 8 === 0);
+        },
+        enemyList: () => game.enemies.filter(e => e.alive).map(e => ({ x: e.x, z: e.z, los: game.wallHit(e.x, e.z, game.player.x, game.player.z) === null })),
         squadState: () => game.squad.members.map(m => ({ x: m.x, z: m.z, mag: m.mag, target: !!m.target })),
         peaceful: () => { for (const e of game.enemies) { e.alive = false; e.deathAt = -1e9; } },
         perf: () => ({ fps: perf.fps, ms: perf.ms, quality: quality.name, renderer: glInfo, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }),
         quality: quality.name,
+        shaderTier: () => ({ lite: SHADER.lite, failures: shaderFailures }),
         // capture mode: stop the realtime loop and render single frames on demand (slow software GPUs)
         hold: (on) => { hold = !!on; },
         ads: (v) => { game.player.ads = v; weapon.ads = v; },

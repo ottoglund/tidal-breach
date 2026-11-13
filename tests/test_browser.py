@@ -9,7 +9,6 @@ from pathlib import Path
 from threading import Thread
 
 import pytest
-from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,19 +31,6 @@ def serve():
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
-
-
-@pytest.fixture(scope="session")
-def browser():
-    with sync_playwright() as p:
-        b = p.chromium.launch(headless=True, args=[
-            "--enable-webgl", "--use-gl=angle", "--use-angle=swiftshader",
-            "--enable-unsafe-swiftshader", "--disable-dev-shm-usage"
-        ])
-        try:
-            yield b
-        finally:
-            b.close()
 
 
 @pytest.fixture

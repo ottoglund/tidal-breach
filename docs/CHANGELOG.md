@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.3.0-dev — people, audio, Windows server, mobile shader safety (in `game/`, implemented / tested headless, not accepted)
+Nothing here has run on a real GPU, iPhone or Windows PC yet; every number below is from headless Chromium on SwiftShader (a software GPU) or from reading the compiled GLSL.
+
+**People (implemented; SwiftShader renders only)**
+- Soldiers rebuilt on the CC0 MakeHuman body (`game/assets/models/soldier_body.bin`, first-person arms `viewmodel_arms.bin`; provenance in `docs/ASSETS.md`), bare-headed Home Guard soldiers with hair, eyes and wrap-lit skin (`characters/skin.js`), a fabric layer with ripstop / twill relief, joint-flexion folds, seams and wear (`characters/cloth.js`), and procedural locomotion / combat animation (`characters/anim.js`).
+- Procedural body / hands remain as fallback when the `.bin` files cannot be loaded (now covered by tests: missing and corrupt files).
+
+**Audio (implemented; needs listening on real hardware)**
+- Rain-loop ambience removed (reported as synthetic); Swedish comrade barks use on-device speech at a faster rate with a squelch click, static bed and squelch tail to read as group radio. Browser speech cannot be filtered through Web Audio, so the voices themselves are not band-limited.
+
+**Windows**
+- `serve.ps1`: dependency-free localhost web server (PowerShell + `HttpListener`, serves only the repo folder, no external calls) for machines without Python or Node.
+
+**Mobile / iOS shader safety (implemented; tested headless; no device run)**
+- New shader tier (`SHADER.lite` in `game/src/quality.js`): the `low` preset (default on touch devices) uses simplified cloth / skin / arm shading: no yarn relief, drape, folds, seams, wear, edge wear, boot creases or knit rib on cloth; no pore normal map, face creases or bump on skin; no cordura weave / pebble loop on gloves and no yarn relief on sleeves. Mud, wet soak, roughness variation, sheen, redness, brows, stubble, hair and eyes stay. `medium` / `high` are unchanged (checked by before / after renders at medium: differences are within run-to-run noise). Override with `?lite=1|0`.
+- Fewer varyings without any visual change: `vFogDepth` is derived from `vFogView` in the fog chunk, and materials whose map / normal / roughness / AO / metalness slots share one UV transform (all PBR sets) now read the albedo's `vMapUv` instead of three extra `vec2` varyings (`shareMapUv` in `materials.js`).
+- Shader failure guard: if a program fails to compile / link while full shading is active, `renderer.debug.onShaderError` switches every material to the lite variants and recompiles once (`main.js`); simulated in a test.
+- Weapon scene is now pre-compiled at boot as well (no first-shot compile hitch).
+- `tools/shader_audit.js`: compiles every program at a preset and reports varying / uniform / sampler counts per program (see README, numbers in `docs/ACCEPTANCE.md`).
+- QA hooks (only with `?qa=1`): `enemyList()`, `route(x, z)` (grid path planner), `shaderTier()`.
+
+**Tests**
+- `tests/test_game_v2.py`: `test_full_mission_run` (q=low, squad on, guards alive; spawn -> restart mid-run -> Node A -> B (pause / resume) -> C -> extraction; asserts win, no page errors, no NaN / inf positions; ~35 s), `test_missing_model_files_fall_back_to_procedural` (missing and corrupt `.bin`), `test_shader_failure_falls_back_to_lite_shading`. `tests/test_static_v2.py`: preset tiers, no `mediump` / non-constant loop bounds in the injections. `tests/conftest.py`: one shared Playwright browser (running `pytest tests/` used to fail 10 browser tests because two suites each started their own sync Playwright). Whole run: 33 passed, ~5 min.
+
+**Renders**
+- `docs/renders/v0.3/` (desktop high 1600x900, landscape mobile low 844x390, JPEG q85) at the four fixed cameras; before / after sheets in `docs/renders/compare/` (`v0.2_vs_v0.3_*`, `v0.1_vs_v0.3_*`, plus `tier_low_lite_vs_full_*` for the shader tiers). Caution: `docs/renders/v0.2/` was rendered before the Ak 4C / HUD / people work, so the v0.2 -> v0.3 sheets show all of that, not just this release's changes. The four fixed cameras do not frame soldiers up close.
+- `tools/capture.js` accepts `VIEWPORT=WxH` / `DSF=n`; `tools/compare.py` takes `--prefix` and any image type; `tools/soldier_shots.js` renders soldier close-ups.
+
 ## v0.2.0-dev — realistic renderer (in `game/`, not yet accepted)
 - Heroes are now the Swedish Home Guard (Hemvärnet): player with Ak 4C (7.62×51, 20-round magazines, 120 in reserve) and Aimpoint-style red dot; two HV comrades (M90, Ak 4C, one helmeted) follow the player and engage visible guards.
 - Opposing force: Russian digital-flora camo, chest rigs after the user's reference photo, AK-74M / AKM; continuous skinned soldier bodies with planted-foot walk/run, aim, IK grip, flinch and death.

@@ -1,5 +1,7 @@
 // Capture actual running-game renders from fixed reference cameras.
-// Usage: node tools/capture.js <url-with-?qa=1> <outdir> [desktop|mobile] [waitMs]
+// Usage: [VIEWPORT=1600x900] [DSF=1] node tools/capture.js <url-with-?qa=1> <outdir> [desktop|mobile] [waitMs]
+// VIEWPORT (CSS px) / DSF override the defaults (desktop 1280x720 @1x; mobile = Playwright 'iPhone 13 landscape' @2x).
+// v0.3 renders: desktop `VIEWPORT=1600x900 ... q=high`, mobile `VIEWPORT=844x390 DSF=1 ... q=low`.
 // Requires the repo served over HTTP (e.g. python3 -m http.server).
 const { chromium, devices } = require('playwright');
 const fs = require('fs'), path = require('path');
@@ -8,9 +10,10 @@ const cams = JSON.parse(fs.readFileSync(path.join(__dirname, 'cameras.json'), 'u
   const [url, out, kind = 'desktop', waitMs = '6000'] = process.argv.slice(2);
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({ args: ['--enable-webgl', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
+  const vp = (process.env.VIEWPORT || '').match(/^(\d+)x(\d+)$/), dsf = process.env.DSF ? +process.env.DSF : null;
   const ctxOpts = kind === 'mobile'
-    ? { ...devices['iPhone 13 landscape'], deviceScaleFactor: 2 }
-    : { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, hasTouch: true };
+    ? { ...devices['iPhone 13 landscape'], deviceScaleFactor: dsf ?? 2, ...(vp ? { viewport: { width: +vp[1], height: +vp[2] }, screen: { width: +vp[1], height: +vp[2] } } : {}) }
+    : { viewport: vp ? { width: +vp[1], height: +vp[2] } : { width: 1280, height: 720 }, deviceScaleFactor: dsf ?? 1, hasTouch: true };
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
   const errors = [];

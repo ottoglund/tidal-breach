@@ -58,9 +58,9 @@ export function armShading(m, kind) {
   // sleeve: same ripstop / twill yarn relief as the soldiers' uniforms (characters/cloth.js), aligned with the
   // camo_m90 texture grid (texture tile 0.45 m, material tile 0.45 m)
   // low preset (mobile): no yarn relief on the sleeve, no cordura basket weave / pebbled leather loop on the glove
-  const lite = SHADER.lite;
-  const weave = glove || lite ? null : ripstop(0.45, 0.45);
+  const weaveFull = glove ? null : ripstop(0.45, 0.45);
   m.onBeforeCompile = (shader) => {
+    const lite = SHADER.lite, weave = lite ? null : weaveFull;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 aux;\nvarying vec4 vAux;\nvarying vec2 vArmUv;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvAux = aux; vArmUv = uv;');
@@ -156,7 +156,7 @@ export function armShading(m, kind) {
       reflectedLight.indirectDiffuse *= 0.55 + 0.45 * vAux.x;
       reflectedLight.indirectSpecular *= 0.5 + 0.5 * vAux.x;`);
   };
-  m.customProgramCacheKey = () => 'arm3' + kind + (lite ? 'L' : '');
+  m.customProgramCacheKey = () => 'arm3' + kind + (SHADER.lite ? 'L' : '');
   return m;
 }
 

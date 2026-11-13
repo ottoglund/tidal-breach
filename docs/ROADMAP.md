@@ -4,7 +4,7 @@
 - [x] Preserve the dependency-free playable FPS in `index.html`.
 - [x] Add project docs, coding-agent guidance and automated test scripts.
 - [x] Set up private GitHub repository.
-- [ ] Validate the Chromium test suite in GitHub Actions (do not mark passed until its workflow reports success). *Local headless Chromium (SwiftShader): v0.1 suite 4/4 and v0.2 suite 9/9 passed; CI not yet confirmed.*
+- [ ] Validate the Chromium test suite in GitHub Actions (do not mark passed until its workflow reports success). *Local headless Chromium (SwiftShader): v0.1 suite 4/4 and v0.2 suites (static 10/10, browser 14) passed; CI not yet confirmed.*
 - [ ] Test a full mission manually on desktop and iPhone landscape.
 - [ ] Record measured baseline frame rates. *Only software-GPU numbers exist (SwiftShader, not representative); in-game overlay (`F9` / `?perf=1`) added for real hardware.*
 
@@ -33,9 +33,11 @@ Status: **implemented, partly tested, not accepted** (needs real-device review a
 **Gate:** playable combat and no regression in three-node objective chain.
 
 ## M3 — full level and mobile
+- [~] Mobile / iOS shader safety (v0.3): shader audit of every program per preset (`tools/shader_audit.js`: varyings 14 / 16 / 18 -> 8 / 12 / 14 at low / medium / high, unpacked vec4 slots), `low` preset uses lite cloth / skin / arm shading (`SHADER.lite`), shader-failure fallback to lite, procedural body fallback tested with missing and corrupt `.bin`. *Implemented; tested headless (SwiftShader + GLSL analysis); the real limits of iPhone / Android GPUs and real frame times are not measured; not accepted.*
+- [~] Automated full mission run (`tests/test_game_v2.py::test_full_mission_run`, q=low, squad on, guards alive, pause / restart mid-run). *Passes headless in ~35 s; replaces nothing: a manual mission on real hardware is still required.*
 - [ ] Apply verified asset/art pipeline across mission route.
 - [ ] Add level-of-detail, compressed textures and graphics quality presets.
-- [ ] Test on real Windows desktop GPU, iOS Safari and Android Chrome.
+- [ ] Test on real Windows desktop GPU, iOS Safari and Android Chrome (checklist in `docs/ACCEPTANCE.md`, "Real-hardware checklist").
 
 **Gate:** full mission completion on tested devices with recorded hardware/FPS.
 
