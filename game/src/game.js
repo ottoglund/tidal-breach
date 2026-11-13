@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { BOUNDS, SPAWN, NODES, EXTRACT, ENEMY_SPAWNS } from './world/level.js';
 import { createGuard, poseGuard } from './enemies.js';
+import { gaitRate } from './characters/anim.js';
 import { createSoldier, poseSoldier } from './characters/squad.js';
 import { Squad } from './friendlies.js';
 
@@ -190,7 +191,7 @@ export class Game {
       const hitPoint = origin.clone().addScaledVector(dir, bestT);
       if ('health' in best) {
         best.health -= head ? 100 : (ads ? 54 : 42);
-        best.hit = 1;
+        best.hit = 1; best.hitX = p.x; best.hitZ = p.z; // presentation: direction of the hit reaction / fall
         const killed = best.health <= 0;
         this.showKill(killed ? (head ? 'HEADSHOT — TARGET NEUTRALIZED' : 'TARGET NEUTRALIZED') : 'TARGET HIT');
         if (killed) { best.alive = false; best.deathAt = performance.now() / 1000; best.fallDir = Math.random() < 0.5 ? 1 : -1; p.kills++; } else best.alert = 7;
@@ -297,12 +298,15 @@ export class Game {
       if (va !== !!e._va) { this.audio.voice(va ? (e._seen ? 'engage' : 'contact') : 'search', { guardId: gid, distance: d, x: e.x, z: e.z }); if (va) e._seen = true; e._va = va; }
       const ex = targetX - e.x, ez = targetZ - e.z, nd = Math.hypot(ex, ez), step = Math.min(nd, dt * (e.alert > 0 ? 2.5 : 1.1));
       let moved = 0;
+      const x0 = e.x, z0 = e.z;
       if (nd > 0.15) {
         const sx = ex / nd * step, sz = ez / nd * step;
         if (!this.blocked(e.x + sx, e.z, 0.35)) { e.x += sx; moved += Math.abs(sx); }
         if (!this.blocked(e.x, e.z + sz, 0.35)) { e.z += sz; moved += Math.abs(sz); }
-        e.walk += dt * (e.alert > 0 ? 7.5 : 4.2);
       }
+      // gait phase (presentation: pose + footstep audio): cadence from the actual ground speed, so the feet plant
+      // without skating and each footstep sound lands on a foot contact
+      e.walk += dt * gaitRate(Math.hypot(e.x - x0, e.z - z0) / Math.max(dt, 1e-4));
       // face movement when patrolling, face the player when engaging
       const engage = e.alert > 0 && canSee && d < 27;
       const face = engage ? Math.atan2(p.x - e.x, p.z - e.z) : Math.atan2(ex, ez);
@@ -349,7 +353,7 @@ export class Game {
       m.root.visible = e.alive || deadFor < 25;
       m.root.position.set(e.x, 0, e.z);
       m.root.rotation.y = e.angle + Math.PI;
-      poseGuard(m, { walk: e.walk, speed: e.speed, aim: e.aim, flash: e.flash, hit: e.hit, dead: e.alive ? 0 : deadFor / 0.9, fallDir: e.fallDir });
+      poseGuard(m, { walk: e.walk, speed: e.speed, aim: e.aim, flash: e.flash, hit: e.hit, dead: e.alive ? 0 : deadFor / 0.9, fallDir: e.fallDir, hitX: e.hitX, hitZ: e.hitZ });
     }
     // node LED blink
     for (const n of this.nodes) if (!n.done && n.obj) n.obj.ledMat.emissiveIntensity = (Math.sin(time * 6 + n.x) > 0.2) ? 40 : 2;

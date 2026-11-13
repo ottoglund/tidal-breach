@@ -3,6 +3,7 @@
 // (only the player sabotages nodes and extracts); guards keep targeting the
 // player. Comrades are deliberately moderate shots so the player stays central.
 import * as THREE from 'three';
+import { gaitRate } from './characters/anim.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -28,7 +29,7 @@ export class Squad {
       const model = factory(i);
       model.root.rotation.order = 'YXZ';
       game.scene.add(model.root);
-      return { i, slot, model, x: 0, z: 0, angle: 0, walk: 0, speed: 0, aim: 0, flash: 0, hit: 0, cooldown: 1, mag: 20, reloadT: 0, target: null, callsign: CALLSIGNS[i], lastBark: -99 };
+      return { i, slot, model, x: 0, z: 0, vx: 0, vz: 0, moving: false, faceA: 0, angle: 0, walk: 0, speed: 0, aim: 0, flash: 0, hit: 0, cooldown: 1, mag: 20, reloadT: 0, target: null, callsign: CALLSIGNS[i], lastBark: -99 };
     });
     this.reset();
   }
@@ -37,7 +38,7 @@ export class Squad {
     const p = this.game.player;
     for (const m of this.members) {
       const [rx, bz] = m.slot;
-      m.x = p.x + rx; m.z = p.z + bz; m.angle = Math.PI; m.target = null; m.mag = 20; m.reloadT = 0; m.cooldown = 1 + m.i;
+      m.x = p.x + rx; m.z = p.z + bz; m.vx = m.vz = 0; m.moving = false; m.angle = m.faceA = Math.PI; m.target = null; m.mag = 20; m.reloadT = 0; m.cooldown = 1 + m.i;
     }
   }
 
@@ -57,29 +58,38 @@ export class Squad {
       }
       if (best && !m.target) this.bark(m, 'contact', time);
       m.target = best;
-      // --- movement: hold formation slot, stop to shoot when engaging
+      // --- movement: hold formation slot, stop to shoot when engaging. Arrival steering with limited acceleration
+      // and a start / stop hysteresis, so a comrade does not stutter at the edge of its slot while the player walks
       const sx = p.x + rx * m.slot[0] - fx * m.slot[1], sz = p.z + rz * m.slot[0] - fz * m.slot[1];
       const ex = sx - m.x, ez = sz - m.z, nd = Math.hypot(ex, ez);
       const engaging = !!m.target;
       const maxSpeed = engaging ? 1.6 : (nd > 6 ? 5.5 : 3.6);
-      const step = Math.min(Math.max(0, nd - 0.4), dt * maxSpeed);
-      let moved = 0;
-      if (nd > 0.5) {
-        const ux = ex / nd * step, uz = ez / nd * step;
-        if (!g.blocked(m.x + ux, m.z, 0.35)) { m.x += ux; moved += Math.abs(ux); }
-        if (!g.blocked(m.x, m.z + uz, 0.35)) { m.z += uz; moved += Math.abs(uz); }
-        if (!moved && nd > 3) { // stuck behind cover: teleport-free catch-up by stepping along the player's trail
+      if (nd > 0.7) m.moving = true; else if (nd < 0.3) m.moving = false;
+      let tvx = 0, tvz = 0;
+      if (m.moving && nd > 1e-3) { const want = Math.min(maxSpeed, (nd - 0.25) * 2.2 + 0.4); tvx = ex / nd * want; tvz = ez / nd * want; }
+      // keep out of the player's way (soft push in the velocity, hard push only when very close)
+      const pdx = m.x - p.x, pdz = m.z - p.z, pd = Math.hypot(pdx, pdz);
+      if (pd < 1.4 && pd > 1e-3) { const k = (1.4 - pd) * 2.5 / pd; tvx += pdx * k; tvz += pdz * k; }
+      const acc = (tvx * m.vx + tvz * m.vz < 0 || Math.hypot(tvx, tvz) < Math.hypot(m.vx, m.vz)) ? 9 : 6, dvx = tvx - m.vx, dvz = tvz - m.vz, dv = Math.hypot(dvx, dvz), lim = acc * dt;
+      if (dv > lim) { m.vx += dvx / dv * lim; m.vz += dvz / dv * lim; } else { m.vx = tvx; m.vz = tvz; }
+      const x0 = m.x, z0 = m.z;
+      let ux = m.vx * dt, uz = m.vz * dt;
+      if (Math.hypot(ux, uz) > 1e-5) {
+        if (!g.blocked(m.x + ux, m.z, 0.35)) m.x += ux; else m.vx = 0;
+        if (!g.blocked(m.x, m.z + uz, 0.35)) m.z += uz; else m.vz = 0;
+        if (m.x === x0 && m.z === z0 && nd > 3) { // stuck behind cover: teleport-free catch-up by stepping along the player's trail
           const tx = m.x + (p.x - m.x) * 0.02, tz = m.z + (p.z - m.z) * 0.02;
           if (!g.blocked(tx, tz, 0.35)) { m.x = tx; m.z = tz; }
         }
-        m.walk += dt * (maxSpeed > 4 ? 7.5 : 4.4);
       }
-      // keep out of the player's way
-      const pd = Math.hypot(m.x - p.x, m.z - p.z);
-      if (pd < 1.1 && pd > 1e-3) { const k = (1.1 - pd) / pd; const nx = m.x + (m.x - p.x) * k, nz = m.z + (m.z - p.z) * k; if (!g.blocked(nx, nz, 0.35)) { m.x = nx; m.z = nz; } }
-      m.speed = lerp(m.speed, clamp(moved / Math.max(dt, 1e-4) / 2.5, 0, 1), Math.min(1, dt * 6));
-      const face = engaging ? Math.atan2(m.target.x - m.x, m.target.z - m.z) : (nd > 0.6 ? Math.atan2(ex, ez) : Math.atan2(fx, fz));
-      m.angle = lerpAngle(m.angle, face, Math.min(1, dt * 5));
+      if (pd < 0.7 && pd > 1e-3) { const k = (0.7 - pd) / pd; const nx = m.x + pdx * k, nz = m.z + pdz * k; if (!g.blocked(nx, nz, 0.35)) { m.x = nx; m.z = nz; } }
+      const vel = Math.hypot(m.x - x0, m.z - z0) / Math.max(dt, 1e-4);
+      m.walk += dt * gaitRate(vel);                 // gait phase from the actual ground speed (no skating)
+      m.speed = lerp(m.speed, clamp(vel / 2.5, 0, 1), Math.min(1, dt * 6));
+      // facing: target when engaging, travel direction while clearly moving, else the player's heading (hysteresis)
+      const face = engaging ? Math.atan2(m.target.x - m.x, m.target.z - m.z) : (vel > 0.9 || (vel > 0.4 && m.moving) ? Math.atan2(m.vx, m.vz) : Math.atan2(fx, fz));
+      m.faceA = lerpAngle(m.faceA, face, Math.min(1, dt * 6));
+      m.angle = lerpAngle(m.angle, m.faceA, Math.min(1, dt * 7));
       m.aim = lerp(m.aim, engaging ? 1 : 0, Math.min(1, dt * 4));
       // --- shooting: short aimed bursts, magazine of 20, moderate accuracy
       m.flash = Math.max(0, m.flash - dt); m.hit = Math.max(0, m.hit - dt * 5);
@@ -97,7 +107,7 @@ export class Squad {
         g.audio.remoteShot?.(Math.hypot(m.x - p.x, m.z - p.z), Math.sin(rel), { x: m.x, y: 1.45, z: m.z, guardId: 100 + m.i, friendly: true });
         e.alert = Math.max(e.alert, 6);
         if (hit) {
-          e.health -= 34; e.hit = 1;
+          e.health -= 34; e.hit = 1; e.hitX = m.x; e.hitZ = m.z;
           g.fx.blood?.(to, to.clone().sub(from).normalize());
           if (e.health <= 0 && e.alive) { e.alive = false; e.deathAt = performance.now() / 1000; e.fallDir = Math.random() < 0.5 ? 1 : -1; this.bark(m, 'down', time); }
         }
@@ -112,7 +122,7 @@ export class Squad {
       r.visible = this.enabled;
       r.position.set(m.x, 0, m.z);
       r.rotation.y = m.angle + Math.PI;
-      this.pose(m.model, { walk: m.walk, speed: m.speed, aim: m.aim, flash: m.flash, hit: m.hit, dead: 0, fallDir: 1 });
+      this.pose(m.model, { walk: m.walk, speed: m.speed, aim: m.aim, flash: m.flash, hit: m.hit, dead: 0, fallDir: 1, reload: m.reloadT > 0 ? clamp(1 - m.reloadT / 2.4, 0.001, 1) : 0 });
     }
   }
 
