@@ -55,49 +55,49 @@ export function signAtlas() {
     center('10', x + 128, y + 136, 120, '#111'); weather(g, x, y, 256, 256, r, 0.18); rects.speed10 = [x + 4, y + 4, 248, 248]; }
   // NO ACCESS – authorised personnel only (512x256)
   { const x = 256, y = 0; g.fillStyle = '#ecebe6'; g.fillRect(x, y, 512, 256);
-    g.fillStyle = '#c4161c'; g.fillRect(x, y, 512, 92); center('NO ACCESS', x + 256, y + 50, 70, '#fff');
-    center('AUTHORISED', x + 256, y + 130, 50, '#111'); center('PERSONNEL ONLY', x + 256, y + 190, 50, '#111');
+    g.fillStyle = '#c4161c'; g.fillRect(x, y, 512, 92); center('OBEHÖRIGA', x + 256, y + 50, 70, '#fff');
+    center('ÄGA EJ', x + 256, y + 138, 56, '#111'); center('TILLTRÄDE', x + 256, y + 204, 56, '#111');
     g.strokeStyle = '#111'; g.lineWidth = 6; g.strokeRect(x + 3, y + 3, 506, 250); weather(g, x, y, 512, 256, r); rects.noAccess = [x, y, 512, 256]; }
   // DANGER quay edge (512x256)
   { const x = 768, y = 0; g.fillStyle = '#f2c500'; g.fillRect(x, y, 512, 256);
-    g.fillStyle = '#111'; g.beginPath(); g.moveTo(x + 90, y + 30); g.lineTo(x + 160, y + 150); g.lineTo(x + 20, y + 150); g.closePath(); g.fill();
+    g.fillStyle = '#c4161c'; g.beginPath(); g.moveTo(x + 90, y + 30); g.lineTo(x + 160, y + 150); g.lineTo(x + 20, y + 150); g.closePath(); g.fill();
     g.fillStyle = '#f2c500'; g.beginPath(); g.moveTo(x + 90, y + 52); g.lineTo(x + 142, y + 140); g.lineTo(x + 38, y + 140); g.closePath(); g.fill();
     center('!', x + 90, y + 108, 70, '#111');
-    center('DANGER', x + 340, y + 70, 76, '#111'); center('QUAY EDGE', x + 340, y + 140, 54, '#111');
-    center('DEEP WATER – KEEP BACK', x + 256, y + 212, 36, '#111', 700); weather(g, x, y, 512, 256, r); rects.quayEdge = [x, y, 512, 256]; }
+    center('VARNING', x + 340, y + 70, 76, '#111'); center('KAJKANT', x + 340, y + 140, 62, '#111');
+    center('FALLRISK – HÅLL AVSTÅND', x + 256, y + 212, 34, '#111', 700); weather(g, x, y, 512, 256, r); rects.quayEdge = [x, y, 512, 256]; }
   // REEFER POWER 440V (512x128)
   { const x = 1280, y = 0; g.fillStyle = '#f2c500'; g.fillRect(x, y, 512, 128);
-    center('440 V  REEFER', x + 256, y + 46, 50, '#111'); center('ISOLATE BEFORE UNPLUGGING', x + 256, y + 100, 30, '#111', 700);
+    center('KYLCONTAINER – 400 V', x + 256, y + 46, 44, '#111'); center('BRYT STRÖMMEN FÖRE URKOPPLING', x + 256, y + 100, 27, '#111', 700);
     weather(g, x, y, 512, 128, r); rects.reefer = [x, y, 512, 128]; }
   // CCTV in operation (512x128) – blue
   { const x = 1280, y = 128; g.fillStyle = '#e8e8e2'; g.fillRect(x, y, 512, 128);
-    g.fillStyle = '#1f4f8f'; g.fillRect(x, y, 140, 128); center('CCTV', x + 70, y + 64, 44, '#fff');
-    center('IMAGES RECORDED', x + 326, y + 46, 40, '#111'); center('FOR SECURITY', x + 326, y + 94, 40, '#111');
+    g.fillStyle = '#1f4f8f'; g.fillRect(x, y, 140, 128); center('REC', x + 70, y + 64, 48, '#fff');
+    center('KAMERAÖVERVAKNING', x + 326, y + 46, 31, '#111'); center('BILDER SPARAS', x + 326, y + 94, 36, '#111');
     weather(g, x, y, 512, 128, r); rects.cctv = [x, y, 512, 128]; }
   // PPE mandatory (512x256) – blue mandatory sign
   { const x = 0, y = 256; g.fillStyle = '#ecebe6'; g.fillRect(x, y, 512, 256);
     g.fillStyle = '#1f5fae'; g.beginPath(); g.arc(x + 110, y + 128, 90, 0, 7); g.fill();
     g.fillStyle = '#fff'; g.beginPath(); g.arc(x + 110, y + 132, 48, Math.PI, 0); g.fill(); g.fillRect(x + 50, y + 128, 120, 14);
-    center('HI-VIS VEST AND', x + 345, y + 92, 38, '#111'); center('HELMET MUST', x + 345, y + 140, 38, '#111'); center('BE WORN', x + 345, y + 188, 38, '#111');
+    center('SKYDDSHJÄLM OCH', x + 345, y + 92, 31, '#111'); center('VARSELKLÄDER', x + 345, y + 140, 34, '#111'); center('OBLIGATORISKT', x + 345, y + 188, 34, '#111');
     weather(g, x, y, 512, 256, r); rects.ppe = [x, y, 512, 256]; }
   // BERTH 04 / max speed (512x256) – terminal blue
   { const x = 512, y = 256; g.fillStyle = '#123044'; g.fillRect(x, y, 512, 256);
-    center('BERTH', x + 256, y + 70, 56, '#e8edf0', 700); center('04', x + 256, y + 160, 120, '#f2c500');
+    center('KAJ', x + 256, y + 70, 64, '#e8edf0', 700); center('4', x + 256, y + 160, 130, '#f2c500');
     weather(g, x, y, 512, 256, r, 0.3, '0,0,0'); rects.berth = [x, y, 512, 256]; }
   // door numbers (256x256 each, white plate black number)
   ['1', '2', '3'].forEach((n, i) => { const x = 1024 + i * 256, y = 256; g.fillStyle = '#e4e3dc'; g.fillRect(x, y, 256, 256);
-    g.fillStyle = '#111'; g.fillRect(x, y, 256, 40); center('DOOR', x + 128, y + 21, 30, '#e4e3dc'); center(n, x + 128, y + 150, 170, '#111');
+    g.fillStyle = '#111'; g.fillRect(x, y, 256, 40); center('PORT', x + 128, y + 21, 30, '#e4e3dc'); center(n, x + 128, y + 150, 170, '#111');
     weather(g, x, y, 256, 256, r); rects['door' + n] = [x, y, 256, 256]; });
   // green fire exit (256x128)
-  { const x = 1792, y = 256; g.fillStyle = '#108a3c'; g.fillRect(x, y, 256, 128); center('EXIT', x + 150, y + 66, 64, '#fff');
+  { const x = 1792, y = 256; g.fillStyle = '#108a3c'; g.fillRect(x, y, 256, 128); center('NÖDUT-', x + 150, y + 44, 38, '#fff'); center('GÅNG', x + 150, y + 90, 38, '#fff');
     g.fillStyle = '#fff'; g.fillRect(x + 22, y + 34, 44, 60); g.fillStyle = '#108a3c'; g.fillRect(x + 30, y + 42, 28, 52); rects.exit = [x, y, 256, 128]; }
   // fire hose / extinguisher (256x128) red
-  { const x = 1792, y = 384; g.fillStyle = '#b4141a'; g.fillRect(x, y, 256, 128); center('FIRE', x + 128, y + 44, 48, '#fff'); center('HOSE REEL', x + 128, y + 96, 34, '#fff', 700); rects.fire = [x, y, 256, 128]; }
+  { const x = 1792, y = 384; g.fillStyle = '#b4141a'; g.fillRect(x, y, 256, 128); center('BRANDPOST', x + 128, y + 44, 44, '#fff'); center('BRANDSLANG', x + 128, y + 96, 36, '#fff', 700); rects.fire = [x, y, 256, 128]; }
   // container stack row plates (256x128): A..H style row markers
-  ['ROW 01', 'ROW 02', 'ROW 03', 'ROW 04'].forEach((t, i) => { const x = 1024 + i * 256, y = 512; g.fillStyle = '#f2c500'; g.fillRect(x, y, 256, 128);
+  ['RAD 01', 'RAD 02', 'RAD 03', 'RAD 04'].forEach((t, i) => { const x = 1024 + i * 256, y = 512; g.fillStyle = '#f2c500'; g.fillRect(x, y, 256, 128);
     center(t, x + 128, y + 66, 64, '#111'); weather(g, x, y, 256, 128, r); rects['row' + (i + 1)] = [x, y, 256, 128]; });
   // electrical cabinet warning plate (256x128)
-  { const x = 0, y = 512; g.fillStyle = '#f2c500'; g.fillRect(x, y, 256, 128); center('DANGER', x + 128, y + 40, 44, '#111'); center('400 V', x + 128, y + 92, 52, '#111'); rects.volt = [x, y, 256, 128]; }
+  { const x = 0, y = 512; g.fillStyle = '#f2c500'; g.fillRect(x, y, 256, 128); center('HÖGSPÄNNING', x + 128, y + 40, 34, '#111'); center('LIVSFARA', x + 128, y + 92, 48, '#111'); rects.volt = [x, y, 256, 128]; }
   _signs = { texture: tex(c), rects, size: [CW, CH] };
   return _signs;
 }
@@ -121,7 +121,7 @@ export function paintAtlas() {
   { const x = 1024, y = 0; g.fillStyle = W; g.fillRect(x + 104, y + 180, 48, 310);
     g.beginPath(); g.moveTo(x + 128, y + 20); g.lineTo(x + 220, y + 200); g.lineTo(x + 36, y + 200); g.closePath(); g.fill(); rects.arrow = [x, y, 256, 512]; }
   // STOP (512x256)
-  { const x = 1280, y = 0; g.fillStyle = W; g.font = '900 200px Arial Narrow, Arial, sans-serif'; g.fillText('STOP', x + 256, y + 136); rects.stop = [x, y, 512, 256]; }
+  { const x = 1280, y = 0; g.fillStyle = W; g.font = '900 200px Arial Narrow, Arial, sans-serif'; g.fillText('STOPP', x + 256, y + 136); rects.stop = [x, y, 512, 256]; }
   // SLOW 10 (512x256)
   { const x = 1280, y = 256; g.fillStyle = W; g.font = '900 150px Arial Narrow, Arial, sans-serif'; g.fillText('10', x + 256, y + 92); g.font = '900 80px Arial, sans-serif'; g.fillText('km/h', x + 256, y + 205); rects.slow = [x, y, 512, 256]; }
   // yellow keep-clear hatching (512x512) at 0,512

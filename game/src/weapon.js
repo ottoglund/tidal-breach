@@ -25,12 +25,12 @@ export class Weapon {
   constructor(scene) {
     this.scene = scene;
     const mats = {
-      steel: vm('gunmetal', { roughness: 0.62 }, 1.0, { vertexColors: true, envMapIntensity: 1.25 }),      // black anodised, bare metal on edges
-      poly: vm('polymer', { roughness: 0.92 }, 1.25, { vertexColors: true, envMapIntensity: 0.8 }),         // matte polymer
-      glove: vm('glove_green', { tile: 0.12, roughness: 1 }, 1.35, { envMapIntensity: 0.6 }),
-      sleeve: vm('camo_m90', { tile: 0.45, roughness: 1 }, 1.25, { envMapIntensity: 0.5 }),
-      webbing: vm('khaki_webbing', { tile: 0.15 }, 1.3, { envMapIntensity: 0.5 }),
-      sleeveHem: vm('camo_m90', { tile: 0.2, roughness: 1 }, 0.8, { envMapIntensity: 0.4 }),
+      steel: vm('gunmetal', { roughness: 0.5 }, 2.2, { vertexColors: true, envMapIntensity: 1.25 }),      // black anodised, bare metal on edges
+      poly: vm('polymer', { roughness: 0.9 }, 2.4, { vertexColors: true, envMapIntensity: 0.8 }),         // matte polymer
+      glove: vm('glove_green', { tile: 0.12, roughness: 1 }, 1.9, { envMapIntensity: 0.6 }),
+      sleeve: vm('camo_m90', { tile: 0.45, roughness: 1 }, 1.8, { envMapIntensity: 0.5 }),
+      webbing: vm('khaki_webbing', { tile: 0.15 }, 1.9, { envMapIntensity: 0.5 }),
+      sleeveHem: vm('camo_m90', { tile: 0.2, roughness: 1 }, 1.2, { envMapIntensity: 0.4 }),
       dark: new THREE.MeshStandardMaterial({ color: 0x060606, roughness: 0.8, metalness: 0.0 }),
       rubber: new THREE.MeshStandardMaterial({ color: 0x141413, roughness: 0.95, metalness: 0.0 }),
     };
@@ -130,14 +130,14 @@ export class Weapon {
 
     // ---- viewmodel lighting: hemisphere + warm key (follows the lamps near the player) + cool rim + wet-quay bounce ----
     this.hemi = new THREE.HemisphereLight(0x6a7888, 0x241f1a, 1.0); scene.add(this.hemi);
-    this.ambient = new THREE.AmbientLight(0x303640, 0.3); scene.add(this.ambient);
+    this.ambient = new THREE.AmbientLight(0x3a4150, 0.6); scene.add(this.ambient);
     this.key = new THREE.DirectionalLight(0xffc890, 1.0); this.key.position.set(0.55, 1, 0.45); scene.add(this.key);
     this.rim = new THREE.DirectionalLight(0x9fb8d6, 1.1); this.rim.position.set(-0.8, 0.35, -0.7); scene.add(this.rim);
     this.bounce = new THREE.DirectionalLight(0x8c7a66, 0.35); this.bounce.position.set(0.1, -1, 0.3); scene.add(this.bounce);
 
     this.ads = 0; this.recoil = 0; this.recoilV = 0; this.kickRot = 0; this.swayX = 0; this.swayY = 0; this.flashT = 0; this.sprint = 0;
     // hip: low right; ADS: red-dot centred on the camera axis, tube ~9 cm in front of the eye
-    this.hip = new THREE.Vector3(0.125, -0.125, -0.25);
+    this.hip = new THREE.Vector3(0.1, 0.012, -0.4);
     this.aim = new THREE.Vector3(0, 0, -0.2);
     this._p = new THREE.Vector3(); this._q = new THREE.Vector3(); this._m = new THREE.Matrix4();
   }
@@ -251,13 +251,13 @@ export class Weapon {
 
     // lighting: key colour/strength follow the lamps near the player; rim + hemisphere keep a readable form
     const lvl = Math.min(1.5, Math.max(0, s.lightLevel));
-    this.key.intensity = 0.55 + lvl * 1.5;
+    this.key.intensity = 1.0 + lvl * 2.2;
     const lc = s.lightColor, mx = Math.max(lc.r, lc.g, lc.b, 1e-3);
     _c.setRGB(lc.r / mx, lc.g / mx, lc.b / mx).lerp(_warm, 0.45);
     this.key.color.copy(_c);
-    this.hemi.intensity = 0.8 + lvl * 0.35;
-    this.rim.intensity = 0.9 + lvl * 0.3;
-    this.scene.environmentIntensity = 0.75 + lvl * 0.35;
+    this.hemi.intensity = 1.5 + lvl * 0.5;
+    this.rim.intensity = 1.8 + lvl * 0.5;
+    this.scene.environmentIntensity = 1.2 + lvl * 0.4;
     this.dot.visible = a > 0.3;
   }
 }

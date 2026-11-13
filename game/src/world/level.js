@@ -233,7 +233,7 @@ export function buildLevel(scene, quality) {
   B.add(M.clad, box(16, 0.3, 124), xform(WX - 8, WH + 1.2, -26, 0, 0, 0.12)); // roof
   for (let z = 26; z > -86; z -= 20) B.add(M.galv, cyl(0.06, 0.06, WH, 10), xform(WX + 0.14, WH / 2, z)); // downpipes
   // sign (canvas texture)
-  const sign = makeSign('NORTH SEA TERMINAL 04', '#d9dcdc', '#1d2a33', 2048, 256);
+  const sign = makeSign('HAMNTERMINAL 4', '#d9dcdc', '#1d2a33', 2048, 256);
   const sm = new THREE.Mesh(new THREE.PlaneGeometry(22, 2.75), new THREE.MeshStandardMaterial({ map: sign, roughness: 0.5, emissive: 0xffffff, emissiveMap: sign, emissiveIntensity: 0.25 }));
   sm.position.set(WX + 0.06, 10.4, -12); sm.rotation.y = Math.PI / 2; root.add(sm);
   // wall-pack lights (sodium)
@@ -383,7 +383,7 @@ export function buildLevel(scene, quality) {
   EX.add(markMat, plane(0.25, 5), xform(EXTRACT.x - 2.5, 0.007, EXTRACT.z, 0, -Math.PI / 2));
   EX.add(markMat, plane(0.25, 5), xform(EXTRACT.x + 2.5, 0.007, EXTRACT.z, 0, -Math.PI / 2));
   EX.build(root).forEach(m => { m.castShadow = false; m.layers.set(1); });
-  const exSign = makeSign('EVAC / PIER 04', '#9ff0e3', '#0f2026', 1024, 160);
+  const exSign = makeSign('UPPSAMLINGSPLATS / KAJ 4', '#9ff0e3', '#0f2026', 1024, 160);
   const es = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.7), new THREE.MeshStandardMaterial({ map: exSign, emissive: 0xffffff, emissiveMap: exSign, emissiveIntensity: 0.6, roughness: 0.6 }));
   es.position.set(EXTRACT.x, 1.6, 33.25); es.rotation.y = Math.PI; root.add(es);
   B.add(M.galv, cyl(0.04, 0.04, 1.7, 8), xform(EXTRACT.x - 2, 0.85, 33.3));
@@ -401,7 +401,9 @@ function makeSign(text, fg, bg, w, h) {
   const g = c.getContext('2d');
   g.clearRect(0, 0, w, h); g.fillStyle = bg; g.fillRect(0, 0, w, h);
   g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.font = `900 ${Math.round(h * 0.62)}px Arial, Helvetica, sans-serif`;
+  let fs = Math.round(h * 0.62);
+  g.font = `900 ${fs}px Arial, Helvetica, sans-serif`;
+  while (g.measureText(text).width > w * 0.94 && fs > 8) { fs -= 4; g.font = `900 ${fs}px Arial, Helvetica, sans-serif`; }
   g.fillText(text, w / 2, h / 2 + 4);
   // weathering: speckle + streaks
   for (let i = 0; i < w * h / 180; i++) { g.fillStyle = `rgba(20,20,20,${Math.random() * 0.25})`; g.fillRect(Math.random() * w, Math.random() * h, 2, 2 + Math.random() * 10); }

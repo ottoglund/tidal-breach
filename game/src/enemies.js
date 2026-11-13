@@ -20,7 +20,7 @@ let shared = null;
 function materials() {
   if (shared) return shared;
   shared = {
-    uniform: mat('camo_emr', { tile: 0.42, color: 0x9a9a92 }),
+    uniform: mat('camo_emr', { tile: 0.42, color: 0x929a98 }),
     vest: mat('ratnik_green', { tile: 0.35 }),
     knit: mat('olive_knit', { tile: 0.12 }), // olive balaclava
     glove: mat('fabric_glove', { tile: 0.15, color: 0x5a5a5a }),   // black rubber / hard shell parts
