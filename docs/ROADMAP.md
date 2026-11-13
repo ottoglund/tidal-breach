@@ -22,6 +22,7 @@ Status: **implemented, partly tested, not accepted** (needs real-device review a
 ## M2 — FPS feel and adversaries
 - [~] Weapon: Ak 5C-style carbine with see-through Aimpoint-style red dot (no HUD crosshair in ADS), recoil spring, sway, bob, sprint pose, magazine-change reload, muzzle flash light, tracers, impacts/decals, synthesized layered audio with reverb. *Implemented; needs hands-on feel review.*
 - [~] Guards: EMR-style digital camo, AK-74M / AKM, two-bone IK grip, walk/aim/flinch/death animation. AI logic unchanged from v0.1 (sight lines and pathing still basic).
+- [~] Close-range soldier realism pass (2-6 m): balaclava with a real eye slot and skin head, glasses frame and stylised lens reflection, hem / seams / stronger fold bunching, bloused trouser hems, thicker rig with metal and polymer hardware (two extra material groups: `skin`, `metal`), wet-shoulder and mud shading in rest-pose space, richer idle (breathing, weight shift, glances, aim sway). *Implemented; software-GPU renders only, not accepted; see docs/ACCEPTANCE.md.*
 - [x] Projectile hits, collisions and damage covered by `tests/test_game_v2.py` (deterministic `step()` hook).
 
 **Gate:** playable combat and no regression in three-node objective chain.

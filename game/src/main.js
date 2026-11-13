@@ -10,6 +10,7 @@ import { Audio } from './audio.js';
 import { Game } from './game.js';
 import { installFog, attachFogUniforms, updateFogLamps } from './fog.js';
 import { lodManager } from './world/props/lod.js';
+import { createSoldier, poseSoldier } from './characters/squad.js';
 
 installFog(); // must run before any material compiles
 
@@ -183,6 +184,18 @@ async function boot() {
         pick: (x, y) => { const rc = new THREE.Raycaster(); rc.layers.enableAll(); rc.setFromCamera(new THREE.Vector2(x, y), pipe.camera); return rc.intersectObjects(scene.children, true).slice(0, 4).map(h => [h.object.type, h.object.material?.type, h.object.material?.name || '', h.distance.toFixed(2), h.point.toArray().map(v => v.toFixed(2)).join(','), h.object.parent?.type]); },
         state2: () => ({ flashT: weapon.flashT, flashVis: weapon.flash.visible, fx: game.fx.items.length, fxLight: game.fx.light.intensity, decals: game.fx.decals.length, keys: Object.keys(game.keys).filter(k => game.keys[k]), touch: game.touch }),
         debug: () => { const out = []; pipe.weaponScene.traverse(o => { if (o.isMesh && o.visible) { const m = o.material; out.push([o.geometry.type, m.type, m.map ? 'map' : 'nomap', m.color && m.color.getHexString(), o.getWorldPosition(new THREE.Vector3()).toArray().map(v => v.toFixed(2)).join(',')]); } }); return out; },
+        // QA close-up helper: place one posed soldier at a fixed spot (replaces the previous one). o: {side, weapon, helmet, x, z, yaw, aim, seed, time, clear}
+        soldier: (o = {}) => {
+          if (window.__qaSoldier) { scene.remove(window.__qaSoldier.root); if (window.__qaSoldier.qaLight) scene.remove(window.__qaSoldier.qaLight); window.__qaSoldier = null; }
+          if (o.clear) return null;
+          const g = createSoldier({ side: o.side || 'opfor', weapon: o.weapon, helmet: o.helmet });
+          g.root.rotation.order = 'YXZ'; g.root.position.set(o.x || 0, 0, o.z || 0); g.root.rotation.y = o.yaw ?? Math.PI;
+          g.s.seed = o.seed ?? 3.1; g.s.time = o.time ?? 5;
+          for (let i = 0; i < 3; i++) poseSoldier(g, { walk: 0, speed: 0, aim: o.aim || 0, flash: 0, hit: 0, dead: 0, fallDir: 1 });
+          if (o.light) { const L = new THREE.PointLight(0xffe2bd, o.light, 14, 2); L.position.set((o.x || 0) + 1.6, 2.6, (o.z || 0) + 2.4); scene.add(L); g.qaLight = L; }
+          scene.add(g.root); window.__qaSoldier = g;
+          return g.mesh.geometry.index.count / 3;
+        },
         renderFrame: (t = 10) => { const t0 = performance.now(); renderAt(t, 0.016); renderer.getContext().finish(); return performance.now() - t0; },
       }), configurable: false,
     });

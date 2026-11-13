@@ -38,22 +38,51 @@ function patchTexture() {
   return t;
 }
 
+
+/**
+ * Lens reflections: on top of the baked environment (scene.environment, dark at night), add a stylised view-dependent
+ * reflection: a sky/horizon gradient plus two lamp-like highlights (a mast lamp and a window-lit warehouse direction),
+ * weighted by Fresnel. The lenses are curved, so the highlights streak and slide across them as the head turns or the
+ * camera moves. This is NOT a captured reflection of the actual scene; it is a deliberate stylised stand-in.
+ */
+function lensShading(m) {
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+      {
+        vec3 Rv = reflect(-normalize(vViewPosition), normalize(normal));
+        vec3 Rw = normalize((vec4(Rv, 0.0) * viewMatrix).xyz);
+        float nv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
+        float fr = 0.05 + 0.95 * pow(1.0 - nv, 4.0);
+        vec3 sky = vec3(0.05, 0.065, 0.085) * (0.35 + 0.9 * smoothstep(-0.25, 0.9, Rw.y)) + vec3(0.12, 0.09, 0.06) * exp(-abs(Rw.y) * 14.0);
+        float lamp1 = pow(max(dot(Rw, normalize(vec3(-0.35, 0.5, 0.8))), 0.0), 140.0);
+        float lamp2 = pow(max(dot(Rw, normalize(vec3(0.7, 0.2, -0.65))), 0.0), 90.0);
+        outgoingLight += (sky * (0.5 + 3.5 * fr) + (lamp1 * 9.0 + lamp2 * 4.0) * vec3(1.0, 0.82, 0.6)) * (0.35 + 0.65 * fr) * 0.6;
+      }
+      #include <opaque_fragment>`);
+  };
+  m.customProgramCacheKey = () => 'lens1';
+  return m;
+}
+
 function materials() {
   if (shared) return shared;
   shared = {
-    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x8c9694 }), { dirt: 0.55, sheen: 0.1, soak: 0.35 }),
-    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0x9aa397 }), { dirt: 0.55, sheen: 0.1, soak: 0.35 }),
-    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0x8f9a88 }), { dirt: 0.4, sheen: 0.06, soak: 0.3, wrinkle: 0.3 }),
-    knit: fabricShading(mat('olive_knit', { tile: 0.12, color: 0xa5a898 }), { dirt: 0.2, sheen: 0.18, soak: 0.25, wrinkle: 0.1 }),
-    glove: mat('fabric_glove', { tile: 0.15, color: 0x5a5a5a }),   // black rubber / hard shell parts
+    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x8c9694 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
+    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0x9aa397 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
+    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0x8f9a88 }), { dirt: 0.45, sheen: 0.08, soak: 0.3, wrinkle: 0.3, rough: 0.2, wetTop: 0.5 }),
+    knit: fabricShading(mat('olive_knit', { tile: 0.12, color: 0xa5a898 }), { dirt: 0.2, sheen: 0.22, soak: 0.25, wrinkle: 0.1, rough: 0.15, wetTop: 0.55, mudGloss: 0.2 }),
+    // satin nylon / polymer hardware (buckles, soles, glove shells, strap tails): smoother than cloth, scuffed at the bottom
+    glove: fabricShading(mat('polymer', { tile: 0.25, color: 0x4a4c50, roughness: 0.85 }), { dirt: 0.7, sheen: 0.0, soak: 0.2, wrinkle: 0.0, rough: 0.35, wetTop: 0.3, mudGloss: 0.5 }),
+    metal: mat('gunmetal', { tile: 0.25, color: 0xc4c4c0, roughness: 0.75 }),   // buckles, snaps, D-rings, slides, eyelets
+    skin: fabricShading(plainMat(0x5e4538, 0.66), { dirt: 0.0, sheen: 0.25, soak: 0.1, wrinkle: 0.0, rough: 0.25, wetTop: 0.5, mudGloss: 0 }),
     gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
-    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x5a524c }), { dirt: 1.0, sheen: 0.0, soak: 0.25, wrinkle: 0.2 }),
+    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x4b4540, roughness: 1.2 }), { dirt: 1.0, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3 }),
     gun: mat('gunmetal'),
     wood: mat('ak_wood', { tile: 0.3, color: 0xa39c96 }),
     poly: mat('polymer', { tile: 0.25 }),
     plum: mat('plum_polymer', { tile: 0.2 }),
     patch: new THREE.MeshStandardMaterial({ map: patchTexture(), roughness: 0.9, metalness: 0 }),
-    visor: new THREE.MeshPhysicalMaterial({ color: 0x07080a, roughness: 0.06, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.6 }), // tinted lenses
+    visor: lensShading(new THREE.MeshPhysicalMaterial({ color: 0x0d0e10, roughness: 0.04, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 3.0 })), // tinted, semi-mirrored lenses
   };
   return shared;
 }
@@ -239,7 +268,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet } = {}) {
   weapon = weapon || (hv ? 'ak4c' : 'ak74');
   const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
   const root = new THREE.Group();
-  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch }, kind);
+  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skin, metal: S.metal }, kind);
   root.add(mesh);
   const rifle = buildRifle(S, weapon);
   root.add(rifle);
@@ -355,8 +384,11 @@ function poseAlive(g, st, dt) {
   const rate = Math.max(s.rate, 1.5);
   const v = sp * 2.3;
   const D = clamp(v * duty * Math.PI * 2 / rate, 0, 0.95) * m;
-  const breath = Math.sin(t * 1.65 + s.seed);
-  const shift = Math.sin(t * 0.33 + s.seed * 1.7);
+  // breathing: ~15/min with slow rate drift and a lopsided inhale/exhale; weight shift: two incommensurate slow sines
+  const bp = t * 1.65 + s.seed + 0.5 * Math.sin(t * 0.23 + s.seed * 2.0);
+  const breath = Math.sin(bp) * 0.85 + 0.22 * Math.sin(2 * bp + 0.7);
+  const shift = Math.sin(t * 0.33 + s.seed * 1.7) * 0.8 + 0.3 * Math.sin(t * 0.87 + s.seed * 0.6);
+  const sway = Math.sin(t * 0.21 + s.seed * 3.3);
   const hit = clamp(st.hit, 0, 1);
   if (hit > s.lastHit + 0.3) s.hitSide = Math.random() < 0.5 ? -1 : 1;
   s.lastHit = hit;
@@ -367,7 +399,7 @@ function poseAlive(g, st, dt) {
   const bobW = Math.cos(2 * (ph - midR));
   const hy = 0.97 - 0.022 - 0.045 * A - 0.06 * run * m + m * (0.022 * (1 - run) * bobW - 0.025 * run * bobW) + 0.004 * (1 - m) * breath * 0.3;
   const hx = m * 0.022 * (1 - 0.5 * run) * Math.cos(ph - midR) + (1 - m) * 0.022 * shift;
-  const hz = 0.02 * A;
+  const hz = 0.02 * A + (1 - m) * 0.007 * sway;
   const swingR = Math.PI * 2 * (duty + (1 - duty) / 2);
   const twist = m * (0.1 + 0.06 * run) * Math.cos(ph - swingR);
   const blade = -0.38 * A * (1 - 0.6 * m);
@@ -376,18 +408,23 @@ function poseAlive(g, st, dt) {
   // ---- spine / chest (counter-rotate the gait twist; square the shoulders when aiming)
   qE(-0.02 - 0.05 * A + hit * 0.12, -twist * 0.45 - blade * 0.2 + hit * 0.15 * s.hitSide, -0.02 * shift * (1 - m), B[BI.spine].quaternion);
   qE(0.01 * breath * (1 - 0.5 * A) - 0.03 * A - 0.04 * run * m + hit * 0.18 + kick * 0.04, -twist * 0.5 - blade * 0.2 + hit * 0.2 * s.hitSide, 0, B[BI.chest].quaternion);
-  B[BI.chest].position.y += 0.0025 * breath;
+  B[BI.chest].position.y += 0.0045 * breath;
+  B[BI.chest].position.z += -0.003 * breath * (1 - 0.5 * A);   // rib cage swells forward on the inhale
   // clavicles: slight shrug/protraction when shouldering
-  qE(0, 0.06 * A, 0.3 * A + 0.01 * breath, B[BI.clavR].quaternion);
-  qE(0, -0.12 - 0.3 * A, -0.04 * A - 0.01 * breath, B[BI.clavL].quaternion);
+  qE(0, 0.06 * A, 0.3 * A + 0.022 * breath, B[BI.clavR].quaternion);       // shoulders lift a touch on the inhale
+  qE(0, -0.12 - 0.3 * A, -0.04 * A - 0.022 * breath, B[BI.clavL].quaternion);
   // neck flexes forward into the cheek weld
   qE(-0.04 - 0.72 * A + hit * 0.25, 0, -0.14 * A, B[BI.neck].quaternion);
   fkFrom(g, 0);
 
   // ---- head: gaze-stabilised in model space
-  const scan = (1 - A) * (0.45 * Math.sin(t * 0.27 + s.seed) + 0.15 * Math.sin(t * 0.71 + s.seed * 3));
-  const lookPitch = lerp(-0.1 + 0.03 * Math.sin(t * 0.4), -0.2, A) + hit * 0.35;
-  setModelRot(g, BI.head, qE(lookPitch, scan + A * 0.04, -0.2 * A, _q2));
+  // gaze: slow scan + small glances that snap to a new heading every few seconds, plus a faint breathing nod
+  const gk = t / 3.7 + s.seed, gi = Math.floor(gk), gf = sstep(0.82, 1.0, gk - gi);
+  const gh = k => Math.sin(k * 127.1 + s.seed * 311.7) * 43758.5453, gr = k => (gh(k) - Math.floor(gh(k))) * 2 - 1;
+  const glanceY = lerp(gr(gi), gr(gi + 1), gf) * 0.32, glanceP = lerp(gr(gi + 17), gr(gi + 18), gf) * 0.08;
+  const scan = (1 - A) * (0.3 * Math.sin(t * 0.27 + s.seed) + 0.1 * Math.sin(t * 0.71 + s.seed * 3) + glanceY * (1 - m));
+  const lookPitch = lerp(-0.1 + 0.03 * Math.sin(t * 0.4) + glanceP * (1 - m) + 0.008 * breath, -0.2, A) + hit * 0.35;
+  setModelRot(g, BI.head, qE(lookPitch + A * 0.006 * Math.sin(t * 1.9), scan + A * (0.04 + 0.01 * Math.sin(t * 0.7 + s.seed)), -0.2 * A + (1 - A) * 0.025 * Math.sin(t * 0.27 + s.seed), _q2));
   fkFrom(g, BI.head + 1);
 
   // ---- legs: foot-planted gait blended with an idle / bladed stance
@@ -430,7 +467,7 @@ function poseAlive(g, st, dt) {
   _m.compose(_a.copy(BUTT_LOW).sub(_b.copy(BUTT).applyQuaternion(_q)), _q, UNIT);
   _m2.multiplyMatrices(ch, _m);
   const pLow = _pLow.setFromMatrixPosition(_m2), qLow = _qLow.setFromRotationMatrix(_m2);
-  const qAim = qE(0.012 * breath + kick * 0.06 + hit * 0.25, 0.01 * Math.sin(t * 0.9 + s.seed), 0, _qAim);
+  const qAim = qE(0.012 * breath + 0.004 * Math.sin(t * 1.7 + 1.0) + 0.003 * Math.sin(t * 0.37 + s.seed) + kick * 0.06 + hit * 0.25, 0.006 * Math.sin(t * 0.9 + s.seed) + 0.004 * Math.sin(t * 2.3 + s.seed * 2) + 0.004 * Math.sin(t * 0.29), 0, _qAim);   // figure-8 sway + slow drift
   const pAim = _pAim.copy(EYE).applyMatrix4(s.mm[BI.head]).sub(_b.set(0, 0.104, 0.2 - kick * 0.03).applyQuaternion(qAim));
   const rq = g.rifle.quaternion.slerpQuaternions(qLow, qAim, A);
   g.rifle.position.lerpVectors(pLow, pAim, A);

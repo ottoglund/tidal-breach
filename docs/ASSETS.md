@@ -44,6 +44,8 @@ the set's real tile size (physically scaled slopes).
 | ratnik_green, boot_leather | albedo, normal, orm | soldier rigs/pouches (olive cordura with 25 mm stitched MOLLE/PALS webbing rows), boots (dark pebbled leather with creases); used by OPFOR and Home Guard soldiers |
 | ak_wood, plum_polymer | albedo, normal, orm | AK furniture (dark reddish-brown laminated birch, satin; plum polymer) |
 
+Soldier materials reuse the sets above; no new texture files were added for the close-range soldier pass. Additional soldier surfaces are shader-/material-only: skin (flat dark tone, `plainMat`), metal hardware (`gunmetal` set, recoloured), satin polymer hardware (`polymer` set, recoloured) and the sunglass lenses (physical material plus a stylised procedural reflection in `game/src/enemies.js`, not a captured or photographic reflection).
+
 Soldier insignia (Swedish flag, generic dark "HV" shield) are drawn at runtime on a canvas in `game/src/enemies.js` (original simple graphics, no copied artwork).
 | water | normal | harbour water ripples |
 | puddles | mask | world-scale puddle / wetness distribution |

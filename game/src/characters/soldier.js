@@ -9,7 +9,9 @@
 //
 // All geometry is original procedural work (no imported assets).
 import * as THREE from 'three';
-import { box, rcyl, cyl } from '../geo.js';
+import { box as boxGeo, rcyl, cyl } from '../geo.js';
+// tiny parts (zipper pulls, tabs, stitched edges) stay plain 12-triangle boxes: a bevel would be sub-pixel
+const box = (w, h, d, r) => (Math.min(w, h, d) < 0.016 ? boxGeo(w, h, d, 0) : boxGeo(w, h, d, r));
 
 // name, parent, rest position in model space (metres)
 export const BONE_DEFS = [
@@ -37,7 +39,7 @@ export const BI = Object.fromEntries(BONE_DEFS.map(([n], i) => [n, i]));
 export const LEN = { upper: 0.30, fore: 0.265, thigh: 0.44, shin: 0.405 };
 
 // material group order of the skinned mesh
-export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove', 'patch'];
+export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove', 'patch', 'skin', 'metal'];
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const AX = V(1, 0, 0), NZ = V(0, 0, -1), PY = V(0, 1, 0), PZ = V(0, 0, 1);
@@ -49,7 +51,7 @@ class SkinBuilder {
    * Loft a closed tube through rings. ring: {c, ax, az, rx, rf, rb, p, w:[[bone,weight],..]}
    * cross-section point(a) = c + ax*rx*cos(a) + az*(sin(a)>0 ? rf : rb)*sin(a)  (super-ellipse exponent p)
    */
-  tube(key, rings, N, wfn, shape) {
+  tube(key, rings, N, wfn, shape, skip) {
     const G = this.g.get(key), base = G.pos.length / 3;
     const P = [];
     const tmp = new THREE.Vector3();
@@ -115,6 +117,7 @@ class SkinBuilder {
     const R = N + 1;
     const idx = [];
     for (let i = 0; i < rings.length - 1; i++) for (let j = 0; j < N; j++) {
+      if (skip && skip(i, j, rings)) continue;            // cut-out (e.g. the balaclava eye slot)
       const a = base + i * R + j, b = a + 1, c = a + R, d = c + 1;
       idx.push(a, c, b, b, c, d);
     }
@@ -229,6 +232,15 @@ function fold(pt, r, a, o) {
   pt.x += (ox / l) * d; pt.z += (oz / l) * d;
 }
 
+/** Raised seam / piping: a thin ridge along ring angle a0 (radial push, narrow angular width). */
+function seam(pt, r, a, a0, amp, w = 0.16) {
+  const d = Math.abs(((a - a0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+  const k = Math.exp(-(d * d) / (w * w));
+  if (k < 0.02) return;
+  const ox = pt.x - r.c.x, oz = pt.z - r.c.z, l = Math.hypot(ox, oz) || 1;
+  pt.x += (ox / l) * amp * k; pt.z += (oz / l) * amp * k;
+}
+
 // ---------------------------------------------------------------- body parts
 function torso(B) {
   const { hips, spine, chest, neck, clavR, clavL } = BI;
@@ -277,42 +289,86 @@ function torso(B) {
     const s = Math.sin(a);
     if (pt.y > 1.2 && pt.y < 1.44 && s < 0) pt.z -= 0.008 * Math.pow(Math.abs(Math.cos(a * 2)), 3) * -s;
     // jacket bunching above the belt and a gathered hem below it
-    fold(pt, r, a, { y0: 1.125, h: 0.032, f: 17, amp: 0.0045, tilt: 2 });
-    fold(pt, r, a, { y0: 0.965, h: 0.03, f: 16, amp: 0.0045, tilt: -3, ph: 1.3 });
+    fold(pt, r, a, { y0: 1.125, h: 0.034, f: 15, amp: 0.011, tilt: 2 });
+    fold(pt, r, a, { y0: 1.09, h: 0.07, f: 7, amp: 0.004, tilt: -2, ph: 0.6 });
+    fold(pt, r, a, { y0: 0.965, h: 0.03, f: 14, amp: 0.011, tilt: -3, ph: 1.3 });
+    seam(pt, r, a, 0, 0.0028); seam(pt, r, a, Math.PI, 0.0028);                          // side seams
+    seam(pt, r, a, -Math.PI / 2, 0.0022, 0.1);                                           // centre-back seam (az faces -Z; this is the back)
     // armpit creases where the sleeve meets the body
     fold(pt, r, a, { y0: 1.37, h: 0.04, f: 16, amp: 0.003, a0: 0, aw: 6, tilt: 1 });
     fold(pt, r, a, { y0: 1.37, h: 0.04, f: 16, amp: 0.003, a0: Math.PI, aw: 6, tilt: 1 });
   });
+  // turned and stitched jacket hem: a thick rolled band over the trouser seat, with a drawcord toggle
+  const hemR = [[0.936, 0.0, 0.0], [0.943, 0.0075, 0.0], [0.958, 0.0095, 0.0], [0.974, 0.0085, 0.0], [0.982, 0.004, 0.0]].map(([y, d]) => {
+    const t = y - 0.95;
+    return ring(V(0, y, 0), 0.178 + t * 0.23 + d, 0.112 + t * 0.22 + d, 0.128 + t * 0.06 + d, [[hips, 0.82], [spine, 0.18]], 2.6);
+  });
+  B.tube('camo', hemR, 32, null, (pt, i, a, r) => {
+    fold(pt, r, a, { y0: 0.958, h: 0.02, f: 38, amp: 0.0022, tilt: 4 });
+    pt.y -= 0.004 * Math.max(0, Math.sin(a)) * Math.sin(a * 3);
+  });
+  B.rigid('black', box(0.012, 0.022, 0.012, 0.004), xf(0.1, 0.935, -0.12, 0.7), hips);
+  B.rigid('black', box(0.012, 0.022, 0.012, 0.004), xf(-0.1, 0.935, -0.12, -0.7), hips);
 }
 
+// ---- head: knit balaclava over a skin head. Front of the face is +sin(a) (toward -Z).
+const HEAD_H = [
+  [1.47, 0.052, 0.05, 0.05, 0.012, [[BI.neck, 0.5], [BI.chest, 0.5]]],
+  [1.52, 0.053, 0.051, 0.052, 0.01, [[BI.neck, 1]]],
+  [1.568, 0.054, 0.054, 0.054, 0.006, [[BI.neck, 0.7], [BI.head, 0.3]]],
+  [1.6, 0.06, 0.074, 0.062, 0.0, [[BI.neck, 0.3], [BI.head, 0.7]]],
+  [1.622, 0.066, 0.079, 0.066, 0.0, [[BI.neck, 0.2], [BI.head, 0.8]]],
+  [1.64, 0.068, 0.094, 0.075, 0.0, [[BI.head, 1]]],
+  [1.665, 0.071, 0.1, 0.088, 0.0, [[BI.head, 1]]],
+  [1.695, 0.075, 0.104, 0.096, 0.0, [[BI.head, 1]]],
+  [1.725, 0.078, 0.101, 0.1, 0.0, [[BI.head, 1]]],
+  [1.755, 0.079, 0.099, 0.1, 0.0, [[BI.head, 1]]],
+  [1.785, 0.075, 0.09, 0.095, 0.0, [[BI.head, 1]]],
+  [1.81, 0.063, 0.074, 0.08, 0.0, [[BI.head, 1]]],
+  [1.83, 0.042, 0.048, 0.054, 0.0, [[BI.head, 1]]],
+  [1.84, 0.004, 0.004, 0.004, 0.0, [[BI.head, 1]]],
+];
+// single eye slot: ellipse centre / half-height / half-width (as cos of the ring angle)
+const SLOT = { y: 1.7235, hy: 0.0255, hc: 0.74 };
+/** Facial relief: nose ridge, brow, cheekbones, chin, slight occipital bulge. */
+function headShape(pt, a) {
+  const s = Math.sin(a), c = Math.cos(a);
+  if (s <= 0) { if (pt.y > 1.68 && pt.y < 1.78) pt.z += 0.004 * Math.pow(-s, 2); return; }
+  const f2 = s * s, f6 = Math.pow(s, 8);
+  if (pt.y > 1.665 && pt.y < 1.738) pt.z -= 0.017 * f6 * Math.sin((pt.y - 1.665) / 0.073 * Math.PI);   // nose
+  if (pt.y > 1.735 && pt.y < 1.775) pt.z -= 0.007 * f2 * sstep(1.735, 1.752, pt.y) * (1 - sstep(1.762, 1.775, pt.y)); // brow ridge
+  if (pt.y > 1.64 && pt.y < 1.71 && Math.abs(c) > 0.35 && Math.abs(c) < 0.85) pt.z -= 0.005 * Math.sin((Math.abs(c) - 0.35) / 0.5 * Math.PI) * Math.sin((pt.y - 1.64) / 0.07 * Math.PI); // cheekbones
+  if (pt.y > 1.605 && pt.y < 1.66) pt.z -= 0.009 * f6 * Math.sin((pt.y - 1.605) / 0.055 * Math.PI);    // chin
+  if (pt.y > 1.705 && pt.y < 1.742 && Math.abs(c) > 0.16 && Math.abs(c) < 0.62) pt.z += 0.004;     // eye sockets
+}
+const slotIn = (y, c, k) => { const u = c / (SLOT.hc * k), v = (y - SLOT.y) / (SLOT.hy * k); return u * u + v * v < 1; };
+
 function head(B) {
-  const { neck, head: hd, chest } = BI;
-  const H = [
-    [1.47, 0.052, 0.05, 0.05, 0.012, [[neck, 0.5], [chest, 0.5]]],
-    [1.52, 0.058, 0.055, 0.056, 0.01, [[neck, 1]]],
-    [1.575, 0.061, 0.06, 0.058, 0.004, [[neck, 0.7], [hd, 0.3]]],
-    [1.615, 0.064, 0.075, 0.062, 0.0, [[neck, 0.25], [hd, 0.75]]],
-    [1.64, 0.068, 0.094, 0.075, 0.0, [[hd, 1]]],
-    [1.665, 0.071, 0.1, 0.088, 0.0, [[hd, 1]]],
-    [1.695, 0.075, 0.104, 0.096, 0.0, [[hd, 1]]],
-    [1.725, 0.078, 0.101, 0.1, 0.0, [[hd, 1]]],
-    [1.755, 0.079, 0.099, 0.1, 0.0, [[hd, 1]]],
-    [1.785, 0.075, 0.09, 0.095, 0.0, [[hd, 1]]],
-    [1.81, 0.063, 0.074, 0.08, 0.0, [[hd, 1]]],
-    [1.83, 0.042, 0.048, 0.054, 0.0, [[hd, 1]]],
-    [1.84, 0.004, 0.004, 0.004, 0.0, [[hd, 1]]],
-  ];
-  const rings = H.map(([y, rx, rf, rb, cz, w]) => ring(V(0, y, cz), rx, rf, rb, w, 2));
-  B.tube('knit', rings, 24, null, (pt, i, a) => {
-    const s = Math.sin(a), c = Math.cos(a);
-    if (s > 0) return; // back of head
-    const front = Math.pow(Math.max(0, -s), 6);
-    // nose ridge under the knit, brow, chin; cheeks slightly flatter
-    if (pt.y > 1.672 && pt.y < 1.735) pt.z -= 0.014 * front * Math.sin((pt.y - 1.672) / 0.063 * Math.PI);
-    if (pt.y > 1.735 && pt.y < 1.775) pt.z -= 0.005 * Math.pow(Math.max(0, -s), 2);
-    if (pt.y > 1.7 && pt.y < 1.745 && Math.abs(c) > 0.2 && Math.abs(c) < 0.6) pt.z += 0.006; // eye sockets
-    if (pt.y > 1.6 && pt.y < 1.66) pt.z -= 0.006 * front;
+  const hd = BI.head;
+  const base = HEAD_H.map(([y, rx, rf, rb, cz, w]) => ring(V(0, y, cz), rx, rf, rb, w, 2));
+  const rings = refine(base, zoneSplit(1.65, 1.79, 0.0165, 3));
+  const N = 40;
+  // knit shell with the eye slot cut out
+  B.tube('knit', rings, N, null, (pt, i, a) => headShape(pt, a), (i, j, rr) => {
+    const a = (j + 0.5) / N * Math.PI * 2;
+    return Math.sin(a) > 0 && slotIn((rr[i].c.y + rr[i + 1].c.y) / 2, Math.cos(a), 0.86);
   });
+  // skin head 7 mm inside (only visible through the slot and under the glasses)
+  const inner = rings.filter(r => r.c.y > 1.655 && r.c.y < 1.79).map(r => ({ ...r, rx: r.rx - 0.007, rf: r.rf - 0.007, rb: r.rb - 0.007 }));
+  inner.unshift({ ...inner[0], c: inner[0].c.clone().setY(1.65), rx: 0.004, rf: 0.004, rb: 0.004 });
+  inner.push({ ...inner[inner.length - 1], c: inner[inner.length - 1].c.clone().setY(1.797), rx: 0.004, rf: 0.004, rb: 0.004 });
+  B.tube('skin', inner, N, null, (pt, i, a) => headShape(pt, a));
+  // rolled knit edge around the slot (a thick rope of yarn) + a darker inner shadow lip
+  const surf = (y, c, grow) => {
+    const k = base.findIndex(r => r.c.y >= y) - 1, A = base[k], Bq = base[k + 1], t = (y - A.c.y) / (Bq.c.y - A.c.y);
+    const rx = A.rx + (Bq.rx - A.rx) * t, rf = A.rf + (Bq.rf - A.rf) * t, cz = A.c.z + (Bq.c.z - A.c.z) * t;
+    const sn = Math.sqrt(Math.max(0, 1 - c * c)), pt = V((rx + grow) * c, y, cz - (rf + grow) * sn);
+    headShape(pt, Math.atan2(sn, c));
+    return pt;
+  };
+  const pts = [];
+  for (let k = 0; k < 28; k++) { const t = k / 28 * Math.PI * 2; pts.push(surf(SLOT.y + SLOT.hy * Math.sin(t), SLOT.hc * Math.cos(t), 0.0035)); }
+  B.rigid('knit', new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 56, 0.0085, 7, true), null, hd);
 }
 
 function arm(B, side) {
@@ -345,9 +401,11 @@ function arm(B, side) {
   const rings = refine(base, zoneSplit(y0 - 0.42, y0 - 0.19, 0.018, 3));
   B.tube('camo', rings, 16, null, (pt, i, a, r) => {
     // elbow: creases bunch on the inside of the bend, a few slack pleats all round, cuff gather
-    fold(pt, r, a, { y0: y0 - 0.3, h: 0.06, f: 15, amp: 0.006, a0: Math.PI / 2, aw: 2, tilt: 1 });
-    fold(pt, r, a, { y0: y0 - 0.3, h: 0.08, f: 11, amp: 0.0025, tilt: 3, ph: 1 });
-    fold(pt, r, a, { y0: y0 - 0.5, h: 0.03, f: 22, amp: 0.002, tilt: -2 });
+    fold(pt, r, a, { y0: y0 - 0.3, h: 0.065, f: 13, amp: 0.015, a0: Math.PI / 2, aw: 2, tilt: 1 });
+    fold(pt, r, a, { y0: y0 - 0.3, h: 0.05, f: 19, amp: 0.004, a0: -Math.PI / 2, aw: 2, tilt: -1, ph: 2 });
+    seam(pt, r, a, side > 0 ? Math.PI : 0, 0.0022, 0.2);                               // sleeve seam (inner)
+    fold(pt, r, a, { y0: y0 - 0.3, h: 0.09, f: 9, amp: 0.004, tilt: 3, ph: 1 });
+    fold(pt, r, a, { y0: y0 - 0.5, h: 0.03, f: 22, amp: 0.0035, tilt: -2 });
     // shoulder pocket bulge on the upper sleeve (outer side)
     const c = Math.cos(a) * side;
     if (pt.y < y0 - 0.06 && pt.y > y0 - 0.2 && c > 0.4) pt.x += side * 0.008 * sstep(0.4, 0.8, c);
@@ -442,10 +500,10 @@ function leg(B, side) {
     [-0.48, 0.064, 0.065, 0.064, 0.002, [[th, 0.2], [sh, 0.8]]],
     [-0.56, 0.066, 0.062, 0.074, 0.002, [[sh, 1]]],
     [-0.65, 0.06, 0.057, 0.065, 0.002, [[sh, 1]]],
-    [-0.7, 0.057, 0.055, 0.059, 0.002, [[sh, 1]]],
+    [-0.69, 0.059, 0.057, 0.061, 0.002, [[sh, 1]]],
     // bloused over the boot top (hem ends ~21 cm above the ground so the boot ankle stays visible)
-    [-0.724, 0.064, 0.063, 0.066, 0.002, [[sh, 1]]],
-    [-0.742, 0.063, 0.064, 0.065, 0.002, [[sh, 1]]],
+    [-0.715, 0.071, 0.07, 0.074, 0.002, [[sh, 1]]],
+    [-0.738, 0.07, 0.071, 0.073, 0.002, [[sh, 1]]],
     [-0.752, 0.052, 0.054, 0.056, 0.002, [[sh, 1]]],
     [-0.748, 0.004, 0.004, 0.004, 0.002, [[sh, 1]]],
   ];
@@ -453,13 +511,17 @@ function leg(B, side) {
   const rings = refine(base, (a, b) => Math.max(zoneSplit(y0 - 0.58, y0 - 0.34, 0.019, 3)(a, b), zoneSplit(y0 - 0.17, y0 + 0.02, 0.02, 3)(a, b), zoneSplit(y0 - 0.76, y0 - 0.7, 0.012, 2)(a, b)));
   B.tube('camo', rings, 16, null, (pt, i, a, r) => {
     // knee: slack trouser pleats across the front of the knee, creases behind it
-    fold(pt, r, a, { y0: y0 - 0.45, h: 0.07, f: 13, amp: 0.006, a0: Math.PI / 2, aw: 2, tilt: 1 });
-    fold(pt, r, a, { y0: y0 - 0.46, h: 0.06, f: 14, amp: 0.006, a0: -Math.PI / 2, aw: 2, tilt: -1, ph: 0.8 });
-    fold(pt, r, a, { y0: y0 - 0.45, h: 0.1, f: 9, amp: 0.0025, tilt: 3, ph: 2 });
+    fold(pt, r, a, { y0: y0 - 0.45, h: 0.075, f: 12, amp: 0.015, a0: Math.PI / 2, aw: 2, tilt: 1 });
+    fold(pt, r, a, { y0: y0 - 0.46, h: 0.06, f: 13, amp: 0.013, a0: -Math.PI / 2, aw: 2, tilt: -1, ph: 0.8 });
+    fold(pt, r, a, { y0: y0 - 0.45, h: 0.12, f: 7, amp: 0.004, tilt: 3, ph: 2 });
+    fold(pt, r, a, { y0: y0 - 0.2, h: 0.12, f: 4, amp: 0.004, tilt: 2, ph: 0.4 });         // slack trouser drape on the thigh
+    seam(pt, r, a, side > 0 ? 0 : Math.PI, 0.003, 0.2);                                   // outer seam
+    seam(pt, r, a, side > 0 ? Math.PI : 0, 0.002, 0.2);                                   // inseam
     // groin / hip creases fanning from the crotch
-    fold(pt, r, a, { y0: y0 - 0.06, h: 0.07, f: 14, amp: 0.005, a0: Math.PI / 2 + (side > 0 ? 0.7 : -0.7), aw: 2, tilt: side });
+    fold(pt, r, a, { y0: y0 - 0.06, h: 0.07, f: 13, amp: 0.0075, a0: Math.PI / 2 + (side > 0 ? 0.7 : -0.7), aw: 2, tilt: side });
     // gathered blouse at the hem
-    fold(pt, r, a, { y0: y0 - 0.715, h: 0.025, f: 30, amp: 0.0035, tilt: 5 });
+    fold(pt, r, a, { y0: y0 - 0.715, h: 0.03, f: 24, amp: 0.0065, tilt: 5 });
+    fold(pt, r, a, { y0: y0 - 0.66, h: 0.05, f: 14, amp: 0.004, tilt: -3, ph: 1.1 });        // bloused fabric sagging over the boot
     // inner-thigh flattening so the legs don't interpenetrate at the crotch
     const c = Math.cos(a) * side;
     if (c < -0.5 && pt.y > 0.72) pt.x += side * 0.012 * sstep(0.5, 1, -c) * sstep(0.72, 0.9, pt.y);
@@ -467,9 +529,10 @@ function leg(B, side) {
   // cargo pocket on the outer thigh + flap
   B.rigid('camo', box(0.026, 0.17, 0.13, 0.012), xf(x0 + side * 0.093, y0 - 0.25, -0.005, 0, 0, side * 0.03), th);
   B.rigid('camo', box(0.03, 0.035, 0.135, 0.008), xf(x0 + side * 0.098, y0 - 0.16, -0.005, 0, 0, side * 0.03), th);
+  B.rigid('metal', new THREE.CylinderGeometry(0.006, 0.006, 0.004, 10), xf(x0 + side * 0.1, y0 - 0.17, -0.07, 0, Math.PI / 2 + 0.0, 0), th);
   // knee pad (on the shin bone so it rides the kneecap)
   const pad = new THREE.SphereGeometry(0.075, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.42);
-  B.rigid('web', pad, xf(x0, 0.485, -0.012, 0, -Math.PI / 2, 0, 1.0, 1.25, 1.0), sh);
+  B.rigid('black', pad, xf(x0, 0.485, -0.012, 0, -Math.PI / 2, 0, 1.0, 1.25, 1.0), sh);
 
   // boot: shaft (shin->foot blend) and lofted foot
   const S = [
@@ -503,6 +566,7 @@ function leg(B, side) {
   B.rigid('black', box(0.034, 0.008, 0.11), xf(x0, 0.1, -0.035, 0, 0.75), ft); // lacing
   // lace rungs and a gusset tongue
   for (let k = 0; k < 5; k++) B.rigid('black', box(0.05, 0.004, 0.006), xf(x0, 0.1 - k * 0.0, -0.01 - k * 0.0, 0, 0.75).multiply(xf(0, 0.012 * k - 0.02, -0.022 * k + 0.02, 0, 0)), ft);
+  for (let k = 0; k < 5; k++) for (const e of [-1, 1]) B.rigid('metal', new THREE.CylinderGeometry(0.0034, 0.0034, 0.004, 8), xf(x0 + e * 0.019, 0.1, -0.01, 0, 0.75).multiply(xf(0, 0.012 * k - 0.02 + 0.005, -0.022 * k + 0.02, 0, 0)), ft);
   // sole lugs: tread blocks along both edges and a heel breast
   for (let k = 0; k < 7; k++) for (const e of [-1, 1]) B.rigid('black', box(0.016, 0.01, 0.026, 0.002), xf(x0 + e * 0.052, 0.004, -0.17 + k * 0.043), ft);
   B.rigid('black', box(0.09, 0.012, 0.008), xf(x0, 0.006, 0.0), ft);
@@ -510,31 +574,45 @@ function leg(B, side) {
 
 function rig(B, { helmet = false } = {}) {
   const { chest, spine, hips, head: hd } = BI;
-  // shoulder harness straps (front / back / over the shoulder)
+  // padded shoulder harness straps (front / back / over the shoulder) with sewn edges, D-rings and metal adjusters
   for (const s of [-1, 1]) {
-    B.rigid('web', box(0.048, 0.33, 0.012), xf(s * 0.1, 1.3, -0.14, 0, 0.12, s * 0.06), chest);
-    B.rigid('web', box(0.048, 0.36, 0.012), xf(s * 0.095, 1.28, 0.137, 0, -0.08, -s * 0.08), chest);
-    B.rigid('web', box(0.05, 0.014, 0.27), xf(s * 0.115, 1.476, 0.0, 0, 0, -s * 0.38), chest);
-    // strap adjusters
-    B.rigid('black', box(0.04, 0.012, 0.008), xf(s * 0.103, 1.4, -0.13, 0, 0.12, s * 0.06), chest);
+    B.rigid('web', box(0.052, 0.33, 0.018, 0.007), xf(s * 0.1, 1.3, -0.142, 0, 0.12, s * 0.06), chest);
+    B.rigid('web', box(0.052, 0.36, 0.018, 0.007), xf(s * 0.095, 1.28, 0.139, 0, -0.08, -s * 0.08), chest);
+    B.rigid('web', box(0.056, 0.02, 0.27, 0.008), xf(s * 0.115, 1.478, 0.0, 0, 0, -s * 0.38), chest);
+    B.rigid('black', box(0.036, 0.1, 0.006, 0.002), xf(s * 0.102, 1.355, -0.153, 0, 0.12, s * 0.06), chest);      // sewn webbing tail
+    B.rigid('metal', box(0.044, 0.008, 0.008, 0.002), xf(s * 0.103, 1.405, -0.153, 0, 0.12, s * 0.06), chest);    // strap adjuster slide
+    B.rigid('metal', box(0.044, 0.006, 0.008, 0.002), xf(s * 0.103, 1.3, -0.153, 0, 0.12, s * 0.06), chest);
+    B.rigid('metal', new THREE.TorusGeometry(0.012, 0.0028, 6, 14), xf(s * 0.1, 1.435, -0.134, 0, 0.12, s * 0.06), chest); // D-ring
   }
-  // flat admin / map panel with flap, zip seam and pen loops
-  B.rigid('web', box(0.24, 0.2, 0.038, 0.012), xf(0, 1.255, -0.158, 0, 0.06), chest);
-  B.rigid('web', box(0.236, 0.05, 0.02, 0.008), xf(0, 1.33, -0.18, 0, 0.12), chest);
-  B.rigid('black', box(0.21, 0.004, 0.004), xf(0, 1.2, -0.178, 0, 0.06), chest);
+  // flat admin / map panel: padded pocket body, overlapping zipped flap, velcro field, pen slots, grab loop
+  B.rigid('web', box(0.24, 0.2, 0.04, 0.016), xf(0, 1.255, -0.158, 0, 0.06), chest);
+  B.rigid('web', box(0.226, 0.07, 0.024, 0.01), xf(0, 1.31, -0.18, 0, 0.1), chest);                          // top flap lip
+  B.rigid('black', box(0.2, 0.0055, 0.004, 0.0015), xf(0, 1.272, -0.18, 0, 0.06), chest);                    // zipper tape
+  B.rigid('metal', box(0.012, 0.022, 0.006, 0.002), xf(0.085, 1.262, -0.182, 0, 0.06), chest);                // zipper pull
+  B.rigid('black', box(0.1, 0.07, 0.004, 0.0015), xf(0, 1.215, -0.18, 0, 0.06), chest);                      // loop-velcro field
+  for (let k = 0; k < 3; k++) B.rigid('black', box(0.012, 0.045, 0.006, 0.002), xf(-0.085 + k * 0.014, 1.205, -0.181, 0, 0.06), chest);   // pen slots
+  B.rigid('web', box(0.07, 0.012, 0.014, 0.005), xf(0, 1.36, -0.173, 0, 0.12), chest);                        // grab handle
+  B.rigid('metal', new THREE.CylinderGeometry(0.0048, 0.0048, 0.004, 10), xf(-0.1, 1.302, -0.194, 0, Math.PI / 2 + 0.1), chest); // snaps
+  B.rigid('metal', new THREE.CylinderGeometry(0.0048, 0.0048, 0.004, 10), xf(0.1, 1.302, -0.194, 0, Math.PI / 2 + 0.1), chest);
   // padded belt as a skinned band around the waist (follows lumbar/hip blend)
-  const band = [[1.025, 0.0], [1.03, 0.016], [1.085, 0.016], [1.09, 0.0]].map(([y, d]) => {
+  const band = [[1.025, 0.0], [1.029, 0.012], [1.036, 0.017], [1.078, 0.017], [1.085, 0.012], [1.089, 0.0]].map(([y, d]) => {
     const rx = 0.163 + (y - 1.05) * -0.05, w = y < 1.05 ? [[hips, 0.3], [spine, 0.7]] : [[spine, 0.92], [hips, 0.08]];
     return ring(V(0, y, 0), rx + d, 0.112 + d, 0.112 + d, w, 2.6);
   });
   B.tube('web', band, 32);
-  // three AK magazine pouches with flaps
+  B.rigid('metal', box(0.05, 0.034, 0.008, 0.003), xf(0.162, 1.057, -0.095, -0.9, 0.04), spine);                // belt buckle (cobra)
+  B.rigid('black', box(0.046, 0.012, 0.006, 0.002), xf(0.17, 1.057, -0.108, -0.9, 0.04), spine);
+  // three AK magazine pouches: body, overlapping flap with stitched edge, plastic buckle, shock-cord loop, mag top
   for (const x of [-0.09, 0, 0.09]) {
-    B.rigid('web', box(0.082, 0.17, 0.066, 0.014), xf(x, 1.05, -0.158, 0, 0.04), spine);
-    B.rigid('web', box(0.086, 0.06, 0.072, 0.012), xf(x, 1.135, -0.16, 0, 0.18), spine);
-    B.rigid('black', box(0.03, 0.025, 0.004), xf(x, 1.1, -0.197, 0, 0.18), spine); // fastex buckle
-    B.rigid('black', box(0.034, 0.03, 0.058, 0.006), xf(x, 1.175, -0.151, 0, 0.1), spine);      // magazine top peeking out of the pouch
-    B.rigid('web', box(0.012, 0.1, 0.006), xf(x + 0.032, 1.1, -0.19, 0, 0.1), spine);            // retention tab
+    B.rigid('web', box(0.084, 0.17, 0.07, 0.02), xf(x, 1.05, -0.158, 0, 0.04), spine);
+    B.rigid('web', box(0.09, 0.062, 0.078, 0.016), xf(x, 1.135, -0.16, 0, 0.18), spine);
+    B.rigid('web', box(0.088, 0.008, 0.01, 0.003), xf(x, 1.105, -0.2, 0, 0.18), spine);                        // flap stitched edge
+    B.rigid('black', box(0.03, 0.024, 0.007, 0.0025), xf(x, 1.1, -0.2, 0, 0.18), spine);                        // fastex buckle (plastic)
+    B.rigid('metal', new THREE.CylinderGeometry(0.0042, 0.0042, 0.003, 10), xf(x, 1.138, -0.201, 0, Math.PI / 2 + 0.18), spine); // snap
+    B.rigid('black', box(0.034, 0.03, 0.058, 0.006), xf(x, 1.178, -0.151, 0, 0.1), spine);                      // magazine top peeking out
+    B.rigid('black', box(0.004, 0.09, 0.004, 0.0015), xf(x + 0.04, 1.09, -0.197, 0, 0.1), spine);               // shock-cord
+    B.rigid('web', box(0.012, 0.1, 0.007, 0.003), xf(x + 0.032, 1.1, -0.194, 0, 0.1), spine);                   // retention tab
+    B.rigid('metal', new THREE.CylinderGeometry(0.003, 0.003, 0.004, 8), xf(x, 0.965, -0.19, 0, Math.PI / 2), spine); // drain eyelet
   }
   // bulky side utility pouches
   for (const s of [-1, 1]) {
@@ -543,7 +621,7 @@ function rig(B, { helmet = false } = {}) {
   }
   // canteen pouch (back left) and small dump/radio pouch (back right)
   B.rigid('web', box(0.13, 0.17, 0.075, 0.035), xf(-0.11, 1.03, 0.155, 0, -0.04), spine);
-  B.rigid('black', cyl(0.018, 0.018, 0.02, 12), xf(-0.11, 1.125, 0.155), spine);
+  B.rigid('metal', cyl(0.018, 0.018, 0.02, 12), xf(-0.11, 1.125, 0.155), spine);
   B.rigid('web', box(0.1, 0.13, 0.06, 0.025), xf(0.11, 1.05, 0.145, 0, -0.04), spine);
 
   if (!helmet) {
@@ -570,11 +648,11 @@ function rig(B, { helmet = false } = {}) {
   for (let j = 0; j <= NY; j++) for (let i = 0; i <= NA; i++) {
     const a = -Math.PI / 2 + (i / NA - 0.5) * 2.4, y = 1.712 + (j / NY) * 0.046;
     const bulge = 1 + 0.03 * Math.sin((j / NY) * Math.PI);
-    const x = Math.cos(a) * 0.09 * bulge, z = Math.sin(a) * 0.116 * bulge + 0.003;
+    const x = Math.cos(a) * 0.09 * bulge, z = Math.sin(a) * 0.111 * bulge + 0.003;
     // nose cut-out: lower centre edge rises
     const yy = j === 0 ? y + 0.012 * Math.max(0, 1 - Math.abs(i / NA - 0.5) * 8) : y;
     lp.push(x, yy, z); lu.push(i / NA, j / NY);
-    const nn = V(Math.cos(a) / 0.09, 0, Math.sin(a) / 0.116).normalize(); ln.push(nn.x, nn.y, nn.z);
+    const nn = V(Math.cos(a) / 0.09, 0, Math.sin(a) / 0.111).normalize(); ln.push(nn.x, nn.y, nn.z);
   }
   for (let j = 0; j < NY; j++) for (let i = 0; i < NA; i++) { const a = j * (NA + 1) + i, b = a + 1, c = a + NA + 1, d = c + 1; li.push(a, c, b, b, c, d); }
   lens.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
@@ -582,7 +660,22 @@ function rig(B, { helmet = false } = {}) {
   lens.setAttribute('uv', new THREE.Float32BufferAttribute(lu, 2));
   lens.setIndex(li);
   B.rigid('lens', lens, null, hd);
-  for (const s of [-1, 1]) B.rigid('black', box(0.006, 0.008, 0.1), xf(s * 0.084, 1.748, 0.02, s * 0.05), hd);
+  for (const s of [-1, 1]) B.rigid('black', box(0.006, 0.008, 0.1, 0.002), xf(s * 0.084, 1.748, 0.02, s * 0.05), hd);
+  // frame: heavier brow bar, thin bottom rim, nose bridge and pads (matte nylon)
+  const edge = (j, rad) => {
+    const pp = [];
+    for (let i = 0; i <= NA; i++) {
+      const a = -Math.PI / 2 + (i / NA - 0.5) * 2.4, y = 1.712 + (j / NY) * 0.046;
+      const bulge = 1 + 0.03 * Math.sin((j / NY) * Math.PI);
+      const yy = j === 0 ? y + 0.012 * Math.max(0, 1 - Math.abs(i / NA - 0.5) * 8) : y;
+      pp.push(V(Math.cos(a) * 0.0905 * bulge, yy, Math.sin(a) * 0.1115 * bulge + 0.003));
+    }
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pp), 32, rad, 5, false);
+  };
+  B.rigid('black', edge(NY, 0.0034), null, hd);
+  B.rigid('black', edge(0, 0.0018), null, hd);
+  B.rigid('black', box(0.026, 0.008, 0.008, 0.003), xf(0, 1.735, -0.1125), hd);
+  for (const s of [-1, 1]) B.rigid('black', box(0.004, 0.014, 0.01, 0.0015), xf(s * 0.011, 1.718, -0.106, 0, 0.3), hd);
 }
 
 const geoCache = {};
