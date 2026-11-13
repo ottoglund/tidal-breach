@@ -251,7 +251,7 @@ def ak_wood(n=512, seed=211):
     grain = fbm(n, r, 1.8, lo=3, hi=300, aniso=(0.05, 1.0))
     lam = np.sin((ys / n * 14 + grain * 0.5) * np.pi)  # laminate layers (glue lines every ~2 cm)
     ring = np.sin((xs / n * 9 + 0.5 * fbm(n, r, 1.5, lo=2, hi=12)) * np.pi * 2) * 0.5 + 0.5
-    alb = lerp(col(n, '#3a2419'), col(n, '#573a2b'), np.clip(lam * 0.35 + 0.5 + 0.18 * ring - 0.1, 0, 1)) * (0.92 + 0.14 * grain[..., None])
+    alb = lerp(col(n, '#36251d'), col(n, '#4c372c'), np.clip(lam * 0.35 + 0.5 + 0.18 * ring - 0.1, 0, 1)) * (0.92 + 0.14 * grain[..., None])
     seam = np.clip(1 - np.abs(np.sin(ys / n * 14 * np.pi * 0.5 + 0.3)) * 14, 0, 1)  # thin darker glue lines
     alb = alb * (1 - 0.25 * seam[..., None])
     dings = lines_mask(n, r, 90, 10, 0.5)
@@ -308,8 +308,8 @@ SETS = {
     'olive_knit': lambda: plain_fabric('olive_knit', '#4d4a33', seed=202, tile=0.2, structure='knit', rough_base=0.92),      # balaclava (player side)
     'glove_green': lambda: plain_fabric('glove_green', '#46502f', seed=203, tile=0.12, structure='cordura', rough_base=0.8),     # gloves (player side)
     'khaki_webbing': lambda: plain_fabric('khaki_webbing', '#8a7c58', seed=204, tile=0.15, structure='webbing', sheen=0.08), # sling / belt
-    'ratnik_green': lambda: textiles.plain(textiles.cool_grade(save, 0.85, (1.0, 1.0, 0.97)), 'ratnik_green', '#474f37', 512, 205, 0.2, 0.35, 'cordura', 0.1),   # OPFOR vest / helmet cover
-    'boot_leather': lambda: plain_fabric('boot_leather', '#4a3b2a', seed=206, dirt=0.5, tile=0.3, structure='leather', rough_base=0.62),
+    'ratnik_green': lambda: textiles.plain(textiles.cool_grade(save, 0.85, (1.0, 1.0, 0.97)), 'ratnik_green', '#444b36', 512, 205, 0.22, 0.35, 'molle', 0.06),   # OPFOR vest / helmet cover
+    'boot_leather': lambda: plain_fabric('boot_leather', '#3a2e24', seed=206, dirt=0.45, tile=0.3, structure='leather', rough_base=0.62),
     'ak_wood': ak_wood, 'plum_polymer': plum_polymer,
 }
 

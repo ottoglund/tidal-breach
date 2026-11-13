@@ -119,9 +119,9 @@ function drift(n, sr, hz) { const a = white(n); lp1(a, hz, sr, 2); return norm(a
 function smooth(a, tau, sr) { const k = 1 - Math.exp(-1 / (tau * sr)); let y = a[0]; for (let i = 0; i < a.length; i++) { y += k * (a[i] - y); a[i] = y; } return a; }
 
 // ============================================================ generators
-/** 5.56 / 7.62 rifle report at the shooter. heavy: more low end; mech: bolt-carrier noise. */
+/** 5.56 / 7.62 rifle report at the shooter (player Ak 4C: genRifle762). heavy: more low end; mech: bolt-carrier noise. */
 function genRifle(sr, o = {}) {
-  const { len = 0.55, heavy = 0, mech = 1, crack = 1, refl = 0.35 } = o;
+  const { len = 0.55, heavy = 0, mech = 1, crack = 1, refl = 0.35, boom = 0 } = o;
   const n = Math.floor(sr * len), out = new Float32Array(n), k = rr(0.93, 1.07);
   if (crack) nwave(out, 0, 0.00028 * k, 0.8 * crack, sr);                       // supersonic crack
   fried(out, 2, 1.0, 0.0009 * k * (1 + heavy * 0.3), 1.6, sr);                    // sharp muzzle blast
@@ -135,6 +135,15 @@ function genRifle(sr, o = {}) {
   for (let i = 0; i < n; i++) { const t = i / sr; b[i] *= (t < 0.002 ? t / 0.002 : 1) * Math.exp(-t / (0.05 + heavy * 0.03)); }
   biquad(b, 'lp', 200 - heavy * 40, 0.7, sr);
   mix(out, b, 0, 0.6 + heavy * 0.4);
+  if (boom) {                                                                    // 7.62x51: big case, long barrel blast, chest-thump sub and a dark, longer tail
+    const sub = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const t = i / sr, f = 46 + 70 * Math.exp(-t / 0.02); sub[i] = Math.sin(TAU * f * t) * Math.min(1, t / 0.0015) * Math.exp(-t / 0.075); }
+    mix(out, sub, 0, 0.9 * boom);
+    const tl = white(n);
+    for (let i = 0; i < n; i++) { const t = i / sr; tl[i] *= Math.min(1, t / 0.004) * (0.35 * Math.exp(-t / 0.09) + 0.1 * Math.exp(-t / 0.28)); }
+    lp1(tl, i => 380 + 2200 * Math.exp(-(i / sr) / 0.08), sr, 2);
+    mix(out, tl, 0, 1.3 * boom);
+  }
   if (mech) {                                                                    // bolt carrier back, then forward and lock
     clink(out, Math.round(0.031 * k * sr), [1850, 2950, 4400, 6150, 8300], 0.007, 0.05 * mech, sr);
     clink(out, Math.round(0.072 * k * sr), [1450, 2600, 3900, 5800], 0.009, 0.045 * mech, sr);
@@ -145,6 +154,8 @@ function genRifle(sr, o = {}) {
   norm(out, 1); for (let i = 0; i < n; i++) out[i] = Math.tanh(out[i] * 1.7) / Math.tanh(1.7);
   return norm(out, 0.95);
 }
+/** Ak 4C (G3, 7.62x51): deeper, louder, longer than the 5.56 report; roller-delayed bolt = heavier clack. */
+function genRifle762(sr) { return genRifle(sr, { len: 1.0, heavy: 1.7, mech: 1.5, crack: 1.0, refl: 0.5, boom: 1 }); }
 /** what a nearby wall sends back: blast only, smeared by corrugated steel, darker */
 function genEcho(sr, fc) {
   const dry = genRifle(sr, { len: 0.4, crack: 0, mech: 0, refl: 0 }), out = new Float32Array(dry.length);
@@ -227,24 +238,24 @@ function genGear(sr) {
 }
 function genReload(sr, kind) {
   const out = new Float32Array(Math.floor(sr * 0.5));
-  if (kind === 'release') { clink(out, 0, [2600, 4100, 6900], 0.006, 1, sr); clink(out, Math.round(0.008 * sr), [6500, 9100], 0.003, 0.4, sr); }
+  if (kind === 'release') { clink(out, 0, [1900, 3300, 5200], 0.009, 1, sr); clink(out, Math.round(0.008 * sr), [6500, 9100], 0.003, 0.4, sr); }
   if (kind === 'out') {                                                           // magazine sliding out of the well
     const s = white(Math.round(0.11 * sr));
     for (let i = 0; i < s.length; i++) { const t = i / sr; s[i] *= Math.sin(Math.PI * t / 0.11) * (0.6 + 0.4 * Math.abs(Math.sin(TAU * 90 * t))); }
     biquad(s, 'bp', 1800, 1.5, sr); mix(out, s, 0, 0.6);
-    clink(out, Math.round(0.1 * sr), [700, 1300, 2400], 0.012, 0.5, sr);
+    clink(out, Math.round(0.1 * sr), [620, 1150, 2100, 3400], 0.02, 0.7, sr);   // steel 20-rd mag scraping out
     burst(out, Math.round(0.12 * sr), 0.01, 0.04, 0.2, sr, x => biquad(x, 'bp', 2600, 0.6, sr)); // hand / glove
   }
   if (kind === 'pouch') {                                                         // new magazine out of the pouch
     const s = white(Math.round(0.28 * sr));
     for (let i = 0; i < s.length; i++) { const t = i / sr; s[i] *= Math.sin(Math.PI * t / 0.28) * (rnd() < 0.08 ? 1.6 : 0.5); }
     biquad(s, 'bp', 2500, 0.7, sr); mix(out, s, 0, 0.5);
-    clink(out, Math.round(0.22 * sr), [1100, 2100, 3300], 0.01, 0.35, sr);
+    clink(out, Math.round(0.22 * sr), [900, 1800, 2900], 0.014, 0.45, sr);
   }
   if (kind === 'in') {                                                            // seat the magazine
     const s = white(Math.round(0.045 * sr)); for (let i = 0; i < s.length; i++) s[i] *= i / s.length; biquad(s, 'bp', 2000, 1.2, sr); mix(out, s, 0, 0.4);
     const c = Math.round(0.045 * sr);
-    clink(out, c, [900, 1600, 2700, 4300], 0.018, 1, sr);
+    clink(out, c, [780, 1450, 2500, 3900, 5600], 0.026, 1, sr);                    // straight steel mag rocks home
     burst(out, c, 0.0005, 0.012, 0.8, sr, x => biquad(x, 'bp', 300, 0.8, sr));
     clink(out, c + Math.round(0.022 * sr), [3200, 5400], 0.006, 0.5, sr);           // catch engages
   }
@@ -614,7 +625,7 @@ export class Audio {
     const n = (k, f) => Array.from({ length: k }, f);
     // only what the first seconds of play need; everything else follows in buildDeferred()
     this.B = {
-      rifle: n(3, () => b(genRifle(sr))),
+      rifle: n(3, () => b(genRifle762(sr))),
       casing: n(6, () => b(genCasing(sr))),
       snap: n(3, () => b(genSnap(sr))),
       step: n(8, () => b(genStep(sr))),
@@ -634,7 +645,7 @@ export class Audio {
       () => { B.echoNear = b(genEcho(sr, 3500)); B.echoFar = b(genEcho(sr, 1100)); this.verb.buffer = this.buf(genIR(sr), sr); },
       () => { B.roll = n(2, () => this.buf(genRoll(sr), sr)); },
       () => { B.ak74 = n(3, () => b(genRifle(sr, { len: 0.45, heavy: 0.25, mech: 0, crack: 0.3 }))); B.akm = n(3, () => b(genRifle(sr, { len: 0.45, heavy: 0.6, mech: 0, crack: 0.3 }))); },
-      () => { B.hitMetal = n(3, () => b(genImpact(sr, 'metal'))); B.hitGround = n(3, () => b(genImpact(sr, 'ground'))); B.hitFlesh = n(2, () => b(genImpact(sr, 'flesh'))); B.rico = n(2, () => b(genRicochet(sr))); B.thud = n(3, () => b(genThud(sr))); B.rifle.push(b(genRifle(sr))); },
+      () => { B.hitMetal = n(3, () => b(genImpact(sr, 'metal'))); B.hitGround = n(3, () => b(genImpact(sr, 'ground'))); B.hitFlesh = n(2, () => b(genImpact(sr, 'flesh'))); B.rico = n(2, () => b(genRicochet(sr))); B.thud = n(3, () => b(genThud(sr))); B.rifle.push(b(genRifle762(sr))); },
       () => { B.grunt = n(4, () => this.buf([genGrunt(LOW)], LOW)); B.heart = this.buf([genHeart(LOW)], LOW); },
       () => { B.inhale = n(3, () => this.buf([genBreath(LOW, true, 0)], LOW)); B.exhale = n(3, () => this.buf([genBreath(LOW, false, 0.6)], LOW)); },
       () => { B.power = this.buf([genPowerDown(LOW)], LOW); },
@@ -724,14 +735,14 @@ export class Audio {
   }
 
   // ---------------------------------------------------------------- player weapon
-  /** Ak 5C report. o.walls = distances (m) to the nearest wall [front, right, back, left]; 0 = open. */
+  /** Ak 4C (7.62x51) report. o.walls = distances (m) to the nearest wall [front, right, back, left]; 0 = open. */
   gunshot(o = {}) {
     if (!this.ok()) return;
     const t = this.ctx.currentTime + 0.003, B = this.B;
     if (o.walls) this.env = o.walls;
-    this.play(pick(B.rifle), { at: t, gain: 0.85, rate: rr(0.985, 1.015), send: 0.3 });
+    this.play(pick(B.rifle), { at: t, gain: 1.0, rate: rr(0.985, 1.015), send: 0.42 });
     this.echoes(t, this.env || [28, 11, 40, 16], 1, false);
-    this.play(pick(B.roll), { at: t + 0.02, gain: 0.4, rate: rr(0.96, 1.04) });
+    this.play(pick(B.roll), { at: t + 0.02, gain: 0.52, rate: rr(0.96, 1.04) });
     this.casings(t + rr(0.42, 0.6));
   }
 

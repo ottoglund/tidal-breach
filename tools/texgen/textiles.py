@@ -57,6 +57,20 @@ def finish(save, name, base, n, r, tile, dirt=0.25, structure='ripstop', sheen=0
         bw = blur(bw.astype(np.float32), 0.7)
         h = bw * 0.03 * mm + fuzz * 0.02 * mm + fbm(n, r, 1.2, lo=n / 20) * 0.02 * mm
         tone = 1 + 0.03 * bw
+    elif structure == 'molle':
+        # cordura with PALS webbing: 25 mm pitch rows of stitched 25 mm webbing bands separated by
+        # darker slots (the loops), bar-tack stitch dashes along both band edges.
+        P = max(0.0009 / px, 2.2)
+        bw = blur((np.sign(np.sin(xs * 2 * np.pi / P)) * np.sign(np.sin(ys * 2 * np.pi / P))).astype(np.float32), 0.7)
+        pitch = 0.025
+        ym = ys * px
+        ph = (ym % pitch) / pitch
+        band = smoothstep(0.52, 0.47, ph) * smoothstep(0.02, 0.07, ph)       # raised webbing band
+        stitch_y = np.exp(-((ph - 0.12) / 0.018) ** 2) + np.exp(-((ph - 0.42) / 0.018) ** 2)
+        dash = smoothstep(0.35, 0.5, np.abs(((xs * px) % 0.006) / 0.006 - 0.5))
+        stitch = stitch_y * dash
+        h = bw * 0.03 * mm + band * 0.5 * mm - stitch * 0.15 * mm + fuzz * 0.02 * mm
+        tone = (1 + 0.03 * bw) * (0.86 + 0.14 * band) * (1 - 0.28 * stitch)
     else:  # leather
         d, idx = scatter(n, max(int(tile / 0.0012), 8), r, rad=(0.5, 0.75), pnorm=(1.8, 2.4), aniso=(0.7, 1.0))
         pebble = np.sqrt(np.clip(1 - np.clip(d, 0, 1) ** 2, 0, 1))
