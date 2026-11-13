@@ -13,6 +13,8 @@ function lerpAngle(a, b, t) { const d = (b - a + Math.PI * 3) % (Math.PI * 2) - 
 let seed = 1358961;
 const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) | 0; return (seed >>> 0) / 4294967296; };
 const rr = (a, b) => lerp(a, b, rand());
+// Ak 4C (7.62×51 mm): 20-round magazines, six spare on the vest
+export const MAG = 20, RESERVE = 120;
 
 export class Game {
   constructor({ pipeline, level, weapon, audio, isTouch, lights }) {
@@ -37,7 +39,7 @@ export class Game {
 
   // ------------------------------------------------------------------ state
   reset() {
-    this.player = { x: SPAWN.x, y: 1.7, z: SPAWN.z, yaw: SPAWN.yaw, pitch: 0, hp: 100, armor: 75, ammo: 30, reserve: 150, reloading: 0, ads: 0, crouch: 0, run: 0, kills: 0, shots: 0, hits: 0, steps: 0, started: performance.now() / 1000 };
+    this.player = { x: SPAWN.x, y: 1.7, z: SPAWN.z, yaw: SPAWN.yaw, pitch: 0, hp: 100, armor: 75, ammo: MAG, reserve: RESERVE, reloading: 0, ads: 0, crouch: 0, run: 0, kills: 0, shots: 0, hits: 0, steps: 0, started: performance.now() / 1000 };
     for (const e of this.enemies) e.model.root.visible = false;
     this.enemies.length = 0;
     ENEMY_SPAWNS.forEach(e => this.spawnEnemy(...e));
@@ -132,7 +134,7 @@ export class Game {
   // ------------------------------------------------------------------ actions
   reload() {
     const p = this.player;
-    if (this.mode !== 'play' || p.reloading > 0 || p.ammo === 30 || p.reserve <= 0) return;
+    if (this.mode !== 'play' || p.reloading > 0 || p.ammo === MAG || p.reserve <= 0) return;
     p.reloading = 1.65; $('magStatus').textContent = 'RELOADING';
     this.audio.reload('out');
     this.reloadSfx = [[1.65 - 0.95, 'in'], [1.65 - 1.35, 'bolt']];
@@ -145,7 +147,7 @@ export class Game {
     if (!p.ammo) { this.audio.dryFire(); this.reload(); return; }
     p.ammo--; p.shots++;
     const ads = p.ads > 0.5;
-    this.recoil += ads ? 0.042 : 0.062;
+    this.recoil += ads ? 0.058 : 0.085; // full-power 7.62 kicks harder than 5.56
     // audio (presentation only): distances to the nearest walls front/right/back/left for slap-back echoes
     const walls = [0, 1, 2, 3].map(i => { const a = p.yaw + i * Math.PI / 2, t = this.wallHit(p.x, p.z, p.x + Math.sin(a) * 60, p.z - Math.cos(a) * 60); return t === null ? 0 : t * 60; });
     this.audio.gunshot({ walls });
@@ -271,7 +273,7 @@ export class Game {
     if (p.reloading > 0) {
       p.reloading -= dt;
       if (this.reloadSfx) for (const s of this.reloadSfx) if (!s.done && p.reloading <= s[0]) { s.done = true; this.audio.reload(s[1]); }
-      if (p.reloading <= 0) { const a = Math.min(30 - p.ammo, p.reserve); p.ammo += a; p.reserve -= a; p.reloading = 0; $('magStatus').textContent = 'READY'; }
+      if (p.reloading <= 0) { const a = Math.min(MAG - p.ammo, p.reserve); p.ammo += a; p.reserve -= a; p.reloading = 0; $('magStatus').textContent = 'READY'; }
     }
     if ((k.mouse || T.firing) && !sprint) this.shoot();
     this.recoil = Math.max(0, this.recoil - dt * 0.45);

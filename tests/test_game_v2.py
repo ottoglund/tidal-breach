@@ -78,7 +78,7 @@ def state(page):
 def test_start_and_reset(game):
     page, errors = game
     s = state(page)
-    assert s["hp"] == 100 and s["armor"] == 75 and s["ammo"] == 30 and s["reserve"] == 150
+    assert s["hp"] == 100 and s["armor"] == 75 and s["ammo"] == 20 and s["reserve"] == 120
     assert len(s["targets"]) == 3 and not any(n["done"] for n in s["targets"])
     assert s["enemies"] == 7
     qa(page, "damage(40)")
@@ -92,34 +92,34 @@ def test_start_and_reset(game):
 def test_weapon_magazine_and_pause(game):
     page, errors = game
     qa(page, "fire()")
-    assert state(page)["ammo"] == 29
+    assert state(page)["ammo"] == 19
     qa(page, "pause()")
     page.wait_for_timeout(150)
     qa(page, "fire()")
-    assert state(page)["ammo"] == 29, "pause must block fire"
+    assert state(page)["ammo"] == 19, "pause must block fire"
     qa(page, "resume()")
     qa(page, "reload()")
     assert state(page)["reloading"] > 0
     qa(page, "peaceful()")
     qa(page, "step(1.0)")
-    assert state(page)["ammo"] == 29, "magazine not refilled before reload ends"
+    assert state(page)["ammo"] == 19, "magazine not refilled before reload ends"
     qa(page, "step(1.0)")
     s = state(page)
-    assert s["ammo"] == 30 and s["reserve"] == 149
+    assert s["ammo"] == 20 and s["reserve"] == 119
     assert not errors
 
 
 def test_empty_magazine_auto_reload(game):
     page, errors = game
     qa(page, "peaceful()")
-    for _ in range(30):
+    for _ in range(20):
         page.wait_for_timeout(110)  # fire-rate limit is 0.105 s of wall time
         qa(page, "fire()")
     s = state(page)
     assert s["ammo"] == 0 and s["reloading"] > 0
     qa(page, "step(2.0)")
     s = state(page)
-    assert s["ammo"] == 30 and s["reserve"] == 120
+    assert s["ammo"] == 20 and s["reserve"] == 100
     assert not errors
 
 
