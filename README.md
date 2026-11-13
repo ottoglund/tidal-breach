@@ -16,7 +16,7 @@ ES modules and textures cannot load from `file://`. Graphics presets: `?q=low|me
 
 **v0.1 classic (WebGL 1 fallback, `index.html`):** open `index.html` in a modern WebGL-capable browser; no build step needed. For iPhone, use a web browser in landscape orientation. Desktop: WASD move, mouse look, left-click fire, right-click aim, R reload, E interact, Shift sprint, C crouch, Esc pause, M map. On mobile: virtual joystick, touch-look, weapon and action buttons.
 
-**Objective:** disable three signal nodes, survive the guards, return to extraction.
+**Objective:** disable three signal nodes, survive the guards, return to extraction. In v0.2 you play a Swedish Home Guard (Hemvärnet) soldier with an Ak 4C, supported by two comrades.
 
 ## Development
 - [Art direction](docs/VISION.md)

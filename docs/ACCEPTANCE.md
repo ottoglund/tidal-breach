@@ -25,6 +25,7 @@
 | Objectives + extraction | tested (headless) | `test_three_nodes_and_extraction` |
 | Win/lose/restart | tested (headless) | `test_three_nodes_and_extraction`, `test_damage_to_failure` |
 | AI engages | tested (headless) | `test_enemies_engage_and_damage` |
+| HV comrades follow | tested (headless) | `test_squad_follows_and_engages` |
 | Mobile controls | implemented, not tested on device | same bindings as v0.1 |
 | Graphics | implemented; renders captured | `docs/renders/v0.2/` (SwiftShader software GPU) |
 | Performance | **not measured on real hardware** | overlay: `F9` or `?perf=1` |
@@ -32,4 +33,4 @@
 
 Nothing above is "accepted": acceptance needs a full mission played on real desktop and iPhone hardware with recorded FPS.
 
-**Known gaps:** software-GPU screenshots only; no real-device FPS; guards are procedural (no skinned/rigged mesh); AI navigation unchanged from v0.1.
+**Known gaps:** software-GPU screenshots only; no real-device FPS; soldiers are procedural skinned meshes (not scanned/photographic); AI navigation unchanged from v0.1; comrades are invulnerable and do not take part in objectives; heavy frame cost before the performance pass (641 calls / 5.1 M tris per frame at medium, all passes).
