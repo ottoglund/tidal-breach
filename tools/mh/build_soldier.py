@@ -412,6 +412,123 @@ def sstep(a, b, x):
 
 
 # ------------------------------------------------------------------------------------------------ 7 clothing
+GAITER_DROP = 0.008      # the smooth gaiter top runs this far below the old per-face cut line (inside its teeth)
+
+
+def split_gaiter(B, v0, v2, faces, fmat, fkind, eyeY, eyeZ):
+    """Split knit faces crossed by the gaiter contour; faces below become 'gaiter'. New vertices are appended to
+    v0 / v2 (positions interpolated on the crossed edge), new UVs to B['vt']; src2 maps every v2 vertex to the
+    original vertex its weights come from. Returns the contour segments (pairs of new vertices) for the hem."""
+    f_ = lambda p: p[..., 1] - (eyeY - 0.135 - GAITER_DROP + 0.045 * sstep(eyeZ + 0.03, eyeZ + 0.12, p[..., 2]))
+    fv = f_(v0)
+    nv0 = len(v0)
+    newp0, newp2, src_new, vt_new = [], [], [], []
+    vt = np.asarray(B['vt'])
+    ecache, ucache = {}, {}
+
+    def cut(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in ecache:
+            fa, fb = fv[key[0]], fv[key[1]]
+            t = fa / (fa - fb)
+            newp0.append(v0[key[0]] + (v0[key[1]] - v0[key[0]]) * t)
+            newp2.append(v2[key[0]] + (v2[key[1]] - v2[key[0]]) * t)
+            src_new.append(key[0] if t < 0.5 else key[1])
+            ecache[key] = (nv0 + len(newp0) - 1, t)
+        return ecache[key]
+
+    def cut_uv(ua, ub, a, b):
+        key = (ua, ub) if a < b else (ub, ua)
+        if key not in ucache:
+            _, t = ecache[(min(a, b), max(a, b))]
+            vt_new.append(vt[key[0]] + (vt[key[1]] - vt[key[0]]) * t)
+            ucache[key] = len(vt) + len(vt_new) - 1
+        return ucache[key]
+
+    out_f, out_t, out_m, out_k, hem = [], [], [], [], []
+    for i, f in enumerate(faces):
+        m = fmat[i]
+        if m not in ('knit', 'gaiter'):
+            out_f.append(f); out_t.append(B['fuv'][i]); out_m.append(m); out_k.append(fkind[i]); continue
+        s = fv[np.array(f)]
+        if (s < 0).all() or (s >= 0).all():
+            out_f.append(f); out_t.append(B['fuv'][i]); out_m.append('gaiter' if (s < 0).all() else 'knit'); out_k.append(fkind[i]); continue
+        t = B['fuv'][i]
+        lo, lo_t, hi, hi_t, seg = [], [], [], [], []
+        n = len(f)
+        for k in range(n):
+            a, b, ua, ub = f[k], f[(k + 1) % n], t[k], t[(k + 1) % n]
+            (lo if fv[a] < 0 else hi).append(a); (lo_t if fv[a] < 0 else hi_t).append(ua)
+            if (fv[a] < 0) != (fv[b] < 0):
+                c, _ = cut(a, b); cu = cut_uv(ua, ub, a, b)
+                lo.append(c); lo_t.append(cu); hi.append(c); hi_t.append(cu); seg.append(c)
+        for poly, pt, mm in ((lo, lo_t, 'gaiter'), (hi, hi_t, 'knit')):
+            for k in range(1, len(poly) - 1):
+                out_f.append([poly[0], poly[k], poly[k + 1]]); out_t.append([pt[0], pt[k], pt[k + 1]]); out_m.append(mm); out_k.append(fkind[i])
+        if len(seg) == 2:
+            # contour segment, ordered like the lower polygon's boundary (for a consistent hem winding)
+            hem.append((seg[0], seg[1], lo_t[lo.index(seg[0])]))
+    if newp0:
+        v0 = np.vstack([v0, np.array(newp0)]); v2 = np.vstack([v2, np.array(newp2)])
+        B['vt'] = np.vstack([vt, np.array(vt_new)]) if vt_new else vt
+    B['fuv'] = out_t
+    src2 = np.concatenate([np.arange(nv0), np.array(src_new, np.int64)]).astype(np.int64)
+    return v2, v0, v2, out_f, out_m, out_k, src2, hem
+
+
+def hem_strip(B, v0, v2, n0, hem, src2):
+    """Rolled hem along the gaiter's top contour: a half-round strip from the knit's outer surface over the top
+    and back down to just above the skin, so the gaiter ends in a soft rolled edge instead of a paper-thin cut."""
+    if not hem:
+        return
+    V = B['v']
+    base = len(V)
+    idx = {}
+    rows = []
+    up = np.array([0.0, 1.0, 0.0])
+    ROW_A = (0.0, 0.55, 1.1, 1.75, 2.4, np.pi)
+    for (a, b, _) in hem:
+        for c in (a, b):
+            if c in idx:
+                continue
+            o, inn = v2[c], v0[c] + n0[c] * 0.0012
+            d = o - inn
+            th_ = np.linalg.norm(d)
+            dout = d / (th_ + 1e-9)
+            r = max(th_ / 2, 0.0022)
+            ctr = inn + dout * r
+            u = up - dout * (up @ dout); u /= np.linalg.norm(u) + 1e-9
+            pts = [ctr + r * (np.cos(a_) * dout + 1.15 * np.sin(a_) * u) for a_ in ROW_A]
+            pts[0] = o
+            idx[c] = base + len(rows)
+            rows.extend(pts)
+    nr = len(ROW_A)
+    add_f, add_t, add_m = [], [], []
+    for (a, b, uv) in hem:
+        ia, ib = idx[a], idx[b]
+        for k in range(nr - 1):
+            q = [ia + k, ib + k, ib + k + 1, ia + k + 1]
+            # orient outward-up: check against the strip's mean outward direction
+            P = np.array(rows)[np.array(q) - base]
+            nrm = np.cross(P[1] - P[0], P[3] - P[0])
+            mid = P.mean(0)
+            outward = mid - (v0[a] + v0[b]) / 2
+            if nrm @ outward < 0:
+                q = q[::-1]
+            add_f.append(q); add_t.append([uv] * 4); add_m.append('gaiter')
+    srcs = []
+    for c in sorted(idx, key=lambda c: idx[c]):
+        srcs.extend([src2[c]] * nr)
+    B['v'] = np.vstack([V, np.array(rows)])
+    B['faces'] = list(B['faces']) + add_f
+    B['fuv'] = list(B['fuv']) + add_t
+    B['fkind'] = list(B['fkind']) + ['body'] * len(add_f)
+    B['fmat'] = list(B['fmat']) + add_m
+    B['src'] = np.concatenate([B['src'], np.array(srcs, np.int64)])
+    print('gaiter hem: %d contour segments, %d vertices, knit thickness %.1f-%.1f mm' % (
+        len(hem), len(rows), 1000 * min(np.linalg.norm(v2[c] - v0[c]) for c in idx), 1000 * max(np.linalg.norm(v2[c] - v0[c]) for c in idx)))
+
+
 def dress(B, W, pos, R):
     """Offsets the skin into a clothed figure and assigns a material per face. Works in the bind (A) pose."""
     v = B['v']
@@ -724,11 +841,12 @@ def dress(B, W, pos, R):
         if m == 'boot' and v2[np.array(f), 1].max() < 0.024:
             fmat[i] = 'sole'
     fmat = list(fmat)
-    # the knit below the jaw also serves as the neck gaiter of the bare-headed soldiers ('gaiter' = knit material)
-    gcut = eyeY - 0.135 + 0.045 * sstep(eyeZ + 0.03, eyeZ + 0.12, v0[:, 2])
-    for i, m in enumerate(fmat):
-        if m == 'knit' and (v0[np.array(faces[i]), 1] < gcut[np.array(faces[i])]).all():
-            fmat[i] = 'gaiter'
+    # the knit below the jaw also serves as the neck gaiter of the bare-headed soldiers ('gaiter' = knit material).
+    # The faces the cut line crosses are split along it (whole-face selection on the MakeHuman neck quads left a
+    # saw-tooth top edge), so the gaiter ends on a smooth contour; a rolled hem is added there further below.
+    v, v0, v2, faces, fmat, fkind, src2, hem = split_gaiter(B, v0, v2, faces, fmat, fkind, eyeY, eyeZ)
+    F = tri_faces([f for f, k in zip(faces, fkind) if k == 'body'])
+    nb = neighbours(len(v0), [f for f, k in zip(faces, fkind) if k == 'body'])
 
     # --- bare-head variant for the Swedish soldiers (no balaclava): the undressed MakeHuman head and neck as 'face'
     # (same skin material), plus a short-hair shell over the scalp as 'hair'. Both are appended as separate vertices;
@@ -744,7 +862,7 @@ def dress(B, W, pos, R):
     th = np.abs(np.arctan2(p_[:, 0], -p_[:, 2]))                      # 0 = forehead, pi = nape
     # (same table in game/src/characters/skin.js, which cuts the hairline per pixel)
     hl = np.interp(th, HAIR_TH, HAIR_HL)
-    dens = sstep(0.0, 0.014, p_[:, 1] - hl)
+    dens = sstep(0.0, 0.03, p_[:, 1] - hl)            # shell thickness ramps up behind the (wide, soft) hairline
     earm = np.zeros(len(v0))
     for sx in (1, -1):
         ec = np.array([0.074 * sx, eyeY - 0.014, zc + 0.012])
@@ -778,9 +896,10 @@ def dress(B, W, pos, R):
     B['fuv'] = list(B['fuv']) + add_t
     B['fkind'] = list(fkind) + ['body'] * len(add_f)
     B['fmat'] = fmat + add_m
-    B['src'] = np.concatenate([np.arange(len(v2)), src])   # vertex -> original vertex (weights)
+    B['src'] = np.concatenate([src2, src2[src]])   # vertex -> original vertex (weights)
+    hem_strip(B, v0, v2, n0, hem, src2)
     B['hairUV'] = np.zeros((len(B['v']), 2))
-    B['hairUV'][base + len(hv_):] = np.column_stack([th[hvh], p_[hvh, 1]])
+    B['hairUV'][base + len(hv_):base + len(hv_) + len(hvh)] = np.column_stack([th[hvh], p_[hvh, 1]])
     return {'eyeY': eyeY, 'eyeZ': eyeZ, 'headC': headC}
 
 

@@ -32,6 +32,11 @@ float skHairLine(float th) {
     : th < 1.38 ? -0.012 : th < 1.62 ? mix(-0.012, 0.012, (th - 1.38) / 0.24) : th < 1.95 ? mix(0.012, 0.0, (th - 1.62) / 0.33)
     : th < 2.3 ? mix(0.0, -0.05, (th - 1.95) / 0.35) : mix(-0.05, -0.078, (th - 2.3) / 0.8416);
 }
+// the same line low-pass filtered round the head (5 taps over +-0.12 rad, ~1 cm of arc each side): rounds the
+// temple notch, where the raw table steps 5 cm in height over ~1 cm and read as a hard vertical edge
+float skHairLineS(float th) {
+  return (skHairLine(abs(th - 0.12)) + skHairLine(abs(th - 0.06)) + skHairLine(th) + skHairLine(th + 0.06) + skHairLine(th + 0.12)) * 0.2;
+}
 vec3 skBump(vec3 p, vec3 n, float h, float fd) {
   vec3 dx = dFdx(p), dy = dFdy(p);
   vec3 r1 = cross(dy, n), r2 = cross(n, dx);
@@ -125,16 +130,15 @@ ${NOISE}`)
         // hair density on the scalp: front hairline ~1 cm soft edge, longer fade on the clipped sides and the nape
         vec3 q = p - vec3(0.0, eyeY, uHeadC.z);
         float th = abs(atan(q.x, -q.z));
-        float hl = skHairLine(th);
-        float fadeW = mix(0.014, 0.03, smoothstep(0.9, 1.7, th));
+        float hl = skHairLineS(th);
+        // density fade across the hairline: ~2.5 cm at the front (sparse fine hairs well below the line, density
+        // building up gradually), longer on the clipped sides and the nape
+        float fadeW = mix(0.025, 0.036, smoothstep(0.9, 1.7, th));
         // irregular outline: ~1.5 cm lobes (temples, widow's peak), 3 mm tufts, fine strands
-        float edgeN = 0.012 * (skN(p * 55.0 + 4.2) - 0.5) + 0.006 * (skN(p * 260.0 + 1.7) - 0.5) + 0.003 * (skNb(p * 900.0, fwP * 900.0) - 0.5);
+        float edgeN = 0.014 * (skN(p * 55.0 + 4.2) - 0.5) + 0.007 * (skN(p * 260.0 + 1.7) - 0.5) + 0.003 * (skNb(p * 900.0, fwP * 900.0) - 0.5);
         // height above the hairline -> distance across it on the scalp (the line runs nearly vertically at the
         // sideburns, where a plain height difference would give a razor-thin fade)
-        float hlS = (skHairLine(th + 0.02) - skHairLine(max(th - 0.02, 0.0))) / 0.04 / max(length(q.xz), 0.05);
-        float hd = smoothstep(-0.25 * fadeW, fadeW, (q.y - hl) * inversesqrt(1.0 + hlS * hlS) + edgeN);
-        vec3 ecE = vec3(sx * 0.074, eyeY - 0.014, uHeadC.z + 0.012);
-        hd *= smoothstep(0.024, 0.036, length((p - ecE) * vec3(0.55, 1.0, 1.15)));     // clear round the ears
+        float hlS = (skHairLineS(th + 0.03) - skHairLineS(max(th - 0.03, 0.0))) / 0.06 / max(length(q.xz), 0.05);
         // strand frame in bind space (radial from the crown whorl) for the strand texture
         vec3 sd = normalize(p - vec3(0.012, uHeadC.y + 0.075, uHeadC.z + 0.055));
         vec3 st = normalize(cross(sd, normalize(p - uHeadC)));
@@ -143,6 +147,12 @@ ${NOISE}`)
         float fine = skNb(vec3(aS * 1400.0, bS * 160.0, 0.0), fwP * 1400.0);
         float tuft = skNb(vec3(aS * 330.0, bS * 75.0, 5.0), fwP * 330.0);
         float clump = skN(vec3(aS * 120.0, bS * 45.0, 9.0));
+        float hx = smoothstep(-0.55 * fadeW, fadeW, (q.y - hl) * inversesqrt(1.0 + hlS * hlS) + edgeN);
+        hx *= hx * (1.6 - 0.6 * hx);                        // slow, sparse start; density builds up toward the scalp
+        // inside the fade the density is carried by individual strands / tufts rather than a uniform tint
+        float hd = clamp(hx + (0.55 * fine + 0.45 * tuft - 0.5) * 1.1 * hx * (1.0 - hx) * 4.0 * 0.5, 0.0, 1.0);
+        vec3 ecE = vec3(sx * 0.074, eyeY - 0.014, uHeadC.z + 0.012);
+        hd *= smoothstep(0.024, 0.036, length((p - ecE) * vec3(0.55, 1.0, 1.15)));     // clear round the ears
         float strands = 0.3 * fine + 0.4 * tuft + 0.3 * clump;
         // hair length: full on top, short on the clipped sides / nape (more scalp shows through)
         float hlen = smoothstep(hl + 0.004, hl + 0.04, q.y) * (0.55 + 0.45 * smoothstep(1.9, 0.9, th)) + 0.35 * smoothstep(1.4, 0.4, th);
@@ -170,9 +180,11 @@ ${NOISE}`)
           // colour below it already matches, so the shell edge reads as hair thinning out, not as a seam
           float keep = hd + 0.18 * (tuft - 0.5);
           if (keep < 0.8) discard;
+          // the shell fades in over its first stretch (sheen, roughness, wrap), so its edge reads as hair thickening
+          float se = smoothstep(0.8, 0.97, keep);
           col = mix(col, mix(col * 0.6, hairC, cover), hmix);  // scalp shows between the strands, more on the sides
-          skWrap = mix(1.0, 0.25, hmix); skRough = mix(0.5, 0.72 - 0.12 * strands, hmix);
-          skHairK = (0.3 + 1.2 * clump * tuft) * cover * hmix; skF0 = mix(0.028, 0.02, hmix);
+          skWrap = mix(1.0, 0.25, hmix * se); skRough = mix(0.5, 0.72 - 0.12 * strands, hmix * (0.4 + 0.6 * se));
+          skHairK = (0.3 + 1.2 * clump * tuft) * cover * hmix * se; skF0 = mix(0.028, 0.02, hmix);
           skHairTint = uHair / max(max(uHair.r, uHair.g), max(uHair.b, 0.02));
         } else {
           // haemoglobin: cheeks, nose, ears (subtle, no orange push)

@@ -616,14 +616,15 @@ function deathKeys(g, dir, side) {
   });
   const mid = dir > 0 ? keyPose(g, {
     // seat on the ground behind the heels, knees up, torso still falling back, arms thrown forward
-    pos: [0.03 * side, 0.2, 0.3], hips: [0.75, 0.12 * side, 0.06 * side],
+    // (leg angles solved for the seat 0.55 m behind the planted feet: thigh 2.19 rad, shin 0.49 rad from vertical)
+    pos: [0.03 * side, 0.17, 0.55], hips: [0.75, 0.12 * side, 0.06 * side],
     spine: [-0.05, 0.08 * side], chest: [-0.1, 0.15 * side, 0.05 * side], neck: [-0.3], head: [-0.15, 0.25 * side],
-    thighR: [0.95, 0, 0.16], shinR: [-1.35], footR: [0.35], thighL: [0.8, 0, -0.2], shinL: [-1.05], footL: [0.3],
+    thighR: [1.44, 0, 0.16], shinR: [-1.7], footR: [-0.45], thighL: [1.36, 0, -0.2], shinL: [-1.6], footL: [-0.4],
     clavR: [0, 0, 0.1], clavL: [0, 0, -0.1],
     uarmR: [0.9, 0, 0.35], farmR: [0.5], uarmL: [1.0, 0, -0.3], farmL: [0.6], handR: [0.2], handL: [0.2],
   }) : keyPose(g, {
     // on the knees, torso pitching forward, arms hanging forward
-    pos: [0.02 * side, 0.55, -0.12], hips: [-0.3, 0.1 * side, 0.05 * side],
+    pos: [0.02 * side, 0.52, -0.3], hips: [-0.3, 0.1 * side, 0.05 * side],
     spine: [-0.15, 0.05 * side], chest: [-0.15, 0.1 * side], neck: [-0.15], head: [-0.1, 0.3 * side],
     thighR: [0.28, 0, 0.06], shinR: [-1.75], footR: [0.75], thighL: [0.22, 0, -0.06], shinL: [-1.7], footL: [0.75],
     uarmR: [0.6, 0, 0.2], farmR: [0.3], uarmL: [0.7, 0, -0.2], farmL: [0.35], handR: [0.1], handL: [0.1],
@@ -631,15 +632,15 @@ function deathKeys(g, dir, side) {
   const lie = dir > 0 ? keyPose(g, {
     // on the back, legs splayed, one knee raised, head rolled to one side
     pos: [0.08 * side, 0.12, 0.85], hips: [1.55, 0.2 * side, 0.08 * side],
-    spine: [-0.04, 0.1 * side, 0], chest: [-0.03, 0.16 * side, 0.05 * side], neck: [0.06], head: [0.1, 0.85 * side, 0.15 * side],
-    thighR: side > 0 ? [0.5, 0, 0.12] : [0.06, 0, 0.18], shinR: side > 0 ? [-0.9] : [-0.12], footR: [0.35, 0, 0.3],
-    thighL: side < 0 ? [0.5, 0, -0.12] : [0.06, 0, -0.18], shinL: side < 0 ? [-0.9] : [-0.12], footL: [0.35, 0, -0.3],
+    spine: [-0.02, 0.1 * side, 0], chest: [0.0, 0.16 * side, 0.05 * side], neck: [0.32], head: [0.14, 0.85 * side, 0.15 * side],
+    thighR: side > 0 ? [0.45, 0, 0.12] : [-0.09, 0, 0.18], shinR: side > 0 ? [-0.98] : [-0.06], footR: side > 0 ? [-0.6] : [0.35, 0, 0.3],
+    thighL: side < 0 ? [0.45, 0, -0.12] : [-0.09, 0, -0.18], shinL: side < 0 ? [-0.98] : [-0.06], footL: side < 0 ? [-0.6] : [0.35, 0, -0.3],
     clavR: [0, 0, 0.1], clavL: [0, 0, -0.1],
     uarmR: [0.15, 0, 1.0], farmR: [0.7], handR: [0.3], uarmL: [0.4, 0, -0.7], farmL: [1.0], handL: [0.3],
   }) : keyPose(g, {
     // face down, head turned, arms tucked
     pos: [0.08 * side, 0.12, -0.75], hips: [-1.55, 0.2 * side, -0.08 * side],
-    spine: [0.05, 0.1 * side, 0], chest: [0.06, 0.15 * side, 0], neck: [0.25], head: [0.25, 1.1 * side, 0.1 * side],
+    spine: [-0.03, 0.1 * side, 0], chest: [-0.03, 0.15 * side, 0], neck: [0.05], head: [0.1, 1.1 * side, 0.1 * side],
     thighR: [-0.05, 0, 0.12], shinR: [-0.15], footR: [1.1], thighL: [-0.1, 0, -0.1], shinL: [-0.08], footL: [1.0],
     uarmR: [-0.1, 0, 0.3], farmR: [0.1], handR: [0, 0.8], uarmL: [-0.2, 0, -0.45], farmL: [0.15], handL: [0, -0.8],
   });
@@ -652,7 +653,7 @@ const GROUND_PROBES = [
   [BI.handR, 0, -0.08, 0, 0.025], [BI.handL, 0, -0.08, 0, 0.025],
   [BI.footR, 0, null, 0.05, 0], [BI.footR, 0, -0.06, -0.2, 0], [BI.footL, 0, null, 0.05, 0], [BI.footL, 0, -0.06, -0.2, 0], // null: sole (ankle height)
 ];
-const _qy = new THREE.Quaternion(), _Y = new THREE.Vector3(0, 1, 0);
+const _qy = new THREE.Quaternion(), _Y = new THREE.Vector3(0, 1, 0), _ankT = new THREE.Vector3();
 function poseDeath(g, st) {
   const s = g.s, B = g.bones, D = s.death;
   const T = st.dead * 0.9; // seconds since death
@@ -680,10 +681,31 @@ function poseDeath(g, st) {
   fkFrom(g, 0);
   // ground contact: never below the ground; once down, also never floating above it
   let lift = -1;
-  for (const [i, x, y, z, r] of GROUND_PROBES) { _a.set(x, y ?? -RIG.ankle, z).applyMatrix4(s.mm[i]); lift = Math.max(lift, r - _a.y); }
+  const wIK = 1 - sstep(0.95, 1.2, T);
+  for (const [i, x, y, z, r] of GROUND_PROBES) {
+    if (wIK > 0.6 && (i === BI.footR || i === BI.footL)) continue;      // planted by the IK below
+    _a.set(x, y ?? -RIG.ankle, z).applyMatrix4(s.mm[i]); lift = Math.max(lift, r - _a.y);
+  }
   const rest = sstep(0.85, 1.05, T);
   const dy = lift > 0 ? lift : lift * rest;
   if (dy !== 0) { B[0].position.y += dy; fkFrom(g, 0); }
+  // while the knees buckle the feet stay where they stood (IK onto the planted ankles), released as the body goes down
+  if (wIK > 0) {
+    for (let k = 0; k < 2; k++) {
+      const R = k === 0, it = R ? BI.thighR : BI.thighL, is = R ? BI.shinR : BI.shinL, ifo = R ? BI.footR : BI.footL;
+      _qLow.copy(B[it].quaternion); _qAim.copy(B[is].quaternion); _q2.copy(B[ifo].quaternion);
+      _d.set((R ? 1 : -1) * 0.2, 0.25, -1).applyAxisAngle(_Y, yaw);
+      _ankT.lerpVectors(D.ank[k], D.ank1[k], w3).applyAxisAngle(_Y, yaw * w3);   // heels slide as the legs go out
+      twoBone(g, it, is, LEN.thigh, LEN.shin, _ankT, _d, -1);
+      setModelRot(g, ifo, _qy.copy(D.footQ[k]).slerp(D.footQ1[k], w3));
+      _qy.setFromAxisAngle(_Y, yaw);
+      // (slerp from the keyed pose toward the IK result; the IK result is in the bones, so slerp FK -> IK in place)
+      B[it].quaternion.copy(_qLow.slerp(B[it].quaternion, wIK));
+      B[is].quaternion.copy(_qAim.slerp(B[is].quaternion, wIK));
+      B[ifo].quaternion.copy(_q2.slerp(B[ifo].quaternion, wIK));
+      fkFrom(g, it);
+    }
+  }
   // rifle: released, drops and clatters onto its side next to the body
   const r = clamp((T - 0.1) / 0.5, 0, 1), rf = r * r;
   const bounce = T > 0.6 ? Math.abs(Math.sin((T - 0.6) * 9)) * Math.exp(-(T - 0.6) * 7) * 0.05 : 0;
@@ -734,10 +756,21 @@ export function poseGuard(g, st) {
       yaw = clamp(yaw, -0.9, 0.9);
       const side = Math.abs(yaw) > 0.15 ? Math.sign(yaw) * dir : (Math.random() < 0.5 ? -1 : 1);
       const k0 = { q: g.bones.map(b => b.quaternion.clone()), p: g.bones.map(b => b.position.clone()) };
+      // planted ankles / foot orientations of the last living pose (model space), for the knee buckle
+      // (feet set flat on the ground with their heading kept, also when the shot caught a foot mid-step)
+      const ank = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = RIG.ankle; return v; });
+      const footQ = [BI.footR, BI.footL].map(i => { const f = _d.set(0, 0, -1).applyQuaternion(g.s.mq[i]); return new THREE.Quaternion().setFromAxisAngle(_Y, Math.atan2(-f.x, -f.z)); });
       const keys = deathKeys(g, dir, side);
+      // ankles / feet of the final lying pose (model space, before the fall's yaw): the IK targets slide there
+      for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(keys.lie.q[i]); g.bones[i].position.copy(keys.lie.p[i]); }
+      fkFrom(g, 0);
+      const ank1 = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = Math.max(RIG.ankle, v.y - keys.lie.p[0].y + 0.17); return v; });
+      const footQ1 = [BI.footR, BI.footL].map(i => g.s.mq[i].clone());
+      for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(k0.q[i]); g.bones[i].position.copy(k0.p[i]); }
+      fkFrom(g, 0);
       const r1q = qE(0, side * 0.9 + 0.4 * dir + yaw, Math.PI / 2 * side);
       s.death = {
-        dir, side, yaw, k0, ...keys,
+        dir, side, yaw, k0, ank, footQ, ank1, footQ1, ...keys,
         r0p: g.rifle.position.clone(), r0q: g.rifle.quaternion.clone(),
         r1p: new THREE.Vector3(0.42 * side, 0.026, -0.15 * dir).applyAxisAngle(_Y, yaw), r1q,
       };
