@@ -45,6 +45,15 @@ class GameV2SourceChecks(unittest.TestCase):
             with self.subTest(texture=tex):
                 self.assertIn(tex, assets)
 
+    def test_models_documented(self):
+        # every imported model file needs provenance (author, licence, source) in docs/ASSETS.md
+        assets = (ROOT / "docs/ASSETS.md").read_text()
+        for model in sorted((GAME / "assets/models").glob("*")):
+            with self.subTest(model=model.name):
+                self.assertIn(f"game/assets/models/{model.name}", assets)
+        self.assertIn("CC0", assets)
+        self.assertTrue((ROOT / "tools/mh/sources/SOURCES.md").exists())
+
     def test_legacy_fallback_link(self):
         self.assertIn("../index.html", HTML)
 

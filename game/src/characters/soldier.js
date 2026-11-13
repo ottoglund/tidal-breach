@@ -7,9 +7,13 @@
 // appended to the same geometry, rigidly weighted to one bone each, so a guard
 // is a single skinned draw per material group (7 groups).
 //
-// All geometry is original procedural work (no imported assets).
+// Body: when the MakeHuman-based asset (characters/body.js, game/assets/models/soldier_body.bin, CC0 source mesh,
+// see docs/ASSETS.md) is loaded, the lofted body below is replaced by that clothed human body and the skeleton takes
+// its proportions (setupBody); the procedural body stays as the fallback if the asset cannot be loaded. Gear is
+// procedural in both cases and is refitted to the MakeHuman proportions (fitTorso / fitHead / bodyGear).
 import * as THREE from 'three';
 import { box as boxGeo, rcyl, cyl } from '../geo.js';
+import { soldierBody } from './body.js';
 // tiny parts (zipper pulls, tabs, stitched edges) stay plain 12-triangle boxes: a bevel would be sub-pixel
 const box = (w, h, d, r) => (Math.min(w, h, d) < 0.016 ? boxGeo(w, h, d, 0) : boxGeo(w, h, d, r));
 
@@ -37,6 +41,10 @@ export const BONE_DEFS = [
 ];
 export const BI = Object.fromEntries(BONE_DEFS.map(([n], i) => [n, i]));
 export const LEN = { upper: 0.30, fore: 0.265, thigh: 0.44, shin: 0.405 };
+// pose constants that depend on the body (procedural defaults; replaced by setupBody() for the MakeHuman body)
+//  hipY: standing pelvis pivot height, ankle: ankle height over the sole, eye: aiming (right) eye in head-bone space,
+//  gripR / gripL: grip axis centre in hand space, chest: chest bone rest position
+export const RIG = { hipY: 0.97, ankle: 0.085, eye: [0.034, 0.128, -0.078], gripR: [-0.03, -0.097, 0.004], gripL: [0.03, -0.097, 0.0], chest: [0, 1.25, 0.01], mh: false };
 
 // material group order of the skinned mesh
 export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove', 'patch', 'skin', 'metal'];
@@ -135,6 +143,8 @@ class SkinBuilder {
     const g = geo.clone();
     if (m) g.applyMatrix4(m);
     if (!g.attributes.normal) g.computeVertexNormals();
+    if (this.fit) this.fit(g, bone);                        // MakeHuman body: refit gear authored for the procedural body
+    if (this.xf && this.xf[bone]) g.applyMatrix4(this.xf[bone]); // identity-rest space -> A-pose bind space
     const p = g.attributes.position, nn = g.attributes.normal, uv = g.attributes.uv;
     for (let i = 0; i < p.count; i++) {
       G.pos.push(p.getX(i), p.getY(i), p.getZ(i));
@@ -242,10 +252,7 @@ function seam(pt, r, a, a0, amp, w = 0.16) {
 }
 
 // ---------------------------------------------------------------- body parts
-function torso(B) {
-  const { hips, spine, chest, neck, clavR, clavL } = BI;
-  // y, half-width, front depth, back depth, centre z, superellipse p, weights
-  const T = [
+const TORSO_T = (({ hips, spine, chest, neck }) => [
     [0.795, 0.004, 0.004, 0.004, 0.0, 2, [[hips, 1]]],
     [0.81, 0.07, 0.05, 0.06, 0.0, 2, [[hips, 1]]],
     [0.84, 0.13, 0.085, 0.1, 0.0, 2.3, [[hips, 1]]],
@@ -269,7 +276,12 @@ function torso(B) {
     [1.565, 0.078, 0.062, 0.07, 0.012, 2, [[chest, 0.4], [neck, 0.6]]],
     [1.555, 0.066, 0.052, 0.058, 0.012, 2, [[chest, 0.4], [neck, 0.6]]],
     [1.54, 0.004, 0.004, 0.004, 0.012, 2, [[neck, 1]]],
-  ];
+])(BI);
+
+function torso(B) {
+  const { hips, spine, chest, neck, clavR, clavL } = BI;
+  // y, half-width, front depth, back depth, centre z, superellipse p, weights
+  const T = TORSO_T;
   const rings = refine(T.map(([y, rx, rf, rb, cz, p, w]) => ring(V(0, y, cz), rx, rf, rb, w, p)), (a, b) => Math.max(zoneSplit(0.93, 1.17, 0.021, 3)(a, b), zoneSplit(1.34, 1.5, 0.03, 2)(a, b)));
   B.tube('camo', rings, 24, (i, a, pt, r) => {
     // shoulders follow the clavicles a little; trouser seat follows the thighs a little
@@ -597,7 +609,7 @@ function rig(B, { helmet = false } = {}) {
   // padded belt as a skinned band around the waist (follows lumbar/hip blend)
   const band = [[1.025, 0.0], [1.029, 0.012], [1.036, 0.017], [1.078, 0.017], [1.085, 0.012], [1.089, 0.0]].map(([y, d]) => {
     const rx = 0.163 + (y - 1.05) * -0.05, w = y < 1.05 ? [[hips, 0.3], [spine, 0.7]] : [[spine, 0.92], [hips, 0.08]];
-    return ring(V(0, y, 0), rx + d, 0.112 + d, 0.112 + d, w, 2.6);
+    return FIT ? beltRing(y, d, w) : ring(V(0, y, 0), rx + d, 0.112 + d, 0.112 + d, w, 2.6);
   });
   B.tube('web', band, 32);
   B.rigid('metal', box(0.05, 0.034, 0.008, 0.003), xf(0.162, 1.057, -0.095, -0.9, 0.04), spine);                // belt buckle (cobra)
@@ -678,6 +690,145 @@ function rig(B, { helmet = false } = {}) {
   for (const s of [-1, 1]) B.rigid('black', box(0.004, 0.014, 0.01, 0.0015), xf(s * 0.011, 1.718, -0.106, 0, 0.3), hd);
 }
 
+// ---------------------------------------------------------------- MakeHuman body (see characters/body.js)
+let FIT = null;          // null: not decided yet, false: procedural body, object: MakeHuman body in use
+const lerp = (a, b, t) => a + (b - a) * t;
+/** piecewise-linear lookup in rows [[y, ...values]] (sorted by y) -> values at y */
+function rowsAt(rows, y) {
+  if (y <= rows[0][0]) return rows[0].slice(1);
+  for (let i = 1; i < rows.length; i++) if (y <= rows[i][0]) {
+    const a = rows[i - 1], b = rows[i], t = (y - a[0]) / (b[0] - a[0]);
+    return a.slice(1).map((v, k) => lerp(v, b[k + 1], t));
+  }
+  return rows[rows.length - 1].slice(1);
+}
+// procedural body measurements (front z, back z, half width) from the lofted torso table, for the gear refit
+const OLD_TORSO = TORSO_T.filter(r => r[1] > 0.05 && r[0] <= 1.52).map(([y, rx, rf, rb, cz]) => [y, cz - rf, cz + rb, rx]);
+// procedural head: eye-slot centre, half width, front / back depth, crown height
+const OLD_HEAD = { c: [0, 1.7235, -0.0015], hw: 0.078, depth: 0.2005, crown: 1.84 };
+
+/**
+ * Switch the skeleton to the MakeHuman body once its asset is loaded: bone rest positions, limb lengths and pose
+ * constants (RIG) come from the asset; FIT holds the bind transforms and the gear refit data. Idempotent.
+ */
+function setupBody() {
+  if (FIT !== null) return FIT || null;
+  const A = soldierBody();
+  if (!A || A.bones.length !== BONE_DEFS.length || A.bones.some((b, i) => b.name !== BONE_DEFS[i][0])) { FIT = false; return null; }
+  A.bones.forEach((b, i) => { BONE_DEFS[i][2] = b.rest.slice(); });
+  const P = n => V(...BONE_DEFS[BI[n]][2]);
+  LEN.upper = P('uarmR').distanceTo(P('farmR')); LEN.fore = P('farmR').distanceTo(P('handR'));
+  LEN.thigh = P('thighR').distanceTo(P('shinR')); LEN.shin = P('shinR').distanceTo(P('footR'));
+  RIG.hipY = P('hips').y; RIG.ankle = P('footR').y;
+  RIG.eye = [A.eyeR[0] - P('head').x, A.eyeR[1] - P('head').y, A.eyeR[2] - P('head').z];
+  RIG.gripR = [A.grip.R[0], A.grip.R[1], 0.004]; RIG.gripL = [A.grip.L[0], A.grip.L[1], 0.0];
+  RIG.chest = P('chest').toArray(); RIG.mh = true;
+  // rest (identity, arms hanging) -> bind (A pose) per bone
+  const xf = A.bones.map((b) => {
+    const bind = new THREE.Matrix4().compose(V(...b.bindPos), new THREE.Quaternion(...b.bindQuat), V(1, 1, 1));
+    const m = bind.multiply(new THREE.Matrix4().makeTranslation(-b.rest[0], -b.rest[1], -b.rest[2]));
+    return m.equals(new THREE.Matrix4()) ? null : m;
+  });
+  const L = A.landmarks, H = L.head;
+  const hc = [0, H.eyeY, (H.browFront + H.back) / 2];
+  const headM = new THREE.Matrix4().makeTranslation(hc[0], hc[1], hc[2])
+    .multiply(new THREE.Matrix4().makeScale(H.halfWidth / OLD_HEAD.hw, (H.top - H.eyeY) / (OLD_HEAD.crown - OLD_HEAD.c[1]), (H.back - H.browFront) / OLD_HEAD.depth))
+    .multiply(new THREE.Matrix4().makeTranslation(-OLD_HEAD.c[0], -OLD_HEAD.c[1], -OLD_HEAD.c[2]));
+  FIT = { A, xf, headM, torso: L.torso, limb: L.limb, head: H };
+  return FIT;
+}
+
+/** Refit a gear piece authored for the procedural body (identity-rest space) onto the MakeHuman body. */
+function fitGear(g, bone) {
+  if (bone === BI.head || bone === BI.neck) { g.applyMatrix4(FIT.headM); return; }
+  if (bone !== BI.hips && bone !== BI.spine && bone !== BI.chest) return;
+  // torso gear: rigid shift so the piece keeps its stand-off from the jacket surface (front / back / side)
+  g.computeBoundingBox();
+  const c = g.boundingBox.getCenter(new THREE.Vector3());
+  const [oF, oB, oW] = rowsAt(OLD_TORSO, c.y), [nF, nB, nW] = rowsAt(FIT.torso, c.y);
+  const oc = (oF + oB) / 2, t = Math.min(1, Math.max(-1, (c.z - oc) / ((oB - oF) / 2)));
+  const dz = lerp(nF - oF, nB - oB, (t + 1) / 2);
+  const dx = Math.sign(c.x) * (nW - oW) * Math.min(1, Math.abs(c.x) / oW);
+  g.translate(dx, 0, dz);
+}
+
+/** Append one LOD of the body asset; groups are mapped to builder material keys (all to `only` if given). */
+function addBody(B, lod, only) {
+  const { position, normal, uv, skinIndex, skinWeight } = lod.attrs;
+  const ix = lod.index.array;
+  const map = { camo: 'camo', knit: 'knit', boot: 'boot', lens: 'lens', glove: 'glove', skin: 'skin', sole: 'black' };
+  for (const gr of lod.groups) {
+    const G = B.g.get(only || map[gr.name] || 'camo');
+    const remap = new Map();
+    for (let k = gr.start; k < gr.start + gr.count; k++) {
+      const i = ix[k];
+      let j = remap.get(i);
+      if (j === undefined) {
+        j = G.pos.length / 3; remap.set(i, j);
+        G.pos.push(position.getX(i), position.getY(i), position.getZ(i));
+        G.nor.push(normal.getX(i), normal.getY(i), normal.getZ(i));
+        G.uv.push(uv.getX(i), uv.getY(i));
+        G.si.push(skinIndex.getX(i), skinIndex.getY(i), skinIndex.getZ(i), skinIndex.getW(i));
+        G.sw.push(skinWeight.getX(i), skinWeight.getY(i), skinWeight.getZ(i), skinWeight.getW(i));
+      }
+      G.idx.push(j);
+    }
+  }
+}
+
+/** Belt band ring for the MakeHuman torso (replaces the procedural ellipse) */
+function beltRing(y, d, w) {
+  const [nF, nB, nW] = rowsAt(FIT.torso, y);
+  return ring(V(0, y, (nF + nB) / 2), nW + 0.004 + d, (nB - nF) / 2 + 0.006 + d, (nB - nF) / 2 + 0.006 + d, w, 2.6);
+}
+
+/** Limb gear on the MakeHuman body, authored directly in its identity-rest space. */
+function bodyGear(B) {
+  const Lm = FIT.limb;
+  for (const side of [1, -1]) {
+    const sfx = side > 0 ? 'R' : 'L';
+    const ua = BI['uarm' + sfx], th = BI['thigh' + sfx], sh = BI['shin' + sfx], ft = BI['foot' + sfx];
+    const [ux, uy, uz] = BONE_DEFS[ua][2], [tx, ty, tz] = BONE_DEFS[th][2], [sx, sy, sz] = BONE_DEFS[sh][2], [fx, , fz] = BONE_DEFS[ft][2];
+    // sleeve pocket flap + velcro field on the outer upper arm
+    B.rigid('camo', box(0.012, 0.12, 0.09, 0.004), xf(ux + side * (Lm.uarmOut - 0.002), uy - 0.135, uz + 0.004, 0, 0, side * -0.04), ua);
+    B.rigid('web', box(0.006, 0.05, 0.065), xf(ux + side * (Lm.uarmOut + 0.004), uy - 0.105, uz + 0.004, 0, 0, side * -0.04), ua);
+    // cargo pocket on the outer thigh + flap + snap
+    B.rigid('camo', box(0.024, 0.17, 0.13, 0.011), xf(tx + side * (Lm.thighOut + 0.006), ty - 0.27, tz - 0.012, 0, 0, side * 0.035), th);
+    B.rigid('camo', box(0.028, 0.035, 0.136, 0.008), xf(tx + side * (Lm.thighOut + 0.009), ty - 0.18, tz - 0.012, 0, 0, side * 0.035), th);
+    B.rigid('metal', new THREE.CylinderGeometry(0.006, 0.006, 0.004, 10), xf(tx + side * (Lm.thighOut + 0.024), ty - 0.19, tz - 0.075, 0, Math.PI / 2, 0), th);
+    // knee pad (shin bone so it rides the kneecap)
+    const pad = new THREE.SphereGeometry(0.072, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.42);
+    B.rigid('black', pad, xf(sx, sy - 0.02, sz + Lm.kneeFront + 0.055, 0, -Math.PI / 2, 0, 1.0, 1.25, 0.9), sh);
+    // boot lacing along the instep: tongue strip, lace rungs, eyelets
+    const [i0, i1] = Lm.instep;           // [z, y] at the toe end / ankle end, relative to the ankle
+    const ax = Math.atan2(i1[1] - i0[1], i1[0] - i0[0]), len = Math.hypot(i1[1] - i0[1], i1[0] - i0[0]);
+    const mid = [(i0[0] + i1[0]) / 2, (i0[1] + i1[1]) / 2];
+    B.rigid('black', box(0.03, 0.006, len), xf(fx, RIG.ankle + mid[1] + 0.004, fz + mid[0], 0, -ax), ft);
+    for (let k = 0; k < 5; k++) {
+      const t = 0.1 + k * 0.2, z = lerp(i0[0], i1[0], t), y = RIG.ankle + lerp(i0[1], i1[1], t) + 0.007;
+      B.rigid('black', box(0.046, 0.004, 0.006), xf(fx, y, fz + z, 0, -ax), ft);
+      for (const e of [-1, 1]) B.rigid('metal', new THREE.CylinderGeometry(0.0034, 0.0034, 0.004, 8), xf(fx + e * 0.02, y - 0.002, fz + z, 0, -ax), ft);
+    }
+  }
+}
+
+/** Far LOD (> 42 m, puddle reflection, shadows of distant soldiers): decimated body + a few boxes, ONE group. */
+function farGeometry(kind) {
+  const B = new SkinBuilder();
+  B.fit = fitGear; B.xf = FIT.xf;
+  addBody(B, FIT.A.lods.far, 'camo');
+  const { chest, spine, head: hd } = BI;
+  B.rigid('camo', box(0.26, 0.24, 0.05), xf(0, 1.27, -0.155), chest);              // chest rig
+  B.rigid('camo', box(0.3, 0.17, 0.07), xf(0, 1.05, -0.158), spine);               // magazine pouches
+  for (const s of [-1, 1]) B.rigid('camo', box(0.075, 0.16, 0.17), xf(s * 0.215, 1.045, -0.015), spine);
+  B.rigid('camo', box(0.26, 0.17, 0.07), xf(0, 1.035, 0.15), spine);               // back pouches
+  if (kind === 'hv_helmet') B.rigid('camo', new THREE.SphereGeometry(0.125, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.5), xf(0, 1.69, 0.004, 0, 0, 0, 0.88, 1.35, 1), hd);
+  else for (const s of [-1, 1]) B.rigid('camo', box(0.03, 0.08, 0.07), xf(s * 0.1, 1.715, 0), hd);  // earmuffs
+  const g = B.build();
+  g.computeBoundingSphere();
+  return g;
+}
+
 const geoCache = {};
 /**
  * kind: 'opfor' (earmuffs + glasses), 'hv' (Swedish Home Guard, earmuffs), 'hv_helmet' (helmet with M90 cover).
@@ -687,13 +838,20 @@ export function soldierGeometry(kind = 'opfor') {
   if (geoCache[kind]) return geoCache[kind];
   const B = new SkinBuilder();
   const helmet = kind === 'hv_helmet';
-  torso(B); head(B);
-  arm(B, 1); arm(B, -1); hand(B, 1); hand(B, -1);
-  leg(B, 1); leg(B, -1);
+  if (setupBody()) {
+    addBody(B, FIT.A.lods.close);
+    B.fit = fitGear; B.xf = FIT.xf;
+    bodyGear(B);
+  } else {
+    torso(B); head(B);
+    arm(B, 1); arm(B, -1); hand(B, 1); hand(B, -1);
+    leg(B, 1); leg(B, -1);
+  }
   rig(B, { helmet });
   if (kind !== 'opfor') hvInsignia(B, helmet);
   const g = geoCache[kind] = B.build();
   g.computeBoundingSphere();
+  if (FIT) g.userData.far = farGeometry(kind);
   return g;
 }
 
@@ -707,11 +865,14 @@ function hvInsignia(B, helmet) {
     return g;
   };
   // flag: atlas u 0..0.5 ; shield: u 0.5..1.  Patches sit on the outer face of the upper sleeve (x = +-(0.19+0.092))
-  B.rigid('patch', quad(0, 0.5, 0.052, 0.034), xf(-0.19 - 0.0865, 1.4, -0.004, -Math.PI / 2), uarmL);
-  B.rigid('patch', quad(0.5, 1, 0.042, 0.048), xf(0.19 + 0.0865, 1.4, -0.004, Math.PI / 2), uarmR);
+  // MakeHuman body: on the outer sleeve just below the shoulder seam, above the pocket flap
+  const [ux, uy, uz] = BONE_DEFS[uarmR][2];
+  const X = FIT ? ux + FIT.limb.uarmOut + 0.0125 : 0.19 + 0.0865, Y = FIT ? uy - 0.06 : 1.4, Z = FIT ? uz - 0.002 : -0.004;
+  B.rigid('patch', quad(0, 0.5, 0.052, 0.034), xf(-X, Y, Z, -Math.PI / 2), uarmL);
+  B.rigid('patch', quad(0.5, 1, 0.042, 0.048), xf(X, Y, Z, Math.PI / 2), uarmR);
   // hook-and-loop backing field behind each patch
-  B.rigid('black', box(0.012, 0.042, 0.058, 0.003), xf(-0.19 - 0.0785, 1.4, -0.004), uarmL);
-  B.rigid('black', box(0.012, 0.056, 0.05, 0.003), xf(0.19 + 0.0785, 1.4, -0.004), uarmR);
+  B.rigid('black', box(0.012, 0.042, 0.058, 0.003), xf(-X + 0.008, Y, Z), uarmL);
+  B.rigid('black', box(0.012, 0.056, 0.05, 0.003), xf(X - 0.008, Y, Z), uarmR);
 }
 
 /** New skeleton + SkinnedMesh sharing the cached geometry. */
@@ -725,8 +886,14 @@ export function createSoldierMesh(materials, kind = 'opfor') {
   });
   const mesh = new THREE.SkinnedMesh(geo, geo.userData.names.map(k => materials[k]));
   mesh.add(bones[0]);
+  if (FIT) {
+    // bind in the MakeHuman A pose (bone orientations from the asset), then return to the identity rest pose
+    const q = FIT.A.bones.map(b => new THREE.Quaternion(...b.bindQuat));
+    BONE_DEFS.forEach(([, parent], i) => bones[i].quaternion.copy(parent >= 0 ? q[parent].clone().invert().multiply(q[i]) : q[i]));
+  }
   mesh.updateMatrixWorld(true);
   mesh.bind(new THREE.Skeleton(bones));
+  if (FIT) { bones.forEach(b => b.quaternion.identity()); mesh.updateMatrixWorld(true); }
   mesh.castShadow = true; mesh.receiveShadow = true;
   // generous fixed bounds (covers lying poses) so culling never uses stale skinned bounds
   mesh.boundingSphere = new THREE.Sphere(V(0, 0.8, 0), 2.0);

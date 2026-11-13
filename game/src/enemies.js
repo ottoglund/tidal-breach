@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { box, rcyl, cyl, xform } from './geo.js';
 import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { createSoldierMesh, BONE_DEFS, BI, LEN } from './characters/soldier.js';
+import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG } from './characters/soldier.js';
 import { fabricShading } from './characters/cloth.js';
 
 function M(list) {
@@ -70,13 +70,15 @@ function materials() {
     uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x8c9694 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
     uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0x9aa397 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
     vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0x8f9a88 }), { dirt: 0.45, sheen: 0.08, soak: 0.3, wrinkle: 0.3, rough: 0.2, wetTop: 0.5 }),
-    knit: fabricShading(mat('olive_knit', { tile: 0.12, color: 0xa5a898 }), { dirt: 0.2, sheen: 0.22, soak: 0.25, wrinkle: 0.1, rough: 0.15, wetTop: 0.55, mudGloss: 0.2 }),
+    // knit: fine rib (7 cm tile) with a strong normal map and a fuzzy sheen so the balaclava reads as wool over the
+    // MakeHuman face shape, not as skin
+    knit: fabricShading(mat('olive_knit', { tile: 0.07, color: 0xb2b8a2, normalScale: 1.8 }), { dirt: 0.2, sheen: 0.32, soak: 0.25, wrinkle: 0.35, rough: 0.15, wetTop: 0.55, mudGloss: 0.2 }),
     // satin nylon / polymer hardware (buckles, soles, glove shells, strap tails): smoother than cloth, scuffed at the bottom
     glove: fabricShading(mat('polymer', { tile: 0.25, color: 0x4a4c50, roughness: 0.85 }), { dirt: 0.7, sheen: 0.0, soak: 0.2, wrinkle: 0.0, rough: 0.35, wetTop: 0.3, mudGloss: 0.5 }),
     metal: mat('gunmetal', { tile: 0.25, color: 0xc4c4c0, roughness: 0.75 }),   // buckles, snaps, D-rings, slides, eyelets
     skin: fabricShading(plainMat(0x5e4538, 0.66), { dirt: 0.0, sheen: 0.25, soak: 0.1, wrinkle: 0.0, rough: 0.25, wetTop: 0.5, mudGloss: 0 }),
     gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
-    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x4b4540, roughness: 1.2 }), { dirt: 1.0, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3 }),
+    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3 }),
     gun: mat('gunmetal'),
     wood: mat('ak_wood', { tile: 0.3, color: 0xa39c96 }),
     poly: mat('polymer', { tile: 0.25 }),
@@ -277,7 +279,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet } = {}) {
   const fl = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.5, 1.5) }));
   fl.position.set(0, 0.0, mz); fl.visible = false; rifle.add(fl);
   root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
-  root.userData.tbSoldier = { body: mesh, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')] }; // distance policies for shadow / reflection passes: world/props/lod.js
+  root.userData.tbSoldier = { body: mesh, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')], geo: mesh.geometry, far: mesh.geometry.userData.far || null }; // distance policies for shadow / reflection passes: world/props/lod.js
   const seed = Math.random() * 100;
   const g = {
     root, rifle, flash, flashMesh: fl, mesh, bones, rest, side, weapon, kind,
@@ -365,14 +367,22 @@ const HAND_L_Q = (() => {
   const X = new THREE.Vector3().crossVectors(Y, Zd).normalize();
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Zd));
 })();
-const GRIP_IN_HAND_R = new THREE.Vector3(-0.03, -0.097, 0.004);
-const GRIP_IN_HAND_L = new THREE.Vector3(0.03, -0.097, 0.0);
+// body-dependent (soldier.js RIG; the MakeHuman body sets them when its asset is loaded): grip axis in hand space,
+// aiming eye in head space, sling-carry butt position (kept at the same model-space spot when the chest bone moves)
+const GRIP_IN_HAND_R = new THREE.Vector3(), GRIP_IN_HAND_L = new THREE.Vector3(), EYE = new THREE.Vector3(), BUTT_LOW = new THREE.Vector3();
 const BUTT = new THREE.Vector3(0, -0.05, 0.41);       // buttpad centre in rifle space
-const BUTT_LOW = new THREE.Vector3(0.18, -0.07, -0.13); // sling carry: butt position in chest space
-const EYE = new THREE.Vector3(0.034, 0.128, -0.078);
+let rigFor = null;
+function syncRig() {
+  if (rigFor === RIG.mh) return;
+  rigFor = RIG.mh;
+  GRIP_IN_HAND_R.fromArray(RIG.gripR); GRIP_IN_HAND_L.fromArray(RIG.gripL); EYE.fromArray(RIG.eye);
+  // sling carry: butt position in chest space (procedural chest at (0, 1.25, 0.01)); the MakeHuman torso is deeper
+  BUTT_LOW.set(0.18, -0.07 + 1.25 - RIG.chest[1], -0.13 + 0.01 - RIG.chest[2] + (RIG.mh ? -0.05 : 0));
+}
 
 // ------------------------------------------------------------------ alive pose
 function poseAlive(g, st, dt) {
+  syncRig();
   const s = g.s, B = g.bones, t = s.time;
   for (let i = 0; i < B.length; i++) { B[i].quaternion.identity(); B[i].position.copy(g.rest[i]); }
   const aimRaw = clamp(st.aim, 0, 1), A = sstep(0, 1, aimRaw);
@@ -397,7 +407,7 @@ function poseAlive(g, st, dt) {
 
   // ---- pelvis
   const bobW = Math.cos(2 * (ph - midR));
-  const hy = 0.97 - 0.022 - 0.045 * A - 0.06 * run * m + m * (0.022 * (1 - run) * bobW - 0.025 * run * bobW) + 0.004 * (1 - m) * breath * 0.3;
+  const hy = RIG.hipY - 0.022 - 0.045 * A - 0.06 * run * m + m * (0.022 * (1 - run) * bobW - 0.025 * run * bobW) + 0.004 * (1 - m) * breath * 0.3;
   const hx = m * 0.022 * (1 - 0.5 * run) * Math.cos(ph - midR) + (1 - m) * 0.022 * shift;
   const hz = 0.02 * A + (1 - m) * 0.007 * sway;
   const swingR = Math.PI * 2 * (duty + (1 - duty) / 2);
@@ -450,9 +460,9 @@ function poseAlive(g, st, dt) {
     const yaw = -side * 0.12 + (R ? -0.55 : -0.3) * A * (1 - m);
     // ankle from ground contact with heel / ball pivot
     const fq = _qf.setFromEuler(_e.set(pitch, yaw, 0, 'YXZ'));
-    const piv = pitch >= 0 ? _a.set(0, -0.085, 0.04) : _a.set(0, -0.085, -0.15);
+    const piv = pitch >= 0 ? _a.set(0, -RIG.ankle, 0.04) : _a.set(0, -RIG.ankle, -0.15);
     _c.set(0, 0, 0).add(piv); _c.applyAxisAngle(_d.set(0, 1, 0), yaw);       // flat pivot offset
-    _T.set(x, fy + 0.085, z).add(_c);                                          // pivot position
+    _T.set(x, fy + RIG.ankle, z).add(_c);                                          // pivot position
     _b.copy(piv).applyQuaternion(fq);
     _T.sub(_b);                                                                // ankle position
     _d.set(side * 0.12, 0, -1).applyAxisAngle(_c.set(0, 1, 0), yaw * 0.7 + twist * 0.5);
@@ -523,7 +533,7 @@ const GROUND_PROBES = [
   [BI.hips, 0, 0, 0, 0.12], [BI.spine, 0, 0.08, 0, 0.12], [BI.chest, 0, 0.12, 0, 0.13], [BI.head, 0, 0.13, -0.01, 0.1],
   [BI.shinR, 0, 0, 0, 0.06], [BI.shinL, 0, 0, 0, 0.06], [BI.farmR, 0, 0, 0, 0.05], [BI.farmL, 0, 0, 0, 0.05],
   [BI.handR, 0, -0.08, 0, 0.025], [BI.handL, 0, -0.08, 0, 0.025],
-  [BI.footR, 0, -0.085, 0.05, 0], [BI.footR, 0, -0.06, -0.2, 0], [BI.footL, 0, -0.085, 0.05, 0], [BI.footL, 0, -0.06, -0.2, 0],
+  [BI.footR, 0, null, 0.05, 0], [BI.footR, 0, -0.06, -0.2, 0], [BI.footL, 0, null, 0.05, 0], [BI.footL, 0, -0.06, -0.2, 0], // null: sole (ankle height)
 ];
 function poseDeath(g, st) {
   const s = g.s, B = g.bones, D = s.death;
@@ -543,7 +553,7 @@ function poseDeath(g, st) {
   fkFrom(g, 0);
   // keep the body out of the ground: lift the pelvis by the deepest penetration
   let lift = 0;
-  for (const [i, x, y, z, r] of GROUND_PROBES) { _a.set(x, y, z).applyMatrix4(s.mm[i]); lift = Math.max(lift, r - _a.y); }
+  for (const [i, x, y, z, r] of GROUND_PROBES) { _a.set(x, y ?? -RIG.ankle, z).applyMatrix4(s.mm[i]); lift = Math.max(lift, r - _a.y); }
   if (lift > 0) { B[0].position.y += lift; fkFrom(g, 0); }
   // rifle: released, drops and clatters onto its side next to the body
   const r = clamp((T - 0.1) / 0.5, 0, 1), rf = r * r;

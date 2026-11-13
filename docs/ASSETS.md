@@ -1,7 +1,9 @@
 # Asset provenance and licences
 
 Every file the game loads is listed here. No photographs, scanned textures,
-downloaded models, music or sound samples are used.
+music or sound samples are used. The only imported third-party model data is
+the CC0 MakeHuman base mesh, skeleton weights and targets the soldier body is
+built from (section "Models" below).
 
 ## Third-party code
 
@@ -44,7 +46,7 @@ the set's real tile size (physically scaled slopes).
 | ratnik_green, boot_leather | albedo, normal, orm | soldier rigs/pouches (olive cordura with 25 mm stitched MOLLE/PALS webbing rows), boots (dark pebbled leather with creases); used by OPFOR and Home Guard soldiers |
 | ak_wood, plum_polymer | albedo, normal, orm | AK furniture (dark reddish-brown laminated birch, satin; plum polymer) |
 
-Soldier materials reuse the sets above; no new texture files were added for the close-range soldier pass. Additional soldier surfaces are shader-/material-only: skin (flat dark tone, `plainMat`), metal hardware (`gunmetal` set, recoloured), satin polymer hardware (`polymer` set, recoloured) and the sunglass lenses (physical material plus a stylised procedural reflection in `game/src/enemies.js`, not a captured or photographic reflection).
+Soldier materials reuse the sets above; no new texture files were added for the close-range soldier pass or the MakeHuman body. Additional soldier surfaces are shader-/material-only: skin (flat dark tone, `plainMat`), metal hardware (`gunmetal` set, recoloured), satin polymer hardware (`polymer` set, recoloured) and the sunglass lenses (physical material plus a stylised procedural reflection in `game/src/enemies.js`, not a captured or photographic reflection).
 
 Soldier insignia (Swedish flag, generic dark "HV" shield) are drawn at runtime on a canvas in `game/src/enemies.js` (original simple graphics, no copied artwork).
 | water | normal | harbour water ripples |
@@ -53,9 +55,35 @@ Soldier insignia (Swedish flag, generic dark "HV" shield) are drawn at runtime o
 
 ## Models
 
-All geometry (containers, crane, ship, warehouse, light masts, bollards,
-guards, weapon and hands) is generated in code under `game/src/`. No external
-model files.
+All level geometry (containers, crane, ship, warehouse, light masts, bollards),
+the weapons, the soldiers' gear and the first-person hands are generated in
+code under `game/src/`.
+
+### Soldier body: `game/assets/models/soldier_body.bin`
+
+| Item | Value |
+|---|---|
+| File | `game/assets/models/soldier_body.bin` (custom binary, format in `game/src/characters/body.js`), loaded same-origin with `THREE.FileLoader` during the loading screen |
+| Built by | `tools/mh/build_soldier.py` (own code; Python 3 + numpy): `python3 tools/mh/build_soldier.py` |
+| Derived from | MakeHuman hm08 base mesh `base.obj`, skeleton `default.mhskel`, weights `default_weights.mhw`, macro targets (caucasian young male, muscle / weight / ideal-proportion targets) |
+| Author | MakeHuman team; copyright holders at the CC0 release: Data Collection AB, Joel Palmius, Jonas Hauquier |
+| Licence | CC0 1.0 Universal (stated in every source file header, in `default_weights.mhw` (`"license": "CC0"`) and in the repository's `LICENSE.ASSETS.md`) |
+| Source | https://github.com/makehumancommunity/makehuman (files fetched from `https://raw.githubusercontent.com/makehumancommunity/makehuman/master/...`, exact paths and SHA-256 hashes in `tools/mh/sources/SOURCES.md`) |
+| Committed copies | `tools/mh/sources/` (+ `LICENSE.ASSETS.md`, `LICENSE.makehuman.md`); `tools/mh/fetch_sources.sh` re-downloads and verifies them |
+| Not used | any MakeHuman program code (AGPL), skins / photographic textures, proxies, clothes |
+
+What the build does to the CC0 data (all own processing): applies the targets
+(adult male, muscle 0.70, weight 0.40, 50 % ideal proportions), drops the helper
+geometry (keeps the two eyeballs), converts decimetres to metres at a 1.79 m
+stature, curls the fingers into a rifle grip, offsets the skin into clothing
+(jacket, trousers bloused over boots, boots with flattened toes and a rubber sole,
+gloves, knit balaclava with an eye opening), adds fold displacement, maps the
+MakeHuman weights onto the game's 19-bone skeleton, triangulates and decimates
+(close LOD ~19.5 k triangles, far LOD ~2.6 k). The uniform, knit, glove and boot
+surfaces use the original procedural textures listed above; no MakeHuman texture
+is used. The build is deterministic (rebuilding gives a byte-identical file).
+If the file fails to load, the game falls back to the original procedural
+lofted body (`game/src/characters/soldier.js`).
 
 ## Audio
 

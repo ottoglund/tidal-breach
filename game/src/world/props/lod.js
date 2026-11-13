@@ -206,7 +206,11 @@ export class LodManager {
     for (const f of this.fields) if (f.shadowBegin) f.shadowBegin(lp);
     for (const o of this.scene.children) {
       const s = o.userData && o.userData.tbSoldier;
-      if (s) s.body.material = s.single; // 1 depth draw instead of 8 material groups
+      if (!s) continue;
+      s.body.material = s.single; // 1 depth draw instead of 8 material groups
+      // MakeHuman body: beyond 12 m the decimated far body also stands in for the shadow (close bodies keep their own
+      // silhouette so self-shadowing matches). The geometry captured for the main view's render list is unaffected.
+      if (s.far) s.body.geometry = (s.dist ?? 0) > 12 ? s.far : s.geo;
     }
   }
 
@@ -223,8 +227,12 @@ export class LodManager {
       if (!s) continue;
       const d = Math.hypot(o.position.x - cx, o.position.z - cz);
       s.body.castShadow = d < 36;
-      // far (> 42 m) or mirrored in a puddle: one draw call with the camo material instead of 7-8 material groups
-      s.body.material = d > 42 * this.lodScale || refl ? s.single : s.mats;
+      // far (> 42 m) or mirrored in a puddle: one draw call with the camo material instead of 7-8 material groups;
+      // with the MakeHuman body also the decimated far body (~3 k instead of ~28 k triangles)
+      const far = d > 42 * this.lodScale || refl;
+      s.body.material = far ? s.single : s.mats;
+      if (s.far) s.body.geometry = far ? s.far : s.geo;
+      if (!refl) s.dist = d;
       // mirrored soldiers only where the puddle reflection is large enough to read them
       s.body.layers.mask = refl && d >= 28 ? 0 : 1;
       if (s.rifle) {

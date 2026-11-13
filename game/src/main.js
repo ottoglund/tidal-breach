@@ -11,6 +11,7 @@ import { Game } from './game.js';
 import { installFog, attachFogUniforms, updateFogLamps } from './fog.js';
 import { lodManager } from './world/props/lod.js';
 import { createSoldier, poseSoldier } from './characters/squad.js';
+import { loadSoldierBody } from './characters/body.js';
 
 installFog(); // must run before any material compiles
 
@@ -35,7 +36,8 @@ async function boot() {
 
   const pipe = new Pipeline($('viewport'), quality);
   const { renderer, scene } = pipe;
-  await loadTextures(renderer, quality.anisotropy, f => { $('loadfill').style.width = Math.round(f * 85) + '%'; });
+  // textures + the soldier body mesh (same-origin files, see docs/ASSETS.md); the body falls back to procedural on failure
+  await Promise.all([loadTextures(renderer, quality.anisotropy, f => { $('loadfill').style.width = Math.round(f * 85) + '%'; }), loadSoldierBody()]);
   $('loadtext').textContent = 'BYGGER HAMNEN…';
   await new Promise(r => setTimeout(r, 0));
 
@@ -184,14 +186,19 @@ async function boot() {
         pick: (x, y) => { const rc = new THREE.Raycaster(); rc.layers.enableAll(); rc.setFromCamera(new THREE.Vector2(x, y), pipe.camera); return rc.intersectObjects(scene.children, true).slice(0, 4).map(h => [h.object.type, h.object.material?.type, h.object.material?.name || '', h.distance.toFixed(2), h.point.toArray().map(v => v.toFixed(2)).join(','), h.object.parent?.type]); },
         state2: () => ({ flashT: weapon.flashT, flashVis: weapon.flash.visible, fx: game.fx.items.length, fxLight: game.fx.light.intensity, decals: game.fx.decals.length, keys: Object.keys(game.keys).filter(k => game.keys[k]), touch: game.touch }),
         debug: () => { const out = []; pipe.weaponScene.traverse(o => { if (o.isMesh && o.visible) { const m = o.material; out.push([o.geometry.type, m.type, m.map ? 'map' : 'nomap', m.color && m.color.getHexString(), o.getWorldPosition(new THREE.Vector3()).toArray().map(v => v.toFixed(2)).join(',')]); } }); return out; },
-        // QA close-up helper: place one posed soldier at a fixed spot (replaces the previous one). o: {side, weapon, helmet, x, z, yaw, aim, seed, time, clear}
+        // QA close-up helper: place one posed soldier at a fixed spot (replaces the previous one). o: {side, weapon, helmet, x, z, yaw, aim, walk, speed, dead, seed, time, clear}
         soldier: (o = {}) => {
           if (window.__qaSoldier) { scene.remove(window.__qaSoldier.root); if (window.__qaSoldier.qaLight) scene.remove(window.__qaSoldier.qaLight); window.__qaSoldier = null; }
           if (o.clear) return null;
           const g = createSoldier({ side: o.side || 'opfor', weapon: o.weapon, helmet: o.helmet });
           g.root.rotation.order = 'YXZ'; g.root.position.set(o.x || 0, 0, o.z || 0); g.root.rotation.y = o.yaw ?? Math.PI;
           g.s.seed = o.seed ?? 3.1; g.s.time = o.time ?? 5;
-          for (let i = 0; i < 3; i++) poseSoldier(g, { walk: 0, speed: 0, aim: o.aim || 0, flash: 0, hit: 0, dead: 0, fallDir: 1 });
+          const st = { walk: o.walk || 0, speed: o.speed || 0, aim: o.aim || 0, flash: 0, hit: 0, dead: o.dead || 0, fallDir: 1 };
+          if (st.speed) { // walking: the gait needs a real phase rate, so advance the phase for 0.4 s of wall time
+            const t0 = performance.now();
+            for (let el = 0; el < 0.4; el = (performance.now() - t0) / 1000) poseSoldier(g, { ...st, walk: st.walk - 7 * (0.4 - el) });
+          }
+          for (let i = 0; i < 3; i++) poseSoldier(g, st);
           if (o.light) { const L = new THREE.PointLight(0xffe2bd, o.light, 14, 2); L.position.set((o.x || 0) + 1.6, 2.6, (o.z || 0) + 2.4); scene.add(L); g.qaLight = L; }
           scene.add(g.root); window.__qaSoldier = g;
           return g.mesh.geometry.index.count / 3;

@@ -25,6 +25,13 @@
 - Standalone WebGL FPS with rain/fog harbour, combat, guards, three sabotage targets and extraction.
 - Desktop and mobile inputs.
 
+### MakeHuman soldier body (implemented, SwiftShader renders only, not accepted)
+- Soldiers (OPFOR and HV) now use a clothed human body built offline from the CC0 MakeHuman base mesh, skeleton weights and macro targets (`tools/mh/build_soldier.py` -> `game/assets/models/soldier_body.bin`, sources and hashes in `tools/mh/sources/SOURCES.md`, provenance in `docs/ASSETS.md`).
+- Real anatomy: face shape under the balaclava (eye opening with skin and eyeballs behind the glasses), gloved hands with fingers curled around the grip, bloused trousers, boots with toe box and rubber sole, jacket hem and collar, fabric folds at elbows / knees / waist.
+- Skeleton proportions from MakeHuman (1.79 m); the mesh is bound in its A pose and the existing pose / IK / death code runs unchanged on the identity rest pose (body-dependent constants in `soldier.js` `RIG`). Gear is refitted to the new torso and head.
+- Same draw calls per soldier; ~26.9 k triangles per close soldier (was ~20.6 k); a decimated ~3.2 k far body is used beyond 42 m, in puddle reflections and for shadows beyond 12 m.
+- The procedural lofted body remains as fallback if the asset cannot be loaded.
+
 ### Performance pass (implemented, measured headless only)
 - New `game/src/world/props/lod.js`: static parts merged per material/zone, small props on a main-view-only DETAIL layer, container field with 4 distance LODs, shadow-pass stand-ins, shadow freeze for far masts, instanced drums/glows/light shafts, soldier LOD.
 - Draw calls / triangles per frame (all passes, SwiftShader, `perf()`): medium spawn 641 / 5.1 M → 302 / 1.04 M; low spawn 243 / 1.42 M → 148 / 565 k; high spawn 1524 / 13.6 M → 656 / 2.4 M.

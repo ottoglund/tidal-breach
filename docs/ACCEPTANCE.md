@@ -27,6 +27,7 @@
 | AI engages | tested (headless) | `test_enemies_engage_and_damage` |
 | HV comrades follow | tested (headless) | `test_squad_follows_and_engages` |
 | Soldier close-up look (2-6 m) | implemented; SwiftShader renders only | before/after at fixed cameras via `__TIDAL_QA__.soldier()` (QA-only hook); ~20.6k triangles per close soldier (was 17.7k), +2 draw calls per close soldier; not reviewed on real hardware or by the user |
+| MakeHuman soldier body | implemented; tests run headless; SwiftShader renders only | CC0 MakeHuman body (`tools/mh/build_soldier.py`, provenance `docs/ASSETS.md`); 26.9 k (OPFOR) / 27.0 k (HV) / 26.6 k (HV helmet) triangles per close soldier (limit 30 k), draw calls per soldier unchanged (9 / 10 / 10 groups), far body 3.2 k triangles in one call; poses checked in renders: idle, walk, aim (`__TIDAL_QA__.soldier({walk, speed, aim})`); `test_static_v2.py::test_models_documented`; not reviewed on real hardware or by the user |
 | Mobile controls | implemented, not tested on device | same bindings as v0.1 |
 | Graphics | implemented; renders captured | `docs/renders/v0.2/` (SwiftShader software GPU) |
 | Performance | **not measured on real hardware** | overlay: `F9` or `?perf=1` |
@@ -34,4 +35,4 @@
 
 Nothing above is "accepted": acceptance needs a full mission played on real desktop and iPhone hardware with recorded FPS.
 
-**Known gaps:** soldiers still read as stylised at 2 m (smooth head/neck, no hair/skin detail, no cloth simulation, lenses use a stylised not captured reflection); software-GPU screenshots only; no real-device FPS; soldiers are procedural skinned meshes (not scanned/photographic); AI navigation unchanged from v0.1; comrades are invulnerable and do not take part in objectives; heavy frame cost before the performance pass (641 calls / 5.1 M tris per frame at medium, all passes).
+**Known gaps:** soldiers still read as game characters rather than photographs at 1-2 m (MakeHuman anatomy now, but clothing is an offset skin with displaced folds, not simulated or sculpted cloth; balaclava shows the face shape but no knit relief beyond the normal map; boots keep faint toe ridges; no wrist / forearm twist bones, so extreme wrist rotation can pinch; lenses use a stylised not captured reflection); software-GPU screenshots only; no real-device FPS; soldiers are procedural skinned meshes (not scanned/photographic); AI navigation unchanged from v0.1; comrades are invulnerable and do not take part in objectives; heavy frame cost before the performance pass (641 calls / 5.1 M tris per frame at medium, all passes).
