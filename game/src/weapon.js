@@ -1,5 +1,5 @@
-// First-person Ak 5C carbine with an Aimpoint-style tube red-dot, olive gloves and M90-camouflage sleeves.
-// Geometry lives in ./viewmodel/ (rifle.js, hands.js, parts.js). Real-scale (~0.85 m overall).
+// First-person Ak 4C (Swedish G3-derived 7.62x51 battle rifle) with an Aimpoint-style tube red-dot, olive gloves and M90-camouflage sleeves.
+// Geometry lives in ./viewmodel/ (rifle.js, hands.js, parts.js). Real-scale (~0.92 m overall).
 // Animation: aim-down-sights, sway, bob, recoil spring, sprint pose, magazine change with a hand that
 // drops to the vest, grabs a fresh magazine and seats it.
 import * as THREE from 'three';
@@ -122,11 +122,11 @@ export class Weapon {
     const f1 = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.13), flashMat); this.flash.add(f1);
     const f2 = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.2), flashMat); f2.rotation.y = Math.PI / 2; f2.position.z = -0.07; this.flash.add(f2);
     const f3 = f2.clone(); f3.rotation.set(0, Math.PI / 2, Math.PI / 2); this.flash.add(f3);
-    this.flash.position.set(0, bore, -0.58);
+    this.flash.position.set(0, bore, -0.6);
     this.flash.visible = false;
     this.gun.add(this.flash);
     this.flashLight = new THREE.PointLight(0xffb060, 0, 3, 2);
-    this.flashLight.position.set(0, bore, -0.6); this.gun.add(this.flashLight);
+    this.flashLight.position.set(0, bore, -0.62); this.gun.add(this.flashLight);
 
     // ---- viewmodel lighting: hemisphere + warm key (follows the lamps near the player) + cool rim + wet-quay bounce ----
     this.hemi = new THREE.HemisphereLight(0x6a7888, 0x241f1a, 1.0); scene.add(this.hemi);
@@ -143,10 +143,11 @@ export class Weapon {
   }
 
   fire() {
-    this.recoilV += 0.9;
-    this.kickRot += 0.045 + Math.random() * 0.02;
-    this.kickYaw = (this.kickYaw || 0) + (Math.random() - 0.45) * 0.03;   // slight right-bias horizontal jump
-    this.kickRoll = (this.kickRoll || 0) + (Math.random() - 0.5) * 0.04;
+    // 7.62x51: heavy shove into the shoulder, big muzzle rise, slower settle than a 5.56 carbine
+    this.recoilV += 1.45;
+    this.kickRot += 0.075 + Math.random() * 0.03;
+    this.kickYaw = (this.kickYaw || 0) + (Math.random() - 0.42) * 0.05;   // slight right-bias horizontal jump
+    this.kickRoll = (this.kickRoll || 0) + (Math.random() - 0.5) * 0.06;
     this.flashT = 0.04;
     this.flash.rotation.z = Math.random() * Math.PI * 2;
     this.flash.scale.setScalar(0.75 + Math.random() * 0.5);
@@ -211,9 +212,9 @@ export class Weapon {
   update(dt, s) {
     this.ads += ((s.ads ? 1 : 0) - this.ads) * Math.min(1, dt * 12);
     this.sprint += ((s.sprinting ? 1 : 0) - this.sprint) * Math.min(1, dt * 8);
-    this.recoilV += (-this.recoil * 380 - this.recoilV * 24) * dt;
+    this.recoilV += (-this.recoil * 300 - this.recoilV * 19) * dt;
     this.recoil += this.recoilV * dt;
-    this.kickRot *= Math.exp(-dt * 14);
+    this.kickRot *= Math.exp(-dt * 9);
     this.swayX += (-s.lookDX * 0.0005 - this.swayX) * Math.min(1, dt * 9);
     this.swayY += (s.lookDY * 0.0005 - this.swayY) * Math.min(1, dt * 9);
     const a = this.ads, steady = 1 - a * 0.85, sp = this.sprint;
@@ -221,8 +222,8 @@ export class Weapon {
     const bobX = Math.sin(s.bob) * 0.011 * bobAmp;
     const bobY = Math.abs(Math.cos(s.bob)) * 0.009 * bobAmp;
     const breathe = Math.sin(s.time * 1.3) * 0.0012 * steady;
-    this.kickYaw = (this.kickYaw || 0) * Math.exp(-dt * 10);
-    this.kickRoll = (this.kickRoll || 0) * Math.exp(-dt * 9);
+    this.kickYaw = (this.kickYaw || 0) * Math.exp(-dt * 7);
+    this.kickRoll = (this.kickRoll || 0) * Math.exp(-dt * 6.5);
     // holding a sight picture: slow figure-eight from breathing and muscle tremor
     const hold = a * (Math.sin(s.time * 0.9) * 0.0007 + Math.sin(s.time * 7.3) * 0.00012);
     const holdY = a * (Math.sin(s.time * 1.8) * 0.0005 + Math.sin(s.time * 6.1 + 1.0) * 0.0001);
@@ -230,7 +231,7 @@ export class Weapon {
     const arc = Math.sin(Math.PI * a) * 0.02;
     const p = this.hip.clone().lerp(this.aim, a);
     p.x += hold; p.y += holdY - arc;
-    this.gun.position.set(p.x + bobX + this.swayX * steady, p.y - bobY + breathe + this.swayY * steady, p.z + this.recoil * 0.03);
+    this.gun.position.set(p.x + bobX + this.swayX * steady, p.y - bobY + breathe + this.swayY * steady, p.z + this.recoil * 0.042);
     // sprint: rifle across the chest, muzzle low and to the left, canted
     this.gun.rotation.set(this.kickRot * (1 - a * 0.6) + this.swayY * 3 * steady - sp * 0.5, this.swayX * 3 * steady + sp * 0.6 + (1 - a) * 0.04, -bobX * 2 - sp * 0.32 - (1 - a) * 0.05);
     this.gun.position.x -= sp * 0.03; this.gun.position.y -= sp * 0.045; this.gun.position.z += sp * 0.03;

@@ -37,7 +37,7 @@ export const BI = Object.fromEntries(BONE_DEFS.map(([n], i) => [n, i]));
 export const LEN = { upper: 0.30, fore: 0.265, thigh: 0.44, shin: 0.405 };
 
 // material group order of the skinned mesh
-export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove'];
+export const GROUPS = ['camo', 'knit', 'black', 'boot', 'web', 'lens', 'glove', 'patch'];
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const AX = V(1, 0, 0), NZ = V(0, 0, -1), PY = V(0, 1, 0), PZ = V(0, 0, 1);
@@ -146,8 +146,12 @@ class SkinBuilder {
   build() {
     const pos = [], nor = [], uv = [], si = [], sw = [], idx = [];
     const geo = new THREE.BufferGeometry();
-    GROUPS.forEach((k, mi) => {
-      const G = this.g.get(k), off = pos.length / 3, start = idx.length;
+    const names = [];
+    GROUPS.forEach((k) => {
+      const G = this.g.get(k);
+      if (!G.idx.length) return;               // unused material group (e.g. patches on OPFOR): no draw call
+      const mi = names.length; names.push(k);
+      const off = pos.length / 3, start = idx.length;
       pos.push(...G.pos); nor.push(...G.nor); uv.push(...G.uv); si.push(...G.si); sw.push(...G.sw);
       for (const i of G.idx) idx.push(i + off);
       geo.addGroup(start, idx.length - start, mi);
@@ -158,6 +162,7 @@ class SkinBuilder {
     geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
     geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
     geo.setIndex(idx);
+    geo.userData.names = names;
     return geo;
   }
 }
@@ -496,9 +501,14 @@ function leg(B, side) {
   B.rigid('black', box(0.112, 0.022, 0.3, 0.008), xf(x0, 0.011, -0.065), ft);
   B.rigid('black', box(0.09, 0.012, 0.085), xf(x0, 0.026, 0.02), ft);
   B.rigid('black', box(0.034, 0.008, 0.11), xf(x0, 0.1, -0.035, 0, 0.75), ft); // lacing
+  // lace rungs and a gusset tongue
+  for (let k = 0; k < 5; k++) B.rigid('black', box(0.05, 0.004, 0.006), xf(x0, 0.1 - k * 0.0, -0.01 - k * 0.0, 0, 0.75).multiply(xf(0, 0.012 * k - 0.02, -0.022 * k + 0.02, 0, 0)), ft);
+  // sole lugs: tread blocks along both edges and a heel breast
+  for (let k = 0; k < 7; k++) for (const e of [-1, 1]) B.rigid('black', box(0.016, 0.01, 0.026, 0.002), xf(x0 + e * 0.052, 0.004, -0.17 + k * 0.043), ft);
+  B.rigid('black', box(0.09, 0.012, 0.008), xf(x0, 0.006, 0.0), ft);
 }
 
-function rig(B) {
+function rig(B, { helmet = false } = {}) {
   const { chest, spine, hips, head: hd } = BI;
   // shoulder harness straps (front / back / over the shoulder)
   for (const s of [-1, 1]) {
@@ -523,6 +533,8 @@ function rig(B) {
     B.rigid('web', box(0.082, 0.17, 0.066, 0.014), xf(x, 1.05, -0.158, 0, 0.04), spine);
     B.rigid('web', box(0.086, 0.06, 0.072, 0.012), xf(x, 1.135, -0.16, 0, 0.18), spine);
     B.rigid('black', box(0.03, 0.025, 0.004), xf(x, 1.1, -0.197, 0, 0.18), spine); // fastex buckle
+    B.rigid('black', box(0.034, 0.03, 0.058, 0.006), xf(x, 1.175, -0.151, 0, 0.1), spine);      // magazine top peeking out of the pouch
+    B.rigid('web', box(0.012, 0.1, 0.006), xf(x + 0.032, 1.1, -0.19, 0, 0.1), spine);            // retention tab
   }
   // bulky side utility pouches
   for (const s of [-1, 1]) {
@@ -534,20 +546,22 @@ function rig(B) {
   B.rigid('black', cyl(0.018, 0.018, 0.02, 12), xf(-0.11, 1.125, 0.155), spine);
   B.rigid('web', box(0.1, 0.13, 0.06, 0.025), xf(0.11, 1.05, 0.145, 0, -0.04), spine);
 
-  // electronic hearing protection: oval cups, cushions, headband over the crown
-  for (const s of [-1, 1]) {
-    B.rigid('web', rcyl(0.043, 0.032, 0.012, 12), xf(s * 0.103, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.18), hd);
-    B.rigid('black', new THREE.CylinderGeometry(0.04, 0.04, 0.016, 16, 1), xf(s * 0.083, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.15), hd);
-    B.rigid('black', box(0.012, 0.016, 0.02), xf(s * 0.12, 1.705, -0.02), hd); // volume knob
-    // yoke from cup to band
-    B.rigid('web', box(0.012, 0.05, 0.016), xf(s * 0.103, 1.765, 0.0), hd);
-  }
-  const bandPts = [];
-  for (let k = 0; k <= 16; k++) { const t = Math.PI * k / 16; bandPts.push(V(Math.cos(t) * 0.1, 1.775 + Math.sin(t) * 0.078, 0.0)); }
-  const curve = new THREE.CatmullRomCurve3(bandPts);
-  const bandGeo = new THREE.TubeGeometry(curve, 20, 0.009, 6, false);
-  bandGeo.applyMatrix4(new THREE.Matrix4().makeTranslation(0, -1.775, 0).premultiply(new THREE.Matrix4().makeScale(1, 1, 1.9)).premultiply(new THREE.Matrix4().makeTranslation(0, 1.775, 0)));
-  B.rigid('web', bandGeo, null, hd);
+  if (!helmet) {
+    // electronic hearing protection: oval cups, cushions, headband over the crown
+    for (const s of [-1, 1]) {
+      B.rigid('web', rcyl(0.043, 0.032, 0.012, 12), xf(s * 0.103, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.18), hd);
+      B.rigid('black', new THREE.CylinderGeometry(0.04, 0.04, 0.016, 16, 1), xf(s * 0.083, 1.715, 0.0, 0, 0, Math.PI / 2, 1, 1, 1.15), hd);
+      B.rigid('black', box(0.012, 0.016, 0.02), xf(s * 0.12, 1.705, -0.02), hd); // volume knob
+      // yoke from cup to band
+      B.rigid('web', box(0.012, 0.05, 0.016), xf(s * 0.103, 1.765, 0.0), hd);
+    }
+    const bandPts = [];
+    for (let k = 0; k <= 16; k++) { const t = Math.PI * k / 16; bandPts.push(V(Math.cos(t) * 0.1, 1.775 + Math.sin(t) * 0.078, 0.0)); }
+    const curve = new THREE.CatmullRomCurve3(bandPts);
+    const bandGeo = new THREE.TubeGeometry(curve, 20, 0.009, 6, false);
+    bandGeo.applyMatrix4(new THREE.Matrix4().makeTranslation(0, -1.775, 0).premultiply(new THREE.Matrix4().makeScale(1, 1, 1.9)).premultiply(new THREE.Matrix4().makeTranslation(0, 1.775, 0)));
+    B.rigid('web', bandGeo, null, hd);
+  } else helmetShell(B);
 
   // wrap-around shooting glasses: curved lens band + temples
   const lens = new THREE.BufferGeometry();
@@ -571,29 +585,52 @@ function rig(B) {
   for (const s of [-1, 1]) B.rigid('black', box(0.006, 0.008, 0.1), xf(s * 0.084, 1.748, 0.02, s * 0.05), hd);
 }
 
-let cachedGeo = null;
-export function soldierGeometry() {
-  if (cachedGeo) return cachedGeo;
+const geoCache = {};
+/**
+ * kind: 'opfor' (earmuffs + glasses), 'hv' (Swedish Home Guard, earmuffs), 'hv_helmet' (helmet with M90 cover).
+ * Rest pose and skeleton are identical for all kinds.
+ */
+export function soldierGeometry(kind = 'opfor') {
+  if (geoCache[kind]) return geoCache[kind];
   const B = new SkinBuilder();
+  const helmet = kind === 'hv_helmet';
   torso(B); head(B);
   arm(B, 1); arm(B, -1); hand(B, 1); hand(B, -1);
   leg(B, 1); leg(B, -1);
-  rig(B);
-  cachedGeo = B.build();
-  cachedGeo.computeBoundingSphere();
-  return cachedGeo;
+  rig(B, { helmet });
+  if (kind !== 'opfor') hvInsignia(B, helmet);
+  const g = geoCache[kind] = B.build();
+  g.computeBoundingSphere();
+  return g;
+}
+
+/** Sleeve patches (Swedish flag on the left sleeve, generic HV shield on the right) + helmet gear. */
+function hvInsignia(B, helmet) {
+  const { uarmL, uarmR, head: hd } = BI;
+  const quad = (u0, u1, w, h) => {
+    const g = new THREE.PlaneGeometry(w, h);
+    const uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setX(i, u0 + (u1 - u0) * uv.getX(i));
+    return g;
+  };
+  // flag: atlas u 0..0.5 ; shield: u 0.5..1.  Patches sit on the outer face of the upper sleeve (x = +-(0.19+0.092))
+  B.rigid('patch', quad(0, 0.5, 0.052, 0.034), xf(-0.19 - 0.0865, 1.4, -0.004, -Math.PI / 2), uarmL);
+  B.rigid('patch', quad(0.5, 1, 0.042, 0.048), xf(0.19 + 0.0865, 1.4, -0.004, Math.PI / 2), uarmR);
+  // hook-and-loop backing field behind each patch
+  B.rigid('black', box(0.012, 0.042, 0.058, 0.003), xf(-0.19 - 0.0785, 1.4, -0.004), uarmL);
+  B.rigid('black', box(0.012, 0.056, 0.05, 0.003), xf(0.19 + 0.0785, 1.4, -0.004), uarmR);
 }
 
 /** New skeleton + SkinnedMesh sharing the cached geometry. */
-export function createSoldierMesh(materials) {
-  const geo = soldierGeometry();
+export function createSoldierMesh(materials, kind = 'opfor') {
+  const geo = soldierGeometry(kind);
   const bones = BONE_DEFS.map(([name]) => { const b = new THREE.Bone(); b.name = name; return b; });
   BONE_DEFS.forEach(([, parent, p], i) => {
     const pp = parent >= 0 ? BONE_DEFS[parent][2] : [0, 0, 0];
     bones[i].position.set(p[0] - pp[0], p[1] - pp[1], p[2] - pp[2]);
     if (parent >= 0) bones[parent].add(bones[i]);
   });
-  const mesh = new THREE.SkinnedMesh(geo, GROUPS.map(k => materials[k]));
+  const mesh = new THREE.SkinnedMesh(geo, geo.userData.names.map(k => materials[k]));
   mesh.add(bones[0]);
   mesh.updateMatrixWorld(true);
   mesh.bind(new THREE.Skeleton(bones));
@@ -602,4 +639,35 @@ export function createSoldierMesh(materials) {
   mesh.boundingSphere = new THREE.Sphere(V(0, 0.8, 0), 2.0);
   const rest = bones.map(b => b.position.clone());
   return { mesh, bones, rest };
+}
+
+/** Swedish-style combat helmet (hjälm 18 type): low-cut shell with M90 cover, ear cut-outs, rail shroud, chin strap. */
+function helmetShell(B) {
+  const hd = BI.head;
+  const H = [
+    [1.66, 0.098, 0.112, 0.118],
+    [1.69, 0.103, 0.119, 0.124],
+    [1.73, 0.104, 0.121, 0.124],
+    [1.77, 0.1, 0.116, 0.119],
+    [1.805, 0.088, 0.1, 0.104],
+    [1.835, 0.066, 0.076, 0.08],
+    [1.855, 0.034, 0.04, 0.042],
+    [1.862, 0.004, 0.004, 0.004],
+  ];
+  const rings = H.map(([y, rx, rf, rb]) => ring(V(0, y, 0.004), rx, rf, rb, [[hd, 1]], 2.5));
+  B.tube('camo', rings, 24, null, (pt, i, a) => {
+    // front brim sweeps down, back lip kicks out, sides cut high above the ears
+    const s = Math.sin(a), c = Math.cos(a);
+    if (i === 0) { pt.y += (s < 0 ? 0.0 : -0.008) - Math.pow(Math.abs(c), 4) * 0.045; if (s < 0) pt.y -= 0.004; }
+    if (i === 1) pt.y -= Math.pow(Math.abs(c), 4) * 0.02;
+  });
+  // rim edge roll, front rail shroud and strap
+  B.rigid('black', box(0.05, 0.012, 0.02, 0.004), xf(0, 1.752, -0.128, 0, -0.12), hd);
+  B.rigid('black', box(0.012, 0.05, 0.012), xf(0.075, 1.65, -0.07, 0, 0, 0.1), hd);
+  B.rigid('black', box(0.012, 0.05, 0.012), xf(-0.075, 1.65, -0.07, 0, 0, -0.1), hd);
+  B.rigid('web', box(0.012, 0.06, 0.012), xf(0.08, 1.60, 0.0), hd);
+  B.rigid('web', box(0.012, 0.06, 0.012), xf(-0.08, 1.60, 0.0), hd);
+  B.rigid('black', box(0.05, 0.03, 0.02, 0.008), xf(0, 1.56, -0.04), hd);       // chin cup
+  // rear counterweight / net pouch
+  B.rigid('black', box(0.1, 0.03, 0.025, 0.008), xf(0, 1.69, 0.125), hd);
 }

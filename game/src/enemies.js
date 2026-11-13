@@ -11,26 +11,49 @@ import { box, rcyl, cyl, xform } from './geo.js';
 import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createSoldierMesh, BONE_DEFS, BI, LEN } from './characters/soldier.js';
+import { fabricShading } from './characters/cloth.js';
 
 function M(list) {
   return mergeGeometries(list.map(([g, m]) => { const x = g.index ? g.toNonIndexed() : g.clone(); if (m) x.applyMatrix4(m); for (const k of Object.keys(x.attributes)) if (!['position', 'normal', 'uv'].includes(k)) x.deleteAttribute(k); return x; }));
 }
 
 let shared = null;
+/** Insignia atlas: left half = Swedish flag, right half = generic Home Guard shield ("HV"); drawn here, no external art. */
+function patchTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const x = c.getContext('2d');
+  // flag 0..128: blue field, yellow Nordic cross (vertical bar offset to the hoist side)
+  x.fillStyle = '#0b5c9a'; x.fillRect(0, 0, 128, 128);
+  x.fillStyle = '#e2b92b'; x.fillRect(128 * 5 / 16, 0, 128 * 2 / 16, 128); x.fillRect(0, 128 * 0.4, 128, 128 * 0.2);
+  x.strokeStyle = 'rgba(20,24,18,0.9)'; x.lineWidth = 6; x.strokeRect(3, 3, 122, 122);
+  x.strokeStyle = 'rgba(210,210,190,0.25)'; x.setLineDash([4, 4]); x.lineWidth = 1.5; x.strokeRect(8, 8, 112, 112);
+  x.setLineDash([]);
+  // shield 128..256: dark field, pale rim, "HV"
+  x.fillStyle = '#26291f'; x.fillRect(128, 0, 128, 128);
+  x.beginPath(); x.moveTo(146, 16); x.lineTo(238, 16); x.lineTo(238, 70); x.quadraticCurveTo(238, 108, 192, 120); x.quadraticCurveTo(146, 108, 146, 70); x.closePath();
+  x.fillStyle = '#14160f'; x.fill(); x.lineWidth = 6; x.strokeStyle = '#b8b38d'; x.stroke();
+  x.fillStyle = '#c9c49b'; x.font = 'bold 50px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('HV', 192, 62);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+
 function materials() {
   if (shared) return shared;
   shared = {
-    uniform: mat('camo_emr', { tile: 0.42, color: 0x929a98 }),
-    vest: mat('ratnik_green', { tile: 0.35 }),
-    knit: mat('olive_knit', { tile: 0.12 }), // olive balaclava
+    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x8c9694 }), { dirt: 0.55, sheen: 0.1, soak: 0.35 }),
+    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0x9aa397 }), { dirt: 0.55, sheen: 0.1, soak: 0.35 }),
+    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0x8f9a88 }), { dirt: 0.4, sheen: 0.06, soak: 0.3, wrinkle: 0.3 }),
+    knit: fabricShading(mat('olive_knit', { tile: 0.12, color: 0xa5a898 }), { dirt: 0.2, sheen: 0.18, soak: 0.25, wrinkle: 0.1 }),
     glove: mat('fabric_glove', { tile: 0.15, color: 0x5a5a5a }),   // black rubber / hard shell parts
-    gloveFab: mat('glove_green', { tile: 0.12, color: 0xb4b4a4 }),  // olive cordura glove fabric
-    boot: mat('boot_leather', { tile: 0.25, color: 0x4a4440 }),
+    gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
+    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x5a524c }), { dirt: 1.0, sheen: 0.0, soak: 0.25, wrinkle: 0.2 }),
     gun: mat('gunmetal'),
-    wood: mat('ak_wood', { tile: 0.3 }),
+    wood: mat('ak_wood', { tile: 0.3, color: 0xa39c96 }),
     poly: mat('polymer', { tile: 0.25 }),
     plum: mat('plum_polymer', { tile: 0.2 }),
-    visor: new THREE.MeshPhysicalMaterial({ color: 0x07080a, roughness: 0.06, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.03 }), // tinted lenses
+    patch: new THREE.MeshStandardMaterial({ map: patchTexture(), roughness: 0.9, metalness: 0 }),
+    visor: new THREE.MeshPhysicalMaterial({ color: 0x07080a, roughness: 0.06, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.6 }), // tinted lenses
   };
   return shared;
 }
@@ -138,26 +161,105 @@ function kalashnikov(S, variant) {
   return g;
 }
 
-export function createGuard(variant = 'ak74') {
+/**
+ * Swedish Ak 4C (G3 lineage, 7.62x51): stamped receiver, cocking tube above the barrel, slim ventilated handguard,
+ * straight 20-round magazine, collapsible stock, top rail with a red-dot tube. Matte black. Same frame as the AK.
+ */
+function ak4c(S) {
+  const g = new THREE.Group();
+  const add = (list, m) => { const o = new THREE.Mesh(M(list), m); o.castShadow = true; g.add(o); return o; };
+  const Z = Math.PI / 2;
+  add([
+    [box(0.046, 0.064, 0.4, 0.008), xform(0, 0.0, 0.065)],                // receiver
+    [box(0.05, 0.034, 0.1, 0.004), xform(0, 0.0, -0.14)],                  // barrel trunnion / handguard retainer
+    [cyl(0.0095, 0.0095, 0.42, 14), xform(0, 0.004, -0.37, 0, Z)],         // barrel
+    [cyl(0.0125, 0.0125, 0.065, 14), xform(0, 0.004, -0.6, 0, Z)],        // flash hider body
+    ...[0, 1, 2, 3].map(i => [box(0.026, 0.0035, 0.008), xform(0, 0.004, -0.578 - i * 0.014)]),
+    [cyl(0.0085, 0.0085, 0.3, 12), xform(-0.004, 0.039, -0.03, 0, Z)],     // cocking tube
+    [box(0.014, 0.014, 0.02, 0.003), xform(-0.004, 0.039, -0.19)],         // cocking handle knob
+    [box(0.026, 0.008, 0.34, 0.002), xform(0, 0.036, 0.07)],               // top rail
+    ...Array.from({ length: 12 }, (_, i) => [box(0.028, 0.003, 0.004), xform(0, 0.0405, -0.07 + i * 0.026)]), // rail slots
+    [box(0.02, 0.05, 0.02), xform(0, 0.025, -0.51)],                       // front sight hood
+    [box(0.004, 0.026, 0.004), xform(0, 0.056, -0.51)],                    // front post
+    [box(0.007, 0.022, 0.07), xform(0.027, 0.006, 0.05)],                  // selector
+    [box(0.01, 0.006, 0.07), xform(0, -0.04, 0.095)],                      // trigger guard
+    [box(0.006, 0.02, 0.008), xform(0, -0.032, 0.07, 0, -0.3)],             // trigger
+    [box(0.014, 0.012, 0.012), xform(0.027, 0.005, -0.1)],                 // sling swivel
+  ], S.gun);
+  // red-dot sight: tube, objective hood, ocular, riser mount
+  add([
+    [cyl(0.0165, 0.0165, 0.1, 18), xform(0, 0.093, -0.045, 0, Z)],
+    [cyl(0.0195, 0.0165, 0.03, 18), xform(0, 0.093, -0.105, 0, Z)],
+    [cyl(0.0185, 0.0185, 0.014, 18), xform(0, 0.093, 0.012, 0, Z)],
+    [box(0.026, 0.044, 0.07, 0.004), xform(0, 0.056, -0.045)],
+    [box(0.01, 0.01, 0.014), xform(0.0, 0.113, -0.045)],             // elevation cap
+    [box(0.014, 0.012, 0.006), xform(0.019, 0.093, -0.045)],          // windage cap
+  ], S.poly);
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.0155, 16), S.visor);
+  lens.position.set(0, 0.093, -0.121); lens.rotation.y = Math.PI; lens.scale.set(1, 1, 1); g.add(lens);
+  // slim ventilated handguard with side slots and a rounded underside
+  const hg = loft([
+    { z: -0.11, hw: 0.0, ht: 0.0, hb: 0.0, cy: -0.004 },
+    { z: -0.114, hw: 0.025, ht: 0.027, hb: 0.024, cy: -0.004 },
+    { z: -0.2, hw: 0.027, ht: 0.028, hb: 0.026, cy: -0.004 },
+    { z: -0.33, hw: 0.025, ht: 0.026, hb: 0.024, cy: -0.004 },
+    { z: -0.385, hw: 0.023, ht: 0.024, hb: 0.022, cy: -0.004 },
+    { z: -0.388, hw: 0.0, ht: 0.0, hb: 0.0, cy: -0.004 },
+  ], 14, 2.8, null, 0);
+  const slots = [];
+  for (let i = 0; i < 6; i++) for (const sx of [-1, 1]) slots.push([box(0.004, 0.02, 0.026, 0.001), xform(sx * 0.0268, 0.0, -0.15 - i * 0.034)]);
+  add([[hg, null], ...slots,
+    [box(0.032, 0.1, 0.044, 0.012), xform(0, -0.08, 0.125, 0, -0.32)],      // pistol grip
+    [box(0.04, 0.06, 0.1, 0.01), xform(0, -0.03, 0.27, 0, 0.0)],             // stock slider
+    [cyl(0.0065, 0.0065, 0.17, 8), xform(0.014, 0.016, 0.34, 0, Z * 0, 0).multiply(new THREE.Matrix4().makeRotationX(Z))],
+    [cyl(0.0065, 0.0065, 0.17, 8), xform(-0.014, 0.016, 0.34, 0, Z * 0, 0).multiply(new THREE.Matrix4().makeRotationX(Z))],
+    [box(0.044, 0.125, 0.03, 0.012), xform(0, -0.02, 0.41, 0, 0.1)],         // butt
+  ], S.poly);
+  // straight 20-round magazine (ribbed steel) with floor plate
+  add([
+    [box(0.027, 0.15, 0.058, 0.004), xform(0, -0.1, -0.035)],
+    ...[0, 1, 2, 3, 4].map(i => [box(0.029, 0.004, 0.06), xform(0, -0.05 - i * 0.025, -0.035)]),
+    [box(0.031, 0.01, 0.063, 0.003), xform(0, -0.178, -0.035)],
+  ], S.gun);
+  return g;
+}
+
+function buildRifle(S, weapon) { return weapon === 'ak4c' ? ak4c(S) : kalashnikov(S, weapon === 'akm' ? 'akm' : 'ak74'); }
+
+/**
+ * createSoldier({ side: 'opfor' | 'hv', weapon: 'ak74' | 'akm' | 'ak4c', helmet?: boolean })
+ *  side 'opfor': EMR camo, earmuffs + glasses.  side 'hv': Swedish Home Guard, M90 camo, sleeve patches (flag left,
+ *  generic HV shield right); helmet defaults to ~40 % random (true = M90-covered helmet, false = earmuffs + balaclava).
+ * Returns the same object as createGuard (root, rifle, flash, flashMesh, mesh, bones, rest, s); pose it with
+ * poseGuard / poseSoldier using the identical state object.
+ */
+export function createSoldier({ side = 'opfor', weapon, helmet } = {}) {
   const S = materials();
+  const hv = side === 'hv';
+  weapon = weapon || (hv ? 'ak4c' : 'ak74');
+  const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
   const root = new THREE.Group();
-  const { mesh, bones, rest } = createSoldierMesh({ camo: S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab });
+  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch }, kind);
   root.add(mesh);
-  const rifle = kalashnikov(S, variant);
+  const rifle = buildRifle(S, weapon);
   root.add(rifle);
-  // muzzle flash
-  const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.0, -0.66); rifle.add(flash);
+  const mz = weapon === 'ak4c' ? -0.64 : -0.66;
+  const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.0, mz); rifle.add(flash);
   const fl = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.5, 1.5) }));
-  fl.position.set(0, 0.0, -0.66); fl.visible = false; rifle.add(fl);
+  fl.position.set(0, 0.0, mz); fl.visible = false; rifle.add(fl);
   root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
   const seed = Math.random() * 100;
   const g = {
-    root, rifle, flash, flashMesh: fl, mesh, bones, rest,
+    root, rifle, flash, flashMesh: fl, mesh, bones, rest, side, weapon, kind,
     s: { t: 0, time: seed, ph: null, rate: 0, seed, hitSide: 1, lastHit: 0, death: null, mm: bones.map(() => new THREE.Matrix4()), mq: bones.map(() => new THREE.Quaternion()) },
   };
   poseGuard(g, { walk: 0, speed: 0, aim: 0, flash: 0, hit: 0, dead: 0, fallDir: 1 });
   return g;
 }
+
+/** OPFOR guard (API used by game.js): variant 'ak74' | 'akm'. */
+export function createGuard(variant = 'ak74') { /*TMPDBG*/ { const q = new URLSearchParams(location.search).get('hv'); if (q) return createSoldier({ side: 'hv', weapon: 'ak4c', helmet: q === 'helmet' }); }
+  return createSoldier({ side: 'opfor', weapon: variant }); }
 
 // ------------------------------------------------------------------ math helpers
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -414,9 +516,9 @@ function poseDeath(g, st) {
 
 // ------------------------------------------------------------------ public
 /** Pose a guard. st: {walk, speed(0..1), aim(0..1), flash, hit, dead (0 alive, then s/0.9), fallDir} */
+export const poseSoldier = (g, st) => poseGuard(g, st);
 export function poseGuard(g, st) {
   const s = g.s;
-  /*TMPDBG*/ { const q = new URLSearchParams(location.search); if (q.get('gaim')) st = { ...st, aim: +q.get('gaim') }; }
   const now = performance.now() / 1000;
   const dt = s.t ? clamp(now - s.t, 0, 0.1) : 0.016;
   s.t = now; s.time += dt;
