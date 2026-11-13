@@ -11,7 +11,7 @@ import { box, rcyl, cyl, xform } from './geo.js';
 import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG } from './characters/soldier.js';
-import { fabricShading } from './characters/cloth.js';
+import { fabricShading, ripstop } from './characters/cloth.js';
 import { skinShading, LOOKS } from './characters/skin.js';
 import { soldierBody } from './characters/body.js';
 import { locomote, locoState, spring, sp } from './characters/anim.js';
@@ -72,9 +72,12 @@ function materials() {
   const body = soldierBody() || {};
   const eyes = { eyeR: body.eyeR, eyeL: body.eyeL, headC: body.headC };
   shared = {
-    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x8c9694 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
-    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0x9aa397 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4 }),
-    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0x8f9a88 }), { dirt: 0.45, sheen: 0.08, soak: 0.3, wrinkle: 0.3, rough: 0.2, wetTop: 0.5 }),
+    // uniforms: ripstop yarn / twill relief aligned with the texture's grid, joint-driven folds, seams, panel
+    // dye lots and high-point wear (characters/cloth.js `body`)
+    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x9ea6a3 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.4, 0.42) }),
+    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0xaab2a6 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.45, 0.45) }),
+    // rig / pouches: nylon cordura, a little smoother and shinier than the cotton-blend uniform, worn at the edges
+    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0x8f9a88, roughness: 0.86 }), { dirt: 0.45, sheen: 0.14, soak: 0.25, wrinkle: 0.3, rough: 0.2, wetTop: 0.5, gear: true }),
     // knit: fine rib (7 cm tile) with a strong normal map and a fuzzy sheen so the balaclava reads as wool over the
     // MakeHuman face shape, not as skin
     knit: fabricShading(mat('olive_knit', { tile: 0.07, color: 0xb2b8a2, normalScale: 1.8 }), { dirt: 0.2, sheen: 0.32, soak: 0.25, wrinkle: 0.35, rough: 0.15, wetTop: 0.55, mudGloss: 0.2, rib: 0.0032 }),
@@ -85,7 +88,7 @@ function materials() {
     // shader program): characters/skin.js
     skins: LOOKS.map(l => skinShading(plainMat(l.skin, 0.5), { ...eyes, hair: l.hair, iris: l.iris })),
     gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
-    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3 }),
+    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3, boot: true }),
     gun: mat('gunmetal'),
     wood: mat('ak_wood', { tile: 0.3, color: 0xa39c96 }),
     poly: mat('polymer', { tile: 0.25 }),
@@ -274,7 +277,7 @@ function buildRifle(S, weapon) { return weapon === 'ak4c' ? ak4c(S) : kalashniko
  * createSoldier({ side: 'opfor' | 'hv', weapon: 'ak74' | 'akm' | 'ak4c', helmet?: boolean, look?: number })
  *  side 'opfor': EMR camo, earmuffs + glasses.  side 'hv': Swedish Home Guard, M90 camo, sleeve patches (flag left,
  *  generic HV shield right); helmet defaults to ~40 % random (true = M90-covered helmet, false = earmuffs, bare head).
- *  look: index into characters/skin.js LOOKS (skin tone, hair, eyes) for the bare-headed soldiers; random by default.
+ *  look: index into characters/skin.js LOOKS (skin tone, hair, eyes; OPFOR show it round the eyes); random by default.
  * Returns the same object as createGuard (root, rifle, flash, flashMesh, mesh, bones, rest, s); pose it with
  * poseGuard / poseSoldier using the identical state object.
  */
@@ -284,7 +287,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
   weapon = weapon || (hv ? 'ak4c' : 'ak74');
   const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
   const root = new THREE.Group();
-  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[hv ? (look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length : 0], metal: S.metal }, kind);
+  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[(look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length], metal: S.metal }, kind);
   root.add(mesh);
   const rifle = buildRifle(S, weapon);
   root.add(rifle);

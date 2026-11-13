@@ -10,6 +10,7 @@
 // If the file is missing, weapon.js keeps the procedural hands (viewmodel/hands.js).
 import * as THREE from 'three';
 import { parseTBMH } from '../characters/body.js';
+import { weaveGLSL, ripstop } from '../characters/cloth.js';
 
 const URL_ARMS = 'assets/models/viewmodel_arms.bin';
 let ARMS = null;
@@ -53,12 +54,15 @@ float armLine(float s, float halfW) {          // anti-aliased line on the zero 
  */
 export function armShading(m, kind) {
   const glove = kind === 'glove';
+  // sleeve: same ripstop / twill yarn relief as the soldiers' uniforms (characters/cloth.js), aligned with the
+  // camo_m90 texture grid (texture tile 0.45 m, material tile 0.45 m)
+  const weave = glove ? null : ripstop(0.45, 0.45);
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 aux;\nvarying vec4 vAux;\nvarying vec2 vArmUv;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvAux = aux; vArmUv = uv;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec4 vAux;\nvarying vec2 vArmUv;\nfloat armH = 0.0, armSeam = 0.0, armPad = 0.0, armWeave = 0.5, armPalm = 0.0;\n${BUMP}`)
+      .replace('#include <common>', `#include <common>\nvarying vec4 vAux;\nvarying vec2 vArmUv;\nfloat armH = 0.0, armSeam = 0.0, armPad = 0.0, armWeave = 0.5, armPalm = 0.0, armWear = 0.0;\n${BUMP}\n${weave ? weaveGLSL(weave) : ''}`)
       .replace('#include <map_fragment>', `#include <map_fragment>
       {
         float ao = vAux.x;
@@ -117,13 +121,23 @@ export function armShading(m, kind) {
         diffuseColor.rgb *= mix(1.0, 0.8, vAux.z);                // hook-and-loop tab
         diffuseColor.rgb *= 1.0 - 0.45 * l1 * (1.0 - 0.7 * dash);
         armH = -0.0003 * l1;
+        // wear: the exposed fold crests (high baked occlusion term) and the cuff hem are abraded and sun-faded -
+        // lighter, greyer cloth with pilling; the hollows keep the deeper dye
+        vec2 wq = vArmUv * 45.0, wi = floor(wq), wf = fract(wq); wf = wf * wf * (3.0 - 2.0 * wf);
+        float wn = mix(mix(fract(sin(dot(wi, vec2(127.1, 311.7))) * 43758.5453), fract(sin(dot(wi + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453), wf.x),
+                       mix(fract(sin(dot(wi + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453), fract(sin(dot(wi + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453), wf.x), wf.y);
+        float pfw = max(fwidth(vArmUv.x), fwidth(vArmUv.y)) / 0.0011;
+        float pl = step(0.82, fract(sin(dot(floor(vArmUv / 0.0011), vec2(12.9898, 78.233))) * 43758.5453)) * (1.0 - smoothstep(0.3, 0.8, pfw));
+        armWear = clamp(smoothstep(0.82, 1.0, ao) * (0.4 + 0.8 * wn) + 0.6 * smoothstep(0.0035, 0.0, abs(s1)) * (0.5 + 0.5 * wn), 0.0, 1.0);
+        float wl = dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(wl) * vec3(1.3, 1.28, 1.16), 0.3 * armWear + 0.12 * pl * armWear);
         `}
         diffuseColor.rgb *= 0.35 + 0.65 * ao;
       }`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+      .replace('#include <normal_fragment_maps>', `${weave ? THREE.ShaderChunk.normal_fragment_maps.replace('normal = normalize( tbn * mapN );', 'mapN.xy -= fabWeave(vNormalMapUv);\n      normal = normalize( tbn * mapN );') : '#include <normal_fragment_maps>'}
       normal = armBump(-vViewPosition, normal, armH, faceDirection);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-      roughnessFactor = clamp(roughnessFactor * (1.0 - 0.15 * armPad${glove ? ' - 0.1 * (armWeave - 0.5)' : ''}), 0.3, 1.0);
+      roughnessFactor = clamp(roughnessFactor * (1.0 - 0.15 * armPad${glove ? ' - 0.1 * (armWeave - 0.5)' : ' + 0.08 * armWear'}), 0.3, 1.0);
       ${glove ? 'roughnessFactor = mix(roughnessFactor, 0.5, armPalm * 0.8);          // leather palm: satin' : ''}`)
       .replace('#include <opaque_fragment>', `
       {
@@ -132,14 +146,14 @@ export function armShading(m, kind) {
         float nv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
         float rim = pow(1.0 - nv, 3.0);
         float lum = dot(outgoingLight, vec3(0.3, 0.55, 0.15));
-        outgoingLight += mix(diffuseColor.rgb, vec3(0.5), 0.4) * rim * ${glove ? '(0.25 + 0.25 * armPalm)' : '0.15'} * (0.4 + 2.5 * lum);
+        outgoingLight += mix(diffuseColor.rgb, vec3(0.5), 0.4) * rim * ${glove ? '(0.25 + 0.25 * armPalm)' : '(0.15 + 0.15 * armWear)'} * (0.4 + 2.5 * lum);
       }
       #include <opaque_fragment>`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
       reflectedLight.indirectDiffuse *= 0.55 + 0.45 * vAux.x;
       reflectedLight.indirectSpecular *= 0.5 + 0.5 * vAux.x;`);
   };
-  m.customProgramCacheKey = () => 'arm2' + kind;
+  m.customProgramCacheKey = () => 'arm3' + kind;
   return m;
 }
 

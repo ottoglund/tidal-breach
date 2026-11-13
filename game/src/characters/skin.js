@@ -47,12 +47,20 @@ vec3 skBump(vec3 p, vec3 n, float h, float fd) {
 
 const eyeU = (o) => ({ uEyeR: { value: new THREE.Vector3(...(o.eyeR || [0.03, 1.68, -0.137])) }, uEyeL: { value: new THREE.Vector3(...(o.eyeL || [-0.03, 1.68, -0.137])) } });
 
-/** Per-soldier looks (Swedish Home Guard faces): skin base colour (sRGB), hair colour, iris colour. */
+/**
+ * Per-soldier looks (Swedish Home Guard faces; OPFOR show the skin round the eyes): skin base colour (sRGB albedo),
+ * hair colour, iris colour. The skin tones are spread across the light-to-medium range (fair / pink, light, ruddy,
+ * olive-tan, medium brown) and the hair from blond to near-black, so soldiers next to each other read as different
+ * people; earlier the four skin tones were within ~4 % of each other and the scalp showed mostly skin (see the
+ * coverage note in skinShading), so every look rendered alike.
+ */
 export const LOOKS = [
-  { skin: 0xc29a88, hair: 0x4b3828, iris: 0x5a7282 },   // mid brown hair, blue-grey eyes
-  { skin: 0xc9a391, hair: 0x8d7454, iris: 0x6a8ca2 },   // dark blond, blue eyes
-  { skin: 0xba9483, hair: 0x2f241d, iris: 0x5c4a33 },   // dark brown, brown-hazel eyes
-  { skin: 0xc49b86, hair: 0x6c4832, iris: 0x627258 },   // auburn brown, grey-green eyes
+  { skin: 0xc29a88, hair: 0x3d2b1f, iris: 0x5a7282 },   // light skin, dark brown hair, blue-grey eyes
+  { skin: 0xd4b1a1, hair: 0xa08458, iris: 0x6a8ca2 },   // fair / pink, blond, blue eyes
+  { skin: 0xa97f66, hair: 0x1e1813, iris: 0x4a3523 },   // olive-tan, near-black hair, brown eyes
+  { skin: 0xcc9b88, hair: 0x7a4128, iris: 0x627258 },   // ruddy, auburn / red, grey-green eyes
+  { skin: 0xbd9783, hair: 0x5e4d3c, iris: 0x6d7880 },   // light, ash brown, grey eyes
+  { skin: 0x92684f, hair: 0x15110e, iris: 0x3a2a1c },   // medium brown, black hair, dark brown eyes
 ];
 
 const DETAIL_TILE = 0.024;    // metres per tile of skin_detail_normal (texgen skin_detail)
@@ -156,7 +164,10 @@ ${NOISE}`)
         float strands = 0.3 * fine + 0.4 * tuft + 0.3 * clump;
         // hair length: full on top, short on the clipped sides / nape (more scalp shows through)
         float hlen = smoothstep(hl + 0.004, hl + 0.04, q.y) * (0.55 + 0.45 * smoothstep(1.9, 0.9, th)) + 0.35 * smoothstep(1.4, 0.4, th);
-        float cover = clamp(0.45 + 0.5 * hlen + 0.35 * (tuft - 0.5) + 0.25 * (clump - 0.5), 0.2, 0.97);
+        // coverage of the scalp by hair seen from outside: even a ~6 mm clipper cut hides most of the scalp, and the
+        // scalp that shows is shaded by the hair round it (col * 0.32); with the old, lower coverage and a lighter
+        // scalp term the skin dominated and dark, blond and red hair all rendered the same light brown
+        float cover = clamp(0.62 + 0.4 * hlen + 0.3 * (tuft - 0.5) + 0.2 * (clump - 0.5), 0.4, 0.98);
         vec3 hairC = uHair * (0.5 + 0.9 * strands) * (0.9 + 0.2 * n3);
         // hair coverage seen on the surface, identical on the scalp and on the shell so the shell edge has no seam
         float hmix = clamp(hd * 1.1 + 0.3 * (tuft - 0.5) * (1.0 - hd), 0.0, 1.0);
@@ -182,7 +193,7 @@ ${NOISE}`)
           if (keep < 0.8) discard;
           // the shell fades in over its first stretch (sheen, roughness, wrap), so its edge reads as hair thickening
           float se = smoothstep(0.8, 0.97, keep);
-          col = mix(col, mix(col * 0.6, hairC, cover), hmix);  // scalp shows between the strands, more on the sides
+          col = mix(col, mix(col * 0.32, hairC, cover), hmix);  // scalp shows between the strands, more on the sides
           skWrap = mix(1.0, 0.25, hmix * se); skRough = mix(0.5, 0.72 - 0.12 * strands, hmix * (0.4 + 0.6 * se));
           skHairK = (0.3 + 1.2 * clump * tuft) * cover * hmix * se; skF0 = mix(0.028, 0.02, hmix);
           skHairTint = uHair / max(max(uHair.r, uHair.g), max(uHair.b, 0.02));
@@ -232,7 +243,7 @@ ${NOISE}`)
           float bh = skNb(vec3(bx * 2200.0, (e.y - byc) * 500.0 + bx * 300.0, 1.0), fwP * 2200.0);
           col = mix(col, uHair * (0.6 + 0.6 * bh), clamp(brow * (0.3 + 0.5 * bh), 0.0, 0.7));
           // scalp: hair colour fading in toward the hairline (the shell takes over where it is dense)
-          col = mix(col, mix(col * 0.6, hairC, cover), hmix);
+          col = mix(col, mix(col * 0.32, hairC, cover), hmix);
           // T-zone oil (forehead centre, nose, chin)
           skOil = clamp(nose + smoothstep(eyeY + 0.015, eyeY + 0.04, p.y) * smoothstep(0.045, 0.015, abs(p.x)) * 0.8
                 + exp(-pow(p.x / 0.015, 2.0) - pow((p.y - (eyeY - 0.115)) / 0.01, 2.0)) * 0.4, 0.0, 1.0) * (1.0 - hd);

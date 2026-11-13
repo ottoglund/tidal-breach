@@ -37,8 +37,9 @@ export class Game {
     this.lookDX = 0; this.lookDY = 0;
     this.hitFlash = 0;
     this.reset();
-    // Hemvärnet comrades (Grön 2 with balaclava/earmuffs, Grön 3 with helmet)
-    this.squad = new Squad(this, i => createSoldier({ side: 'hv', weapon: 'ak4c', helmet: i === 1 }), poseSoldier);
+    // Hemvärnet comrades (Grön 2 with balaclava/earmuffs, Grön 3 with helmet); different faces (skin.js LOOKS)
+    this.lookBase = Math.floor(Math.random() * 6);
+    this.squad = new Squad(this, i => createSoldier({ side: 'hv', weapon: 'ak4c', helmet: i === 1, look: this.lookBase + i * 2 }), poseSoldier);
     this.bindInput();
   }
 
