@@ -5,8 +5,8 @@ const { chromium } = require('playwright');
 (async()=>{
  const [url,out,cams]=process.argv.slice(2);
  const b=await chromium.launch({args:['--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist']});
- const p=await b.newPage({viewport:{width:1280,height:720}});
- p.setDefaultTimeout(600000);
+ const W=+(process.env.W||1280),H=+(process.env.H||720);const p=await b.newPage({viewport:{width:W,height:H}});
+ p.setDefaultTimeout(+(process.env.TMO||1800000));
  p.on('console',m=>{ if(['error','warning'].includes(m.type())) console.log('CONSOLE',m.type(),m.text().slice(0,400));});
  p.on('pageerror',e=>console.log('PAGEERROR',String(e).slice(0,600)));
  const t0=Date.now();
