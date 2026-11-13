@@ -248,6 +248,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet } = {}) {
   const fl = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.5, 1.5) }));
   fl.position.set(0, 0.0, mz); fl.visible = false; rifle.add(fl);
   root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
+  root.userData.tbSoldier = { body: mesh, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')] }; // distance policies for shadow / reflection passes: world/props/lod.js
   const seed = Math.random() * 100;
   const g = {
     root, rifle, flash, flashMesh: fl, mesh, bones, rest, side, weapon, kind,

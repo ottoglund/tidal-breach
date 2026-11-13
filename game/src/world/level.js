@@ -2,11 +2,12 @@
 // extraction, container lanes, bounds) are kept from the v0.1 game so the
 // mission plays the same; everything visual is rebuilt at real-world scale.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Batch, box, cyl, rcyl, beam, tube, corrugated, plane, xform, catenary } from '../geo.js';
 import { mat, plainMat, textures } from '../materials.js';
 import { buildContainers, CONTAINER, bollardGeometry, lightMast, rtgCrane, shipHull, lathe, merged } from './props.js';
-import { lightCone, lampGlow } from './atmosphere.js';
 import { dressPort, vehicleLoads } from './props/dress.js';
+import { ChunkBatch, createLod, buildGlowField, buildConeField, PropField } from './props/lod.js';
 
 export const BOUNDS = { x1: -34.7, x2: 34.5, z1: -85, z2: 32.0 };
 export const SPAWN = { x: 0, z: 24, yaw: 0 };
@@ -43,7 +44,11 @@ export function buildLevel(scene, quality) {
   let this_ao = null;
   const root = new THREE.Group();
   scene.add(root);
-  const B = new Batch();
+  const cones = []; // light shafts, drawn as one mesh (props/lod.js buildConeField)
+  const glows = []; // lamp glow billboards, drawn as one instanced mesh (props/lod.js buildGlowField)
+  const glow = (pos, color, size, intensity) => { glows.push({ pos, color, size, intensity }); };
+  createLod(scene, quality); // distance / LOD / reflection policies (props/lod.js); installs scene.onBeforeRender
+  const B = new ChunkBatch(); // static props: spatial chunks, shadow casters split from small detail
   const G = new Batch(); // ground (layer 1: excluded from the planar reflection)
   const blockers = [];
   const block = (x, z, sx, sz, h = 3) => blockers.push({ x1: x - sx / 2, z1: z - sz / 2, x2: x + sx / 2, z2: z + sz / 2, h });
@@ -147,8 +152,7 @@ export function buildLevel(scene, quality) {
   boxes.push(...vehicleLoads());
   // gameplay-lane containers get full detail; the background perimeter stacks use the light LOD
   const near = boxes.filter(c => !c.bg), far = boxes.filter(c => c.bg);
-  buildContainers(root, near);
-  buildContainers(root, far, 1).forEach(m => { m.castShadow = false; });
+  // (containers are instanced once all lists exist: near + background stacks + ship deck cargo; see below)
   // contact shadows: soft ambient occlusion where heavy objects meet the wet ground
   const aoMat = new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: contactTexture(), transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 });
   const AO = new Batch();
@@ -175,9 +179,14 @@ export function buildLevel(scene, quality) {
   }
   palletStack(-16, 15, 3); palletStack(17, 3, 4); palletStack(-17, -40, 2); palletStack(17, -65, 3); palletStack(-3, -4, 2);
   // oil drums: clusters away from nodes, spawn and extraction
-  const drum = merged([[rcyl(0.286, 0.88, 0.02)], [rcyl(0.296, 0.035, 0.015), xform(0, 0.29, 0)], [rcyl(0.296, 0.035, 0.015), xform(0, -0.29, 0)], [rcyl(0.29, 0.02, 0.008), xform(0, 0.441, 0)]]);
+  // One lathe profile (body, two rolling hoops, recessed lid) at 28 segments: ~900 triangles instead of ~4700
+  // (four stacked 52-segment filleted cylinders); the silhouette error is 2 mm on a 29 cm radius.
+  const DRUM_PROFILE = [[0, -0.44], [0.268, -0.44], [0.285, -0.425], [0.286, -0.30], [0.296, -0.292], [0.296, -0.262], [0.286, -0.254],
+    [0.286, 0.254], [0.296, 0.262], [0.296, 0.292], [0.286, 0.30], [0.286, 0.425], [0.27, 0.44], [0.24, 0.44], [0.234, 0.426], [0, 0.426]];
+  const drum = lathe(DRUM_PROFILE, 28);
   const clear = (x, z) => NODES.every(n => Math.hypot(n.x - x, n.z - z) > 4.5) && Math.hypot(EXTRACT.x - x, EXTRACT.z - z) > 6 && Math.hypot(SPAWN.x - x, SPAWN.z - z) > 5 && !blockers.some(b => x > b.x1 - 1 && x < b.x2 + 1 && z > b.z1 - 1 && z < b.z2 + 1) && Math.abs(x) > 2 && !(Math.abs(Math.abs(x) - 6.2) < 1.2);
   let placed = 0;
+  const drumItems = []; // instanced below (PropField): per-instance culling + 2 LODs, still shadow casters
   for (let i = 0; i < 400 && placed < 22; i++) {
     const x = rr(-30, 30), z = rr(-80, 26);
     if (!clear(x, z)) continue;
@@ -185,12 +194,13 @@ export function buildLevel(scene, quality) {
     const dm = rand() < 0.6 ? M.red : M.steel;
     for (let k = 0; k < n; k++) {
       const dx = x + (k % 2) * 0.62 + rr(-0.04, 0.04), dz = z + Math.floor(k / 2) * 0.62;
-      B.add(dm, drum, xform(dx, 0.44, dz, rr(0, 6)));
+      drumItems.push({ material: dm, matrix: xform(dx, 0.44, dz, rr(0, 6)) });
       this_ao.add(aoMat, plane(1.0, 1.0, 1, 1), xform(dx, 0.009, dz, 0, -Math.PI / 2));
     }
     block(x + 0.3, z + 0.3 * (n > 2), n > 1 ? 1.25 : 0.62, n > 2 ? 1.25 : 0.62, 0.9);
     placed++;
   }
+  new PropField(root, drumItems, [drum, lathe(DRUM_PROFILE, 12)], { lod1: 14, maxD: 75, radius: 0.75 });
   // west perimeter stack (x=-31.5) is inside the bounds: give its ground tier collision
   // (added after the drum scatter so the drum layout is unchanged)
   for (const z of perimBlock) block(-31.5, z, CONTAINER.W, CONTAINER.L, H);
@@ -241,7 +251,7 @@ export function buildLevel(scene, quality) {
     B.add(M.steel, box(0.35, 0.3, 0.45), xform(WX + 0.2, 7.2, z));
     B.add(M.glassLit, plane(0.35, 0.3), xform(WX + 0.2, 7.04, z, 0, Math.PI / 2), { shadow: false });
     points.push({ pos: new THREE.Vector3(WX + 0.9, 6.8, z), color: new THREE.Color(1.0, 0.55, 0.22), intensity: 900, distance: 26 });
-    root.add(lampGlow(new THREE.Vector3(WX + 0.3, 7.0, z), 0xffa25a, 1.6, 3));
+    glow(new THREE.Vector3(WX + 0.3, 7.0, z), 0xffa25a, 1.6, 3);
   }
 
   // --------------------------------------------------------------- light masts
@@ -263,8 +273,8 @@ export function buildLevel(scene, quality) {
     const toward = new THREE.Vector3(Math.sign(-m.x) * 10, 0, 0);
     spots.push({ pos: center.clone(), target: new THREE.Vector3(m.x + toward.x, 0, m.z), color: m.color, intensity: 12000, angle: 1.05, penumbra: 0.75 });
     for (const h of lm.heads) {
-      root.add(lampGlow(h.pos, m.color, 2.2, 4));
-      root.add(lightCone(h.pos, h.dir, 24, 0.38, m.color, 0.016));
+      glow(h.pos, m.color, 2.2, 4);
+      cones.push({ pos: h.pos, dir: h.dir, color: m.color, length: 24, angle: 0.38, strength: 0.016 });
     }
   }
 
@@ -354,23 +364,21 @@ export function buildLevel(scene, quality) {
     if (rand() < 0.12 + t * 0.15) continue;
     deckBoxes.push({ x: ax + row * 2.55, z: 5 - bay * 12.6, y: deckY + 0.1 + t * H, ry: 0, color: Math.floor(rand() * 6) });
   }
-  buildContainers(root, deckBoxes, 1);
+  buildContainers(root, [...near, ...far, ...deckBoxes.map(c => ({ ...c, bg: true }))]); // bg: never the full-detail LOD
   // mooring lines: ship fairleads to quay bollards
   const fair = [[38.9, deckY + 0.6, 20], [38.9, deckY + 0.6, 14], [38.9, deckY + 0.3, -58], [38.9, deckY + 0.3, -62]];
   const tie = [[QUAY_E - 0.75, 0.68, 30], [QUAY_E - 0.75, 0.68, 0], [QUAY_E - 0.75, 0.68, -50], [QUAY_E - 0.75, 0.68, -80]];
   fair.forEach((f, i) => B.add(M.rope, catenary(f, tie[i], 0.5, 0.04, 30, 7), null, { shadow: true }));
 
   // --------------------------------------------------------------- far shore lights (south, across the basin)
-  const shore = new THREE.Group();
   for (let i = 0; i < 70; i++) {
     const c = rand() < 0.6 ? 0xffa050 : 0xd8e6ff;
-    shore.add(lampGlow(new THREE.Vector3(rr(-260, 260), rr(1, 9), rr(260, 340)), c, rr(2, 5), 2.5));
+    glow(new THREE.Vector3(rr(-260, 260), rr(1, 9), rr(260, 340)), c, rr(2, 5), 2.5);
   }
-  root.add(shore);
 
   // --------------------------------------------------------------- set dressing (props/dress.js)
   const aoAdd = (x, z, w, d, ry = 0) => this_ao.add(aoMat, plane(w, d, 1, 1), xform(x, 0.009, z, ry, -Math.PI / 2));
-  dressPort({ root, B, G, M, hullHalf, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS });
+  dressPort({ root, glow, B, G, M, hullHalf, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS });
 
   // --------------------------------------------------------------- nodes (jammer units)
   const nodeObjs = NODES.map(n => buildNode(root, B, M, n));
@@ -391,6 +399,8 @@ export function buildLevel(scene, quality) {
 
   this_ao.build(root).forEach(m => { m.castShadow = false; m.receiveShadow = false; m.layers.set(1); m.renderOrder = 2; });
   const meshes = B.build(root);
+  root.add(buildGlowField(glows));
+  root.add(buildConeField(cones));
   const groundMeshes = G.build(root);
   groundMeshes.forEach(m => { m.layers.set(1); m.castShadow = false; });
   return { root, blockers, lamps, spots, points, nodeObjs, meshes, groundMeshes };
@@ -473,9 +483,9 @@ function buildNode(root, B, M, n) {
   const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), panelMat);
   panel.position.set(0, 0.85, 0.405); g.add(panel);
   const ledMat = new THREE.MeshStandardMaterial({ color: 0x220000, emissive: new THREE.Color(1, 0.05, 0.02), emissiveIntensity: 40 });
-  const led = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), ledMat);
-  led.position.set(0.45, 4.55, -0.2); g.add(led);
-  for (const x of [-0.18, 0, 0.18]) { const l2 = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6), ledMat); l2.position.set(x, 1.1, 0.425); g.add(l2); }
+  // antenna LED + 3 panel LEDs share one material: merged into a single draw call
+  const ledGeos = [new THREE.SphereGeometry(0.05, 10, 8).translate(0.45, 4.55, -0.2), ...[-0.18, 0, 0.18].map(x => new THREE.SphereGeometry(0.014, 8, 6).translate(x, 1.1, 0.425))];
+  g.add(new THREE.Mesh(mergeGeometries(ledGeos, false), ledMat));
   const light = new THREE.PointLight(0xff2a10, 25, 6, 2);
   light.position.set(0, 1.2, 0.8); g.add(light);
   root.add(g);

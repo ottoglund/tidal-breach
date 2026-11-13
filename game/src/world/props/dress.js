@@ -6,7 +6,6 @@
 import * as THREE from 'three';
 import { box, cyl, rcyl, tube, plane, xform, catenary, corrugated } from '../../geo.js';
 import { mat, plainMat } from '../../materials.js';
-import { lampGlow } from '../atmosphere.js';
 import { CONTAINER } from '../props.js';
 import { terminalTractor, trailer40, TRAILER, straddleCarrier, forklift } from './vehicles.js';
 import { emptyPallets, wrappedGoods, ibc, lampPost, cctv, plugPost, reeferUnit, lifeRing, ropeCoil, dunnage, plasticSheet, signPost, fenceRun } from './yard.js';
@@ -34,7 +33,7 @@ export function vehicleLoads() {
 }
 
 export function dressPort(ctx) {
-  const { root, B, G, M, hullHalf, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS } = ctx;
+  const { root, glow, B, G, M, hullHalf, block, blockers, lamps, aoAdd, QUAY_E, QUAY_S, WX, WH, deckY, deckBoxes, reefers, NODES, EXTRACT, SPAWN, ENEMY_SPAWNS } = ctx;
   const r = prng(20241112);
   const rr = (a, b) => a + (b - a) * r();
   const { L: CL, W: CW, H: CH } = CONTAINER;
@@ -122,8 +121,8 @@ export function dressPort(ctx) {
   forklift(kit(T(fl.x, 0, fl.z, -HALF_PI)));
   guardBlock('forklift', fl.x - 0.5, fl.z, 3.6, 1.35, 2.2);
   aoAdd(fl.x - 0.2, fl.z, 3.0, 1.8, 0);
-  root.add(lampGlow(new THREE.Vector3(fl.x + 0.6, 2.35, fl.z), 0xff9a1c, 1.5, 3.5));       // warning beacon halo
-  root.add(lampGlow(new THREE.Vector3(fl.x - 1.3, 0.88, fl.z), 0x3a7bff, 0.6, 2.0));       // blue front safety spot
+  glow(new THREE.Vector3(fl.x + 0.6, 2.35, fl.z), 0xff9a1c, 1.5, 3.5);       // warning beacon halo
+  glow(new THREE.Vector3(fl.x - 1.3, 0.88, fl.z), 0x3a7bff, 0.6, 2.0);       // blue front safety spot
 
   // =====================================================================
   // 2. Reefers: machinery ends on the white boxes + power cables + plug posts
@@ -165,7 +164,7 @@ export function dressPort(ctx) {
     const base = T(x, 0, z, -HALF_PI);
     const head = lampPost(kit(base)).applyMatrix4(base);
     guardBlock('lamp post', x, z, 0.6, 0.6, 10);
-    root.add(lampGlow(head.clone().add(new THREE.Vector3(0, -0.12, 0)), ledCol, 1.3, 2.5));
+    glow(head.clone().add(new THREE.Vector3(0, -0.12, 0)), ledCol, 1.3, 2.5);
     if (i === 0 || i === 2) lamps.push({ pos: head.clone().add(new THREE.Vector3(0, -0.3, 0)), color: ledCol.clone().multiplyScalar(0.6) });
     cctv(kit(T(x - 0.12, 6.0, z, -HALF_PI - 0.5)));
     if (i === 0) sign('cctv', 0.6, 0.15, T(x - 0.11, 2.4, z, -HALF_PI));
@@ -261,7 +260,7 @@ export function dressPort(ctx) {
     K('concrete', box(1.6, 0.16, 0.9, 0.02), T(0, 0.08, 0.45));
     K('steel', box(1.6, 0.06, 0.9, 0.01), T(0, 2.62, 0.45));
     K('bulk', box(0.26, 0.14, 0.1, 0.02), T(0, 2.45, 0.08), { shadow: false });
-    root.add(lampGlow(new THREE.Vector3(WX + 0.22, 2.42, dz), 0xffc890, 0.9, 2.2));
+    glow(new THREE.Vector3(WX + 0.22, 2.42, dz), 0xffc890, 0.9, 2.2);
     sign('door' + (i + 1), 0.42, 0.42, T(WX + 0.003, 1.7, dz + 0.95, HALF_PI));
     // fire hose cabinet + electrical cabinet with conduit up to the tray
     K('red', box(0.7, 0.9, 0.24, 0.02), T(-1.55, 1.25, 0.12));
@@ -406,8 +405,8 @@ export function dressPort(ctx) {
     // funnel, bridge detail, masts, radar
     funnel(kit(T(AX + 2.5, deckY + 16.0, AZ + 2.5)));
     bridgeDetail(W0, AX, AZ, deckY);
-    for (const [px, py, pz] of [[AX - 9.3, deckY + 15.5, AZ - 2.3], [AX + 9.3, deckY + 15.5, AZ - 2.3]]) root.add(lampGlow(new THREE.Vector3(px, py, pz), px < AX ? 0xff2010 : 0x20ff50, 0.9, 2.5));
-    root.add(lampGlow(new THREE.Vector3(AX, deckY + 16.6 + 7.2, AZ - 1.0), 0xfff2d8, 1.2, 3));
+    for (const [px, py, pz] of [[AX - 9.3, deckY + 15.5, AZ - 2.3], [AX + 9.3, deckY + 15.5, AZ - 2.3]]) glow(new THREE.Vector3(px, py, pz), px < AX ? 0xff2010 : 0x20ff50, 0.9, 2.5);
+    glow(new THREE.Vector3(AX, deckY + 16.6 + 7.2, AZ - 1.0), 0xfff2d8, 1.2, 3);
     // draft marks (white decimetre figures on the hull at bow, midships and stern, port side)
     const dm = draftMarkMaterial();
     for (const z of [-60, -22, 23.5]) {

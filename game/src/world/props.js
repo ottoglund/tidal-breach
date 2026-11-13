@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { box, cyl, rcyl, beam, tube, corrugated, plane, xform, catenary } from '../geo.js';
 import { mat, plainMat } from '../materials.js';
+import { ContainerField, lodManager } from './props/lod.js';
 
 function merged(list) {
   return mergeGeometries(list.map(([g, m]) => {
@@ -31,37 +32,45 @@ const containerGeo = {};
 export function containerGeometry(lod = 0) {
   if (containerGeo[lod]) return containerGeo[lod];
   const { L, W, H } = CONTAINER;
+  if (lod >= 3) {
+    // lod 3 (> ~85 m in fog, and everything in the low-res puddle reflection): a plain box with the same metric UVs
+    containerGeo[lod] = { paint: box(W, H, L, 0).translate(0, H / 2, 0), galv: null };
+    return containerGeo[lod];
+  }
   const paint = [], galv = [];
   const post = 0.16, rail = 0.13;
   const innerL = L - 2 * post, innerH = H - 2 * rail;
+  // lod 1 (> ~20 m): sharp-edged frame, single-panel doors; lod 2 (> ~55 m, deep in fog): coarser corrugation too
+  const far = lod >= 2;
+  const bx = lod >= 1 ? (w, h, d) => box(w, h, d, 0) : box; // beyond ~20 m a 3 cm bevel is sub-pixel: sharp boxes from lod 1 on
   // side walls, corrugation across the length
-  const side = corrugated(innerL, innerH, 0.278, 0.036, 3, innerH);
+  const side = corrugated(innerL, innerH, far ? 0.556 : 0.278, 0.036, 3, innerH);
   paint.push([side, xform(W / 2 - 0.03, H / 2, 0, Math.PI / 2)]);
   paint.push([side, xform(-W / 2 + 0.03, H / 2, 0, -Math.PI / 2)]);
   // front end wall (-Z), horizontal-ish corrugation
-  const end = corrugated(W - 2 * post, innerH, 0.24, 0.03, 3, innerH);
+  const end = corrugated(W - 2 * post, innerH, far ? 0.48 : 0.24, 0.03, 3, innerH);
   paint.push([end, xform(0, H / 2, -L / 2 + 0.04, Math.PI)]);
   // roof (dimpled roof sheet approximated with a shallow corrugation across the width)
-  const roof = corrugated(innerL, W - 0.12, 0.6, 0.012, 3, W);
+  const roof = corrugated(innerL, W - 0.12, far ? 1.2 : 0.6, 0.012, 3, W);
   paint.push([roof, xform(0, H - 0.07, 0, Math.PI / 2, -Math.PI / 2)]);
   // floor underside
-  paint.push([box(W, 0.06, L), xform(0, 0.08, 0)]);
+  paint.push([bx(W, 0.06, L), xform(0, 0.08, 0)]);
   // frame: corner posts, rails, castings
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    paint.push([box(post, H, post), xform(sx * (W / 2 - post / 2), H / 2, sz * (L / 2 - post / 2))]);
-    for (const y of [0.059, H - 0.059]) paint.push([box(0.18, 0.118, 0.162), xform(sx * (W / 2 - 0.09), y, sz * (L / 2 - 0.081))]);
+    paint.push([bx(post, H, post), xform(sx * (W / 2 - post / 2), H / 2, sz * (L / 2 - post / 2))]);
+    for (const y of [0.059, H - 0.059]) paint.push([bx(0.18, 0.118, 0.162), xform(sx * (W / 2 - 0.09), y, sz * (L / 2 - 0.081))]);
   }
   for (const sx of [-1, 1]) {
-    paint.push([box(0.1, rail, innerL), xform(sx * (W / 2 - 0.05), H - rail / 2, 0)]);
-    paint.push([box(0.16, 0.16, innerL), xform(sx * (W / 2 - 0.08), 0.08, 0)]);
+    paint.push([bx(0.1, rail, innerL), xform(sx * (W / 2 - 0.05), H - rail / 2, 0)]);
+    paint.push([bx(0.16, 0.16, innerL), xform(sx * (W / 2 - 0.08), 0.08, 0)]);
   }
   for (const sz of [-1, 1]) {
-    paint.push([box(W - 2 * post, rail, 0.12), xform(0, H - rail / 2, sz * (L / 2 - 0.06))]);
-    paint.push([box(W - 2 * post, 0.2, 0.12), xform(0, 0.1, sz * (L / 2 - 0.06))]);
+    paint.push([bx(W - 2 * post, rail, 0.12), xform(0, H - rail / 2, sz * (L / 2 - 0.06))]);
+    paint.push([bx(W - 2 * post, 0.2, 0.12), xform(0, 0.1, sz * (L / 2 - 0.06))]);
   }
   if (lod) {
     // distant/background boxes: doors as one corrugated panel, no locking gear
-    paint.push([corrugated(W - 2 * post, innerH, 0.3, 0.02, 3, innerH), xform(0, H / 2, L / 2 - 0.035)]);
+    paint.push([corrugated(W - 2 * post, innerH, far ? 0.6 : 0.3, 0.02, 3, innerH), xform(0, H / 2, L / 2 - 0.035)]);
     containerGeo[lod] = { paint: merged(paint), galv: merged([[cyl(0.016, 0.016, H - 0.1, 6), xform(0.3, H / 2, L / 2 + 0.01)]]) };
     return containerGeo[lod];
   }
@@ -86,55 +95,39 @@ export function containerGeometry(lod = 0) {
 
 export const CONTAINER_COLORS = ['container_rust', 'container_blue', 'container_green', 'container_grey', 'container_orange', 'container_white'];
 
-/** Places all containers as instanced meshes. list: [{x,y,z,ry,color, m?}] (m: optional full Matrix4, e.g. a tilted trailer load) */
+/**
+ * Places all containers. list: [{x,y,z,ry,color, m?, bg?}] (m: optional full Matrix4, e.g. a tilted trailer load).
+ * Instances are re-binned every render by ContainerField (props/lod.js): per-instance frustum + distance culling
+ * and three geometry LODs (lod 0 < 20 m, lod 1 < 55 m, lod 2 beyond; distances to the container's near edge). bg items / minLod:1 never use lod 0.
+ */
 export function buildContainers(parent, list, lod = 0) {
-  const geo = containerGeometry(lod);
-  const byColor = new Map();
-  for (const c of list) {
-    const k = CONTAINER_COLORS[c.color % CONTAINER_COLORS.length];
-    if (!byColor.has(k)) byColor.set(k, []);
-    byColor.get(k).push(c);
-  }
-  const meshes = [];
-  for (const [k, items] of byColor) {
-    const m = new THREE.InstancedMesh(geo.paint, mat(k, { wet: 'surface' }), items.length);
-    items.forEach((c, i) => m.setMatrixAt(i, c.m || xform(c.x, c.y, c.z, c.ry || 0)));
-    m.castShadow = m.receiveShadow = true;
-    m.computeBoundingSphere();
-    parent.add(m); meshes.push(m);
-  }
+  const geo = containerGeometry(0);
+  const geos = { paint: [containerGeometry(0).paint, containerGeometry(1).paint, containerGeometry(2).paint, containerGeometry(3).paint], galv: geo.galv, galvMat: mat('galvanized') };
   // stencilled ID codes on doors and sides (instanced decals, atlas cell per container)
   const atlas = codeAtlas();
   const decalGeo = new THREE.PlaneGeometry(1.0, 0.5);
-  const cells = new Float32Array(list.length * 3);
   const dmat = new THREE.MeshStandardMaterial({ map: atlas, transparent: true, alphaTest: 0.25, depthWrite: false, roughness: 0.55, polygonOffset: true, polygonOffsetFactor: -2 });
   dmat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aCell;')
       .replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef USE_MAP\nvMapUv = (vMapUv + vec2(mod(aCell, 4.0), floor(aCell / 4.0))) * vec2(0.25, 0.25);\n#endif');
   };
-  const decals = new THREE.InstancedMesh(decalGeo, dmat, list.length * 3);
   const { L, W, H } = CONTAINER;
   const lightPaint = new Set(['container_white', 'container_grey']);
-  let di = 0;
-  for (const c of list) {
-    const cell = Math.floor(Math.abs(Math.sin(c.x * 12.9 + c.z * 78.2 + c.y * 3.1)) * 16) % 16;
+  const items = list.map(c => {
+    const colorKey = CONTAINER_COLORS[c.color % CONTAINER_COLORS.length];
     const base = c.m ? c.m.clone() : xform(c.x, c.y, c.z, c.ry || 0);
-    const col = lightPaint.has(CONTAINER_COLORS[c.color % CONTAINER_COLORS.length]) ? new THREE.Color(0.05, 0.05, 0.05) : new THREE.Color(0.85, 0.85, 0.82);
-    for (const t of [xform(-0.55, H - 0.5, L / 2 + 0.03, 0, 0, 0, 0.9, 0.9, 1), xform(W / 2 + 0.008, H - 0.48, L / 2 - 1.3, Math.PI / 2, 0, 0, 1.3, 1.3, 1), xform(-W / 2 - 0.008, H - 0.48, -L / 2 + 1.3, -Math.PI / 2, 0, 0, 1.3, 1.3, 1)]) {
-      decals.setMatrixAt(di, base.clone().multiply(t));
-      decals.setColorAt(di, col);
-      cells[di] = cell; di++;
-    }
-  }
-  decals.geometry = decalGeo.clone();
-  decals.geometry.setAttribute('aCell', new THREE.InstancedBufferAttribute(cells, 1));
-  decals.computeBoundingSphere();
-  parent.add(decals); meshes.push(decals);
-  const g = new THREE.InstancedMesh(geo.galv, mat('galvanized'), list.length);
-  list.forEach((c, i) => g.setMatrixAt(i, c.m || xform(c.x, c.y, c.z, c.ry || 0)));
-  g.castShadow = true; g.receiveShadow = true; g.computeBoundingSphere();
-  parent.add(g); meshes.push(g);
-  return meshes;
+    const col = lightPaint.has(colorKey) ? new THREE.Color(0.05, 0.05, 0.05) : new THREE.Color(0.85, 0.85, 0.82);
+    const cell = Math.floor(Math.abs(Math.sin(c.x * 12.9 + c.z * 78.2 + c.y * 3.1)) * 16) % 16;
+    const decals = [xform(-0.55, H - 0.5, L / 2 + 0.03, 0, 0, 0, 0.9, 0.9, 1), xform(W / 2 + 0.008, H - 0.48, L / 2 - 1.3, Math.PI / 2, 0, 0, 1.3, 1.3, 1), xform(-W / 2 - 0.008, H - 0.48, -L / 2 + 1.3, -Math.PI / 2, 0, 0, 1.3, 1.3, 1)]
+      .map(t => base.clone().multiply(t));
+    const e = base.elements;
+    return { pos: new THREE.Vector3(e[12], e[13] + H / 2, e[14]), matrix: base, color: colorKey, minLod: (c.bg || lod) ? 1 : 0, decals, decalColor: col, cell, group: null };
+  });
+  const field = new ContainerField(parent, items, geos, k => mat(k, { wet: 'surface' }), dmat, decalGeo, CONTAINER);
+  for (const [, g] of field.groups) for (const it of g.items) it.group = g;
+  const mgr = lodManager();
+  if (mgr) mgr.addField(field);
+  return field.all;
 }
 
 // Fictional owner codes (ISO 6346 style) rendered as worn stencils.

@@ -9,6 +9,7 @@ import { Weapon } from './weapon.js';
 import { Audio } from './audio.js';
 import { Game } from './game.js';
 import { installFog, attachFogUniforms, updateFogLamps } from './fog.js';
+import { lodManager } from './world/props/lod.js';
 
 installFog(); // must run before any material compiles
 
@@ -61,6 +62,8 @@ async function boot() {
       l.shadow.mapSize.set(quality.shadowSize, quality.shadowSize);
       l.shadow.camera.near = 6; l.shadow.camera.far = 70;
       l.shadow.bias = -0.0004; l.shadow.normalBias = 0.03; l.shadow.radius = 3;
+      // perf: cheaper stand-ins in the shadow pass + no re-render while the camera is far from the mast (world/props/lod.js)
+      lodManager()?.attachShadowLight(l);
     }
     scene.add(l, l.target);
     lights.push(l);
@@ -154,7 +157,6 @@ async function boot() {
 
   // ---- QA hooks: only on explicit ?qa=1 URLs
   if (params.get('qa') === '1') {
-    window.__SC = scene; // TEMP-DIAG
     game.qaMode = true;
     Object.defineProperty(window, '__TIDAL_QA__', {
       value: Object.freeze({

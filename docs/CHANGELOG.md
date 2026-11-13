@@ -24,3 +24,8 @@
 ## v0.1 — playable prototype
 - Standalone WebGL FPS with rain/fog harbour, combat, guards, three sabotage targets and extraction.
 - Desktop and mobile inputs.
+
+### Performance pass (implemented, measured headless only)
+- New `game/src/world/props/lod.js`: static parts merged per material/zone, small props on a main-view-only DETAIL layer, container field with 4 distance LODs, shadow-pass stand-ins, shadow freeze for far masts, instanced drums/glows/light shafts, soldier LOD.
+- Draw calls / triangles per frame (all passes, SwiftShader, `perf()`): medium spawn 641 / 5.1 M → 302 / 1.04 M; low spawn 243 / 1.42 M → 148 / 565 k; high spawn 1524 / 13.6 M → 656 / 2.4 M.
+- Trade-offs: small props no longer mirrored in puddles, no shadows from parts under 1.7 m (drums kept), far soldiers simplified. Not timed on a real GPU; iOS Safari check pending.
