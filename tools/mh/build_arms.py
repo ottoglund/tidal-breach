@@ -9,11 +9,12 @@ for each arm:
     4 cm above the wrist to just past the elbow) and subdivides the sleeve once (Catmull-Clark) for smooth folds
  2. places the hand on the rifle (gun space of game/src/viewmodel/rifle.js): right hand on the Ak 4C pistol grip with
     the index finger laid along the receiver, left hand under the handguard with the thumb along its left side
- 3. closes the fingers phalanx by phalanx (linear-blend skinning with the MakeHuman finger weights) until each phalanx
-    touches the rifle (signed-distance model of the receiver, grip, guard and handguard); the thumb and the index are
-    solved toward target points with a collision penalty
- 4. turns the forearm about the wrist toward the elbow position of the old viewmodel, with a twist spread along the
-    two MakeHuman forearm bones (no pinched wrist)
+ 3. closes the A-pose finger spread and searches MCP / PIP / DIP flexion per finger (linear-blend skinning with the
+    MakeHuman finger weights) so every phalanx touches the rifle (signed-distance model of the receiver, grip, guard,
+    magazine and handguard) without cutting into it; a finger that cannot wrap rests relaxed; the thumb and the right
+    index are solved toward target points with a collision penalty
+ 4. swings the forearm about the wrist toward the elbow direction of the old viewmodel; the MakeHuman wrist / forearm
+    weights blend the bend over the wrist (no pinch)
  5. dresses the arm: cordura glove (2.5 mm over the skin, longer fingertips, padded knuckle strip, gauntlet cuff with
     a hook-and-loop strap), M90 sleeve (baggy, bunched folds behind the cuff, a snug hemmed cuff with a tab, an inner
     lip that shows the cloth thickness)
@@ -251,17 +252,6 @@ SIDES = {
 }
 
 
-def object_frame(sd):
-    """Gun-space frame of the held object: origin, columns (e1, e2, a); hand +Z maps to a."""
-    if sd == 'R':
-        a = -(GR @ np.array([0, 1.0, 0]))                    # down the grip (hand +Z = toward the little finger)
-        e1 = np.array([1.0, 0, 0])
-        e2 = np.cross(a, e1)
-        return GRIP_C.copy(), np.stack([e1, e2, a], 1)
-    a = np.array([0, 0, 1.0])                                # handguard: hand +Z = toward the shooter
-    return np.array([0, BORE, -0.222]), np.stack([np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), a], 1)
-
-
 def build_arm(B, W, Wmh, pos, R, sd):
     cfg = SIDES[sd]
     S = cfg['S']
@@ -277,7 +267,6 @@ def build_arm(B, W, Wmh, pos, R, sd):
     t_all = (v - wr) @ yax
     # ---- face selection (MakeHuman quads, body group)
     faces = [np.array(f) for f, k in zip(B['faces'], B['fkind']) if k == 'body']
-    fuv = [np.array(t) for t, k in zip(B['fuv'], B['fkind']) if k == 'body']
     T_GLOVE, T_CUFF, T_END = 0.085, 0.042, flen + 0.03
     gl_q, sl_q = [], []
     for f in faces:

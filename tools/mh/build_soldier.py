@@ -19,8 +19,11 @@ Pipeline
  5. hands: fingers and thumb are curled (offline linear-blend skinning with the MakeHuman finger bones) around the
     rifle grip axis the game's hand frames expect
  6. clothing: per-vertex offsets along smoothed normals - jacket, trousers bloused over the boots, boots (toes
-    smoothed away, flat sole), gloves, balaclava over a smoothed head with an eye opening (skin) - plus fabric folds
- 7. weights: MakeHuman's 160-bone weights summed onto the 19 game bones, 4 influences
+    smoothed away, flat sole), gloves, a 5 mm balaclava stretched over the lips / nose tip with an eye opening (skin),
+    its lower part doubling as a neck gaiter - plus fabric folds; a second, bare head (undressed face + neck, 'face')
+    with a short-hair shell ('hair') for the Swedish soldiers; the eyeballs are kept ('eye')
+ 7. weights: MakeHuman's 160-bone weights summed onto the 19 game bones (hand / forearm blend spread at the wrist),
+    4 influences
  8. triangulated, decimated (quadric half-edge collapse) to the close-range budget, plus a far LOD
 """
 import argparse
