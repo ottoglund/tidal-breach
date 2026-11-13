@@ -674,10 +674,8 @@ export class Audio {
         s.start(c.currentTime + 0.05, rnd() * buf.duration * 0.9); return g;
       };
       const bq = (type, f, q) => { const x = c.createBiquadFilter(); x.type = type; x.frequency.value = f; x.Q.value = q; return x; };
-      this.aRoar = loop(B.roarBuf, 0.16);
+      // Rain loops removed after a listening test (sounded synthetic); the far city rumble stays.
       this.aCity = loop(B.roarBuf, 0.05, 0.71, bq('lowpass', 180, 0.5));            // far city / traffic rumble
-      this.aHiss = loop(B.hissBuf, 0.05);
-      this.aDrop = loop(B.dropBuf, 0.1);
       this.aLap = loop(B.lapBuf, 0.12);
       this.windF = bq('bandpass', 400, 0.7);
       this.aWind = loop(B.roarBuf, 0.01, 1.37, this.windF);
@@ -929,18 +927,14 @@ export class Audio {
     }
     if (!this.ambOn) return;
     const nx = this.nx;
-    // wind gusts modulate the rain layers
+    // wind gusts
     if (tt >= nx.gust) {
       const g = Math.pow(rnd(), 1.6), tc = rr(0.6, 1.8);
       nx.gust = tt + rr(1.5, 6);
       this.aWind.gain.setTargetAtTime(0.004 + 0.05 * g, ct, tc);
       this.windF.frequency.setTargetAtTime(280 + 600 * g, ct, tc);
-      this.aHiss.gain.setTargetAtTime(0.05 * (0.8 + 0.5 * g), ct, tc);
-      this.aDrop.gain.setTargetAtTime(0.1 * (0.85 + 0.4 * g), ct, tc);
-      this.aRoar.gain.setTargetAtTime(0.16 * (0.9 + 0.25 * g), ct, tc);
     }
     // random one-shots break any loop pattern
-    if (rnd() < 0.3) this.play(pick(B.drip), { at: ct + rnd() * 0.1, gain: rr(0.01, 0.05), pan: rr(-0.9, 0.9), dest: this.amb });
     if (tt >= nx.creak) { nx.creak = tt + rr(25, 70); this.play(pick(B.creak), { gain: rr(0.03, 0.07), pan: rr(-0.8, 0.8), lp: 1800, send: 0.6, dest: this.amb, rate: rr(0.85, 1.1) }); }
     if (tt >= nx.clang) { nx.clang = tt + rr(35, 90); this.play(pick(B.clang), { gain: rr(0.02, 0.05), pan: rr(-0.9, 0.9), lp: 1500, send: 0.8, dest: this.amb, rate: rr(0.9, 1.1) }); }
     if (tt >= nx.horn) { nx.horn = tt + rr(80, 160); this.horn(); }
@@ -1008,6 +1002,41 @@ export class Audio {
     if (this._unlocked || !this.speech || !this.ru.length) return;
     try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.voice = this.ru[0]; u.lang = this.ru[0].lang; this.speech.speak(u); this._unlocked = true; } catch (_) {}
   }
+
+  // ---------------------------------------------------------------- squad radio (Swedish comrades)
+  /** Radio static bed: band-limited noise, crackle and level wobble, like a handheld group radio. */
+  radioBed(t, dur) {
+    const c = this.ctx, B = this.B; if (!B.hissBuf) return;
+    const s = c.createBufferSource(), hp = c.createBiquadFilter(), lp = c.createBiquadFilter(), g = c.createGain();
+    s.buffer = B.hissBuf; s.loop = true; hp.type = 'highpass'; hp.frequency.value = 900; lp.type = 'lowpass'; lp.frequency.value = 3200;
+    const lvl = 0.035;
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(lvl, t + 0.02);
+    for (let k = 0.05; k < dur; k += rr(0.04, 0.12)) g.gain.setValueAtTime(lvl * rr(0.6, 1.3), t + k); // fading/crackle
+    g.gain.setValueAtTime(lvl, t + dur); g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.03);
+    s.connect(hp); hp.connect(lp); lp.connect(g); g.connect(this.master);
+    s.start(t, rnd() * 5); s.stop(t + dur + 0.05);
+    s.onended = () => { for (const x of [s, hp, lp, g]) try { x.disconnect(); } catch (_) {} };
+  }
+  /** Squelch: short noise burst + click when a radio keys up (open) or drops the carrier (close). */
+  squelch(open) {
+    if (!this.ready || this.ctx.state !== 'running') return;
+    const c = this.ctx, t = c.currentTime + 0.01, len = open ? 0.06 : 0.16, n = Math.floor(c.sampleRate * len);
+    const b = c.createBuffer(1, n, c.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < n; i++) { const e = open ? Math.exp(-i / (n * 0.35)) : Math.min(1, i / (n * 0.1)) * Math.exp(-i / (n * 0.5)); d[i] = (rnd() * 2 - 1) * e; }
+    d[0] = open ? 0.9 : -0.6; d[1] = open ? -0.5 : 0.4;                                  // key click
+    const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    s.buffer = b; f.type = 'bandpass'; f.frequency.value = open ? 2200 : 1700; f.Q.value = 0.9; g.gain.value = open ? 0.22 : 0.3;
+    s.connect(f); f.connect(g); g.connect(this.master); s.start(t);
+    s.onended = () => { for (const x of [s, f, g]) try { x.disconnect(); } catch (_) {} };
+    if (!open && this._radioBedEnd) this._radioBedEnd = 0;
+  }
+  /** Start a radio transmission: squelch + static bed. Returns nothing; call radioEnd() when speech ends. */
+  radioStart(estDur) {
+    if (!this.ready || this.ctx.state !== 'running') return;
+    this.squelch(true);
+    this.radioBed(this.ctx.currentTime + 0.03, Math.min(6, estDur));
+  }
+  radioEnd() { this.squelch(false); }
 
   /** stop barks / breathing immediately (pause, end, restart, tab hidden) */
   halt() {

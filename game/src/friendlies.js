@@ -124,10 +124,16 @@ export class Squad {
       const synth = window.speechSynthesis; if (!synth) return;
       const voice = synth.getVoices().find(v => v.localService && /^sv/i.test(v.lang));
       if (!voice || synth.speaking) return;
-      const lines = SV_BARKS[kind]; const u = new SpeechSynthesisUtterance(lines[Math.floor(Math.random() * lines.length)]);
-      u.voice = voice; u.lang = voice.lang; u.rate = 1.15; u.pitch = 0.8 + m.i * 0.15;
-      u.volume = clamp(1 - Math.hypot(m.x - this.game.player.x, m.z - this.game.player.z) / 30, 0.2, 0.9);
-      synth.speak(u);
+      const lines = SV_BARKS[kind]; const text = lines[Math.floor(Math.random() * lines.length)];
+      const u = new SpeechSynthesisUtterance(text);
+      // Heard over the group radio, not directly: brisk clipped delivery at a fixed radio level.
+      // speechSynthesis cannot be routed through Web Audio, so the radio character comes from the
+      // squelch/static bed wrapped around the utterance (audio.radioStart/radioEnd).
+      u.voice = voice; u.lang = voice.lang; u.rate = 1.55; u.pitch = 0.9 + m.i * 0.12; u.volume = 0.75;
+      const a = this.game.audio, est = 0.25 + text.length * 0.055;
+      u.onend = u.onerror = () => { try { a?.radioEnd?.(); } catch (_) {} };
+      a?.radioStart?.(est);
+      setTimeout(() => { try { synth.speak(u); } catch (_) {} }, 90);
     } catch (_) { /* speech unavailable */ }
   }
 

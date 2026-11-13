@@ -29,3 +29,7 @@
 - New `game/src/world/props/lod.js`: static parts merged per material/zone, small props on a main-view-only DETAIL layer, container field with 4 distance LODs, shadow-pass stand-ins, shadow freeze for far masts, instanced drums/glows/light shafts, soldier LOD.
 - Draw calls / triangles per frame (all passes, SwiftShader, `perf()`): medium spawn 641 / 5.1 M → 302 / 1.04 M; low spawn 243 / 1.42 M → 148 / 565 k; high spawn 1524 / 13.6 M → 656 / 2.4 M.
 - Trade-offs: small props no longer mirrored in puddles, no shadows from parts under 1.7 m (drums kept), far soldiers simplified. Not timed on a real GPU; iOS Safari check pending.
+
+### Audio feedback round 1 (from user listening test on Windows)
+- Rain ambience loops (roar, hiss, drops, drips) removed: reported as synthetic ("like shells").
+- Swedish comrade barks: faster (rate 1.55), fixed radio level, squelch-open click + band-limited static bed + squelch tail so they read as group radio. Browser speech cannot be filtered through Web Audio, so the voice itself is not band-limited.
