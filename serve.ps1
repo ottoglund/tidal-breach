@@ -18,7 +18,8 @@ try {
     try {
       $rel = [Uri]::UnescapeDataString($ctx.Request.Url.AbsolutePath).TrimStart('/')
       $path = [IO.Path]::GetFullPath((Join-Path $root $rel))
-      if (-not $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $res.StatusCode = 403 }
+      $rootSep = $root.TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+      if (-not ($path -eq $root.TrimEnd('\','/') -or $path.StartsWith($rootSep, [StringComparison]::OrdinalIgnoreCase))) { $res.StatusCode = 403 }
       else {
         if (Test-Path $path -PathType Container) {
           if (-not $ctx.Request.Url.AbsolutePath.EndsWith('/')) { $res.Redirect($ctx.Request.Url.AbsolutePath + '/'); $res.Close(); continue }
