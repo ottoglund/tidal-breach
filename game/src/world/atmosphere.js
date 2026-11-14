@@ -270,8 +270,10 @@ export function createRain(count, lamps) {
 }
 
 // Ground splashes: little crowns that pop around the player.
+const BODY_SLOTS = 8, BODY_SPLASHES = 7;   // soldiers near the camera that get splashes, splashes per soldier
 const SPLASH_VERT = /* glsl */`
-attribute vec4 aSeed; uniform float uTime; uniform vec3 uCam; varying vec2 vUv; varying float vLife;
+attribute vec4 aSeed; attribute float aBody; uniform float uTime; uniform vec3 uCam; uniform vec4 uBody[${BODY_SLOTS}];
+varying vec2 vUv; varying float vLife;
 void main(){
   float period = 0.55 + aSeed.w * 0.4;
   float t = uTime / period + aSeed.w * 7.0;
@@ -279,6 +281,18 @@ void main(){
   vec2 rnd = fract(sin(vec2(cycle * 12.9898 + aSeed.x * 78.2, cycle * 39.34 + aSeed.y * 11.1)) * 43758.5453);
   vec3 p = vec3(uCam.x + (rnd.x - 0.5) * 18.0, 0.02, uCam.z + (rnd.y - 0.5) * 18.0);
   float s = 0.03 + 0.06 * vLife;
+  if (aBody >= 0.0) {
+    // drops bursting on a soldier's shoulders / helmet / head: slot = neck position + heading (w = yaw + 10, 0 = off)
+    vec4 B = uBody[int(aBody)];
+    if (B.w == 0.0) { gl_Position = vec4(0.0, 0.0, -2.0, 1.0); return; }
+    float yaw = B.w - 10.0;
+    vec3 rgt = vec3(cos(yaw), 0.0, -sin(yaw)), fwd = vec3(sin(yaw), 0.0, cos(yaw));
+    bool onHead = rnd.x < 0.3;
+    float u = (rnd.y - 0.5) * 2.0;
+    p = B.xyz + (onHead ? vec3(0.0, 0.25, 0.0) + rgt * u * 0.06 + fwd * (rnd.x - 0.15) * 0.3
+                        : vec3(0.0, -0.03, 0.0) + rgt * (sign(u) * 0.06 + u * 0.12) + fwd * (fract(rnd.x * 7.0) - 0.5) * 0.12);
+    s = 0.012 + 0.03 * vLife;
+  }
   vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
   vec3 wp = p + right * (position.x - 0.5) * s * 2.0 + vec3(0.0, 1.0, 0.0) * position.y * s * 1.3;
   vUv = position.xy;
@@ -292,17 +306,28 @@ void main(){
   float a = exp(-x * x * 4.0) * (1.0 - vUv.y) * (1.0 - vLife) * (1.0 - vLife);
   gl_FragColor = vec4(uColor * a, 1.0);
 }`;
+/**
+ * Rain splashes: `count` on the ground round the camera plus BODY_SPLASHES on each of up to BODY_SLOTS soldiers
+ * (shoulders and head; same instanced draw call). Set the soldiers with mesh.userData.setBodies([{ pos, yaw }]).
+ */
 export function createSplashes(count) {
   const base = new THREE.InstancedBufferGeometry();
   base.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0], 3));
-  const seeds = new Float32Array(count * 4);
+  const n = count + BODY_SLOTS * BODY_SPLASHES;
+  const seeds = new Float32Array(n * 4), body = new Float32Array(n).fill(-1);
   for (let i = 0; i < seeds.length; i++) seeds[i] = Math.random();
+  for (let i = count; i < n; i++) body[i] = Math.floor((i - count) / BODY_SPLASHES);
   base.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 4));
-  base.instanceCount = count;
+  base.setAttribute('aBody', new THREE.InstancedBufferAttribute(body, 1));
+  base.instanceCount = n;
+  const uBody = { value: Array.from({ length: BODY_SLOTS }, () => new THREE.Vector4()) };
   const m = new THREE.Mesh(base, new THREE.ShaderMaterial({
     vertexShader: SPLASH_VERT, fragmentShader: SPLASH_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    uniforms: { uTime: WET.uTime, uCam: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0.06, 0.06, 0.055) } },
+    uniforms: { uTime: WET.uTime, uCam: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0.06, 0.06, 0.055) }, uBody },
   }));
+  m.userData.setBodies = (list) => {
+    for (let i = 0; i < BODY_SLOTS; i++) { const b = list[i]; if (b) uBody.value[i].set(b.pos.x, b.pos.y, b.pos.z, b.yaw + 10); else uBody.value[i].set(0, 0, 0, 0); }
+  };
   m.frustumCulled = false;
   m.layers.set(3);
   return m;

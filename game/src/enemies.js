@@ -271,6 +271,52 @@ function ak4c(S) {
   return g;
 }
 
+/**
+ * Muzzle flash (shared by every soldier, one draw call): two crossed planes along the bore carry the forward flame
+ * and side jets, a disc facing down the bore carries a petalled star; additive, HDR colour so bloom picks it up. The
+ * texture is drawn here (own work): left half = flame seen from the side (bright core at the muzzle, tapering, ragged
+ * streaks), right half = star seen end-on. Rotated / scaled randomly per shot by poseGuard.
+ */
+let FLASH = null;
+function flashParts() {
+  if (FLASH) return FLASH;
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const x = c.getContext('2d');
+  const rnd = (() => { let k = 7; return () => (k = (k * 16807) % 2147483647) / 2147483647; })();
+  x.globalCompositeOperation = 'lighter';
+  // side flame: muzzle at the left edge (u 0), flame toward u 1 (0..128 px)
+  for (let i = 0; i < 26; i++) {
+    const len = 40 + rnd() * 80, w = 3 + rnd() * 9, a = (rnd() - 0.5) * 0.5;
+    const g = x.createLinearGradient(4, 64, 4 + len, 64);
+    g.addColorStop(0, 'rgba(255,240,200,0.55)'); g.addColorStop(0.35, 'rgba(255,170,70,0.3)'); g.addColorStop(1, 'rgba(255,90,20,0)');
+    x.save(); x.translate(4, 64); x.rotate(a); x.fillStyle = g;
+    x.beginPath(); x.moveTo(0, -w * 0.3); x.quadraticCurveTo(len * 0.4, -w, len, 0); x.quadraticCurveTo(len * 0.4, w, 0, w * 0.3); x.fill(); x.restore();
+  }
+  { const g = x.createRadialGradient(6, 64, 0, 6, 64, 30); g.addColorStop(0, 'rgba(255,255,235,1)'); g.addColorStop(1, 'rgba(255,200,120,0)'); x.fillStyle = g; x.fillRect(0, 24, 40, 80); }
+  // end-on star (128..256)
+  for (let i = 0; i < 7; i++) {
+    const a = i / 7 * Math.PI * 2 + rnd() * 0.4, len = 30 + rnd() * 30;
+    const g = x.createLinearGradient(192, 64, 192 + Math.cos(a) * len, 64 + Math.sin(a) * len);
+    g.addColorStop(0, 'rgba(255,230,180,0.7)'); g.addColorStop(1, 'rgba(255,120,40,0)');
+    x.save(); x.translate(192, 64); x.rotate(a); x.fillStyle = g;
+    x.beginPath(); x.moveTo(0, -5); x.lineTo(len, 0); x.lineTo(0, 5); x.fill(); x.restore();
+  }
+  { const g = x.createRadialGradient(192, 64, 0, 192, 64, 22); g.addColorStop(0, 'rgba(255,255,240,1)'); g.addColorStop(1, 'rgba(255,190,110,0)'); x.fillStyle = g; x.fillRect(160, 32, 64, 64); }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  // geometry: planes in rifle space, bore along -Z; muzzle at the mesh origin
+  const quad = (pts, uvs) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs.flat(), 2)); g.setIndex([0, 1, 2, 0, 2, 3]); return g; };
+  const L = 0.3, W = 0.07, R = 0.075;
+  const parts = [
+    quad([[-W, 0, 0.01], [W, 0, 0.01], [W, 0, -L], [-W, 0, -L]], [[0, 0], [0, 1], [0.5, 1], [0.5, 0]]),
+    quad([[0, -W, 0.01], [0, W, 0.01], [0, W, -L], [0, -W, -L]], [[0, 0], [0, 1], [0.5, 1], [0.5, 0]]),
+    quad([[-R, -R, -0.01], [R, -R, -0.01], [R, R, -0.01], [-R, R, -0.01]], [[0.5, 0], [1, 0], [1, 1], [0.5, 1]]),
+  ];
+  const geo = mergeGeometries(parts);
+  const m = new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(7, 4.2, 2.0), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: true });
+  FLASH = [geo, m];
+  return FLASH;
+}
+
 function buildRifle(S, weapon) { return weapon === 'ak4c' ? ak4c(S) : kalashnikov(S, weapon === 'akm' ? 'akm' : 'ak74'); }
 
 /**
@@ -293,8 +339,8 @@ export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
   root.add(rifle);
   const mz = weapon === 'ak4c' ? -0.64 : -0.66;
   const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.0, mz); rifle.add(flash);
-  const fl = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.5, 1.5) }));
-  fl.position.set(0, 0.0, mz); fl.visible = false; rifle.add(fl);
+  const fl = new THREE.Mesh(...flashParts());
+  fl.position.set(0, 0.0, mz); fl.visible = false; fl.renderOrder = 6; rifle.add(fl);
   root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
   root.userData.tbSoldier = { body: mesh, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')], geo: mesh.geometry, far: mesh.geometry.userData.far || null }; // distance policies for shadow / reflection passes: world/props/lod.js
   const seed = Math.random() * 100;
@@ -526,6 +572,7 @@ function poseAlive(g, st, dt) {
   // ---- rifle: low ready (chest-anchored, with a lagging bounce) -> shouldered (eye-anchored) -> reload pose
   const ch = s.mm[BI.chest];
   const chY = _a.setFromMatrixPosition(ch).y;
+  if (!X.lagOn) { X.lag.x = chY; X.lag.v = 0; X.lagOn = true; }   // start at rest (no rifle swing on a soldier's first frame)
   const lag = spring(X.lag, chY, 16, 0.5, dt) - chY;
   qE(-0.25 + lag * 2.5 - 0.08 * run, 1.2, 0.0, _q);
   _m.compose(_a.copy(BUTT_LOW).sub(_b.copy(BUTT).applyQuaternion(_q)), _q, UNIT);
@@ -717,6 +764,214 @@ function poseDeath(g, st) {
   const mag = g.rifle.userData.mag; if (mag) { mag.position.set(0, 0, 0); mag.quaternion.identity(); }
 }
 
+// ------------------------------------------------------------------ death: variants, ground contact, obstacles
+// World collision probe used to keep bodies out of containers, walls and drums: fn(x, z, r) -> true when a circle of
+// radius r at (x, z) overlaps a blocker (game.js passes Game.blocked: the same 2D boxes the player and guards collide
+// with, plus the quay bounds). Without a probe (tools / tests) the fall ignores obstacles, as before.
+let worldProbe = null;
+export function setWorldProbe(fn) { worldProbe = fn; }
+
+const _fp = new THREE.Vector3();
+/** Model-space point on bone i (offset in the bone's frame) of the current FK. */
+const boneOff = (g, i, x, y, z, v) => v.set(x, y, z).applyMatrix4(g.s.mm[i]);
+
+/**
+ * Lay the arms of a lying / slumped key pose on the ground (or the lap) with arm IK, so hands and forearms rest on
+ * something instead of hanging in the air. targets: [right, left] as {a, b, h}: a = metres out to the soldier's side
+ * from the shoulder, b = metres along the body toward the head (negative: toward the feet), h = height above the
+ * ground (hand centre). The pose is FK'd in model space (the fall's yaw is a rotation about Y and keeps heights).
+ */
+function groundArms(g, key, targets) {
+  const B = g.bones;
+  for (let i = 0; i < B.length; i++) { B[i].quaternion.copy(key.q[i]); B[i].position.copy(key.p[i]); }
+  fkFrom(g, 0);
+  const hip = bonePos(g, BI.hips, new THREE.Vector3()), head = bonePos(g, BI.head, new THREE.Vector3());
+  const along = head.clone().sub(hip); along.y = 0; along.normalize();
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.s.mq[BI.chest]); right.y = 0; right.normalize();
+  [[BI.uarmR, BI.farmR, BI.handR, 1], [BI.uarmL, BI.farmL, BI.handL, -1]].forEach(([iu, il, ih, sd], k) => {
+    const t = targets[k];
+    const sh = bonePos(g, iu, new THREE.Vector3());
+    const T = sh.clone().addScaledVector(right, sd * t.a).addScaledVector(along, t.b);
+    T.y = t.h + 0.03;
+    const pole = right.clone().multiplyScalar(sd).add(_fp.set(0, 0.3, 0)).normalize();   // elbow out to the side, not into the ground
+    twoBone(g, iu, il, LEN.upper, LEN.fore, T, pole, 1);
+    // limp hand: continues the forearm, palm turned to the ground
+    fk(g, ih);
+    key.q[iu].copy(B[iu].quaternion); key.q[il].copy(B[il].quaternion); key.q[ih].copy(B[ih].quaternion);
+  });
+}
+
+/**
+ * Death keys. dir +1: falls backward (shot from the front): knees buckle, the seat drops to the ground, the torso
+ * rolls back onto the ground. dir -1: falls forward (shot from behind): drops to the knees, topples face down.
+ * side: which way the head / limbs fall. variant 0..2: final pose (arms flung out / one across the body / along the
+ * sides; legs splayed or straight). slump > 0: the fall ends sitting against an obstacle (seat that far behind the
+ * feet, back against the wall) instead of lying flat.
+ */
+function deathKeysV(g, dir, side, variant, slump) {
+  const keys = deathKeys(g, dir, side);
+  const v = variant;
+  if (slump > 0) {
+    // slumped against a wall: seat on the ground, torso leaning back on the obstacle, head fallen forward to one side,
+    // one leg out straight, the other bent
+    const bentR = (side > 0) !== (v === 1);
+    keys.lie = keyPose(g, {
+      pos: [0.03 * side, 0.15, slump], hips: [0.55, 0.1 * side, 0.05 * side],
+      spine: [-0.08, 0.05 * side], chest: [-0.12, 0.08 * side, 0.06 * side], neck: [-0.45, 0, 0.1 * side], head: [-0.2, 0.35 * side, 0.3 * side],
+      thighR: bentR ? [1.55, 0, 0.18] : [1.12, 0, 0.06], shinR: bentR ? [-1.35] : [-0.12], footR: bentR ? [0.15] : [-0.35, 0, 0.25],
+      thighL: bentR ? [1.12, 0, -0.06] : [1.55, 0, -0.18], shinL: bentR ? [-0.12] : [-1.35], footL: bentR ? [-0.35, 0, -0.25] : [0.15],
+      clavR: [0, 0, 0.12], clavL: [0, 0, -0.12], handR: [0.3], handL: [0.3],
+    });
+    // the falling seat must not pass through the obstacle: sit down short of it, torso already more upright
+    keys.mid.p[0].z = Math.min(keys.mid.p[0].z, slump + 0.05);
+    qE(0.5, 0.12 * side, 0.06 * side, keys.mid.q[BI.hips]);
+    // legs by IK so the heels rest on the ground: the bent leg's foot near the seat, the straight one out in front
+    {
+      const B = g.bones, key = keys.lie;
+      for (let i = 0; i < B.length; i++) { B[i].quaternion.copy(key.q[i]); B[i].position.copy(key.p[i]); }
+      fkFrom(g, 0);
+      for (const [it, is, ifo, sd] of [[BI.thighR, BI.shinR, BI.footR, 1], [BI.thighL, BI.shinL, BI.footL, -1]]) {
+        const bent = (sd > 0) === bentR;
+        const hp = bonePos(g, it, new THREE.Vector3());
+        const T = new THREE.Vector3(hp.x + sd * (bent ? 0.05 : 0.12), RIG.ankle + 0.01, hp.z - (bent ? 0.42 : 0.8));
+        twoBone(g, it, is, LEN.thigh, LEN.shin, T, _fp.set(sd * 0.25, bent ? 1 : 0.2, -1).normalize(), -1);
+        key.q[it].copy(B[it].quaternion); key.q[is].copy(B[is].quaternion);
+      }
+    }
+    groundArms(g, keys.lie, v === 2
+      ? [{ a: 0.02, b: -0.42, h: 0.2 }, { a: 0.2, b: -0.08, h: 0.0 }]           // one hand in the lap
+      : [{ a: 0.2, b: -0.06, h: 0.0 }, { a: 0.18, b: -0.1, h: 0.0 }]);         // both hands on the ground by the hips
+    return keys;
+  }
+  if (dir > 0) {
+    // on the back: legs per variant (one knee raised / both out / crossed over), arms laid on the ground
+    const legs = [
+      null,                                                                    // keyed in deathKeys (one knee up)
+      { thighR: [0.1, 0, 0.2], shinR: [-0.1], footR: [0.2, 0, 0.35], thighL: [0.06, 0, -0.16], shinL: [-0.15], footL: [0.25, 0, -0.35] },
+      { thighR: [0.2, 0, -0.04 * side], shinR: [-0.3], footR: [0.1, 0, 0.3], thighL: [0.25, 0, 0.02 * side], shinL: [-0.4], footL: [0.1, 0, -0.3] },
+    ][v];
+    if (legs) for (const [n, e] of Object.entries(legs)) qE(e[0] || 0, e[1] || 0, e[2] || 0, keys.lie.q[BI[n]]);
+    groundArms(g, keys.lie, [
+      [{ a: 0.5, b: 0.05, h: 0.0 }, { a: 0.42, b: -0.2, h: 0.0 }],               // flung out
+      [{ a: -0.12, b: -0.32, h: 0.17 }, { a: 0.55, b: 0.28, h: 0.0 }],           // right hand across the belly, left out by the head
+      [{ a: 0.26, b: -0.5, h: 0.0 }, { a: 0.3, b: -0.44, h: 0.0 }],              // along the sides
+    ][v]);
+  } else {
+    // face down: arms bent up by the head / along the body / one out wide
+    groundArms(g, keys.lie, [
+      [{ a: 0.32, b: 0.2, h: 0.0 }, { a: 0.3, b: 0.05, h: 0.0 }],
+      [{ a: 0.24, b: -0.48, h: 0.0 }, { a: 0.22, b: -0.5, h: 0.0 }],
+      [{ a: 0.58, b: 0.1, h: 0.0 }, { a: 0.22, b: -0.45, h: 0.0 }],
+    ][v]);
+  }
+  return keys;
+}
+
+// footprint of a final pose (model space, before the fall's yaw): [bone, x, y, z offset, probe radius]
+const FOOTPRINT = [
+  [BI.hips, 0, 0, 0, 0.16], [BI.chest, 0, 0.1, 0, 0.18], [BI.head, 0, 0.1, 0, 0.12],
+  [BI.handR, 0, -0.06, 0, 0.06], [BI.handL, 0, -0.06, 0, 0.06], [BI.farmR, 0, 0, 0, 0.06], [BI.farmL, 0, 0, 0, 0.06],
+  [BI.shinR, 0, 0, 0, 0.08], [BI.shinL, 0, 0, 0, 0.08], [BI.footR, 0, 0, -0.08, 0.07], [BI.footL, 0, 0, -0.08, 0.07],
+];
+/** Footprint points of a key pose in model space: [x, z, r]. */
+function footprint(g, key) {
+  for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(key.q[i]); g.bones[i].position.copy(key.p[i]); }
+  fkFrom(g, 0);
+  return FOOTPRINT.map(([i, x, y, z, r]) => { boneOff(g, i, x, y, z, _fp); return [_fp.x, _fp.z, r]; });
+}
+/** How much of a footprint (rotated by the fall's yaw) lies inside obstacles (0 = clear). */
+function blockedScore(g, pts, yaw, extra) {
+  if (!worldProbe) return 0;
+  const ry = g.root.rotation.y, c0 = Math.cos(ry), s0 = Math.sin(ry), c1 = Math.cos(yaw), s1 = Math.sin(yaw);
+  const px = g.root.position.x, pz = g.root.position.z;
+  let n = 0;
+  for (const [x0, z0, r] of extra ? pts.concat(extra) : pts) {
+    const x = x0 * c1 + z0 * s1, z = -x0 * s1 + z0 * c1;              // fall yaw (model space)
+    if (worldProbe(px + x * c0 + z * s0, pz - x * s0 + z * c0, r)) n += r;
+  }
+  return n;
+}
+/** Free distance behind a candidate fall (model +Z turned by yaw): 0.15..1.3 m, the first blocked step. */
+function freeBehind(g, yaw) {
+  const ry = g.root.rotation.y + yaw, bx = Math.sin(ry), bz = Math.cos(ry);
+  for (let d = 0.15; d < 1.3; d += 0.05) if (worldProbe(g.root.position.x + bx * d, g.root.position.z + bz * d, 0.14)) return d;
+  return 1.3;
+}
+
+const _keyHash = (s, k) => { const x = Math.sin(s * 91.7 + k * 37.3) * 43758.5453; return x - Math.floor(x); };
+/** Set up the fall (s.death) from the current living pose. */
+function startDeath(g, st) {
+  const s = g.s;
+  // fall away from the shooter when the killing shot's direction is known, else the game's fallDir
+  const recent = s.time - s.hitAt < 0.6, h = s.hitDir;
+  let dir = recent ? (h.z >= 0 ? 1 : -1) : (st.fallDir >= 0 ? 1 : -1);
+  let yaw = 0;
+  if (recent) yaw = dir > 0 ? Math.atan2(h.x, h.z) : Math.atan2(-h.x, -h.z);
+  yaw = clamp(yaw, -0.9, 0.9);
+  let side = Math.abs(yaw) > 0.15 ? Math.sign(yaw) * dir : (_keyHash(s.seed, 1) < 0.5 ? -1 : 1);
+  const variant = Math.floor(_keyHash(s.seed, 2) * 3) % 3;
+  const k0 = { q: g.bones.map(b => b.quaternion.clone()), p: g.bones.map(b => b.position.clone()) };
+  // planted ankles / foot orientations of the last living pose (model space), for the knee buckle
+  // (feet set flat on the ground with their heading kept, also when the shot caught a foot mid-step)
+  const ank = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = RIG.ankle; return v; });
+  const footQ = [BI.footR, BI.footL].map(i => { const f = _d.set(0, 0, -1).applyQuaternion(g.s.mq[i]); return new THREE.Quaternion().setFromAxisAngle(_Y, Math.atan2(-f.x, -f.z)); });
+  const rifleAt = (dir_, side_, slump) => slump > 0 ? [0.4 * side_, slump * 0.5, 0.1] : [0.42 * side_, -0.15 * dir_, 0.1];
+  let keys = deathKeysV(g, dir, side, variant, 0), slump = 0;
+  // obstacles: keep the body (torso, head, limbs) and the dropped rifle out of containers, walls and drums. Turn the
+  // fall a little at a time (preferring the shooter's direction), then try falling the other way; with nothing clear
+  // (backed against a wall), slump down against it
+  if (worldProbe) {
+    const ex = r => { const [x, z, rr] = rifleAt(r.dir, r.side, 0); return [[x, z, rr]]; };
+    let best = null;
+    const fp = {};
+    for (const d of [dir, -dir]) for (const sd of [side, -side]) {
+      const kk = d === dir && sd === side ? keys : deathKeysV(g, d, sd, variant, 0);
+      fp[d + "," + sd] = { keys: kk, pts: footprint(g, kk.lie) };
+    }
+    const search = (dirs, dys) => {
+      for (const dy of dys) for (const d of dirs) {
+        const y2 = yaw + dy, sd = Math.abs(y2) > 0.15 ? Math.sign(y2) * d : side;
+        const c = fp[d + ',' + sd];
+        const cost = Math.abs(dy) + (d !== dir ? 0.9 : 0);
+        if ((!best || cost < best.cost) && blockedScore(g, c.pts, y2, ex({ dir: d, side: sd })) === 0) best = { cost, d, sd, y2, keys: c.keys };
+      }
+    };
+    search([dir], [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]);
+    // backed against an obstacle (falling backward into it): slump down against it rather than pitch the other way
+    const wall = !best && dir > 0 && freeBehind(g, yaw) < 1.25;
+    if (!best && !wall) search([dir, -dir], [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.4, -1.4]);
+    if (best) { dir = best.d; side = best.sd; yaw = best.y2; keys = best.keys; }
+    else if (blockedScore(g, fp[dir + ',' + side].pts, yaw)) {
+      // slump: back to the nearest obstacle behind (yaw searched around the shot direction), seat just in front of it
+      let sb = null;
+      for (const dy of [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2, 1.6, -1.6, 2.2, -2.2, Math.PI]) {
+        const f = freeBehind(g, yaw + dy);
+        if (f < 1.25 && f > 0.42 && (!sb || Math.abs(dy) < Math.abs(sb.dy))) sb = { dy, f };
+      }
+      if (sb) {
+        dir = 1; yaw += sb.dy; slump = clamp(sb.f - 0.3, 0.2, 0.8);
+        keys = deathKeysV(g, 1, side, variant, slump);
+        if (blockedScore(g, [], yaw, [rifleAt(1, side, slump)])) side = -side;
+      }
+    }
+  }
+  // ankles / feet of the final pose (model space, before the fall's yaw): the IK targets slide there
+  for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(keys.lie.q[i]); g.bones[i].position.copy(keys.lie.p[i]); }
+  fkFrom(g, 0);
+  const ank1 = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = Math.max(RIG.ankle, v.y - keys.lie.p[0].y + 0.17); return v; });
+  const footQ1 = [BI.footR, BI.footL].map(i => g.s.mq[i].clone());
+  for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(k0.q[i]); g.bones[i].position.copy(k0.p[i]); }
+  fkFrom(g, 0);
+  const r1q = qE(0, side * 0.9 + 0.4 * dir + yaw + (variant - 1) * 0.35, Math.PI / 2 * side);
+  const [rx, rz] = rifleAt(dir, side, slump);
+  s.death = {
+    dir, side, yaw, slump, variant, k0, ank, footQ, ank1, footQ1, ...keys,
+    r0p: g.rifle.position.clone(), r0q: g.rifle.quaternion.clone(),
+    r1p: new THREE.Vector3(rx, 0.026, rz).applyAxisAngle(_Y, yaw), r1q,
+  };
+  s.L.init = false;                                      // re-plant the feet if this soldier is reused
+}
+
 // ------------------------------------------------------------------ public
 /**
  * Pose a guard / soldier. st: {walk, speed(0..1), aim(0..1), flash, hit, dead (0 alive, then s/0.9), fallDir}
@@ -750,35 +1005,7 @@ export function poseGuard(g, st) {
     s.death = null;
     poseAlive(g, st, dt);
   } else {
-    if (!s.death) {
-      // fall away from the shooter when the killing shot's direction is known, else the game's fallDir
-      const recent = s.time - s.hitAt < 0.6, h = s.hitDir;
-      const dir = recent ? (h.z >= 0 ? 1 : -1) : (st.fallDir >= 0 ? 1 : -1);
-      let yaw = 0;
-      if (recent) yaw = dir > 0 ? Math.atan2(h.x, h.z) : Math.atan2(-h.x, -h.z);
-      yaw = clamp(yaw, -0.9, 0.9);
-      const side = Math.abs(yaw) > 0.15 ? Math.sign(yaw) * dir : (Math.random() < 0.5 ? -1 : 1);
-      const k0 = { q: g.bones.map(b => b.quaternion.clone()), p: g.bones.map(b => b.position.clone()) };
-      // planted ankles / foot orientations of the last living pose (model space), for the knee buckle
-      // (feet set flat on the ground with their heading kept, also when the shot caught a foot mid-step)
-      const ank = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = RIG.ankle; return v; });
-      const footQ = [BI.footR, BI.footL].map(i => { const f = _d.set(0, 0, -1).applyQuaternion(g.s.mq[i]); return new THREE.Quaternion().setFromAxisAngle(_Y, Math.atan2(-f.x, -f.z)); });
-      const keys = deathKeys(g, dir, side);
-      // ankles / feet of the final lying pose (model space, before the fall's yaw): the IK targets slide there
-      for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(keys.lie.q[i]); g.bones[i].position.copy(keys.lie.p[i]); }
-      fkFrom(g, 0);
-      const ank1 = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = Math.max(RIG.ankle, v.y - keys.lie.p[0].y + 0.17); return v; });
-      const footQ1 = [BI.footR, BI.footL].map(i => g.s.mq[i].clone());
-      for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(k0.q[i]); g.bones[i].position.copy(k0.p[i]); }
-      fkFrom(g, 0);
-      const r1q = qE(0, side * 0.9 + 0.4 * dir + yaw, Math.PI / 2 * side);
-      s.death = {
-        dir, side, yaw, k0, ank, footQ, ank1, footQ1, ...keys,
-        r0p: g.rifle.position.clone(), r0q: g.rifle.quaternion.clone(),
-        r1p: new THREE.Vector3(0.42 * side, 0.026, -0.15 * dir).applyAxisAngle(_Y, yaw), r1q,
-      };
-      s.L.init = false;                                      // re-plant the feet if this soldier is reused
-    }
+    if (!s.death) startDeath(g, st);
     poseDeath(g, st);
     g.flash.intensity = 0; g.flashMesh.visible = false;
   }

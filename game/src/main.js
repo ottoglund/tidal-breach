@@ -101,6 +101,7 @@ async function boot() {
   ];
   attachFogUniforms(scene);
   let fogTick = 0;
+  const bodySpots = [];
 
   // exposure tuned for the night scene (physically based light units)
   renderer.toneMappingExposure = 0.9;
@@ -149,6 +150,21 @@ async function boot() {
     if ((fogTick++ % 10) === 0) updateFogLamps(fogLamps.filter(l => !l.node || !l.node.done), pipe.camera.position);
     rain.material.uniforms.uCam.value.copy(pipe.camera.position);
     splashes.material.uniforms.uCam.value.copy(pipe.camera.position);
+    // rain bursting on the shoulders / heads of the nearest soldiers (same splash draw call; presentation only)
+    if ((fogTick % 3) === 0) {
+      const cp = pipe.camera.position; bodySpots.length = 0;
+      for (const o of scene.children) {
+        const t = o.userData && o.userData.tbSoldier;
+        if (!t || !o.visible || !t.body.visible) continue;
+        const d2 = (o.position.x - cp.x) ** 2 + (o.position.z - cp.z) ** 2;
+        if (d2 > 28 * 28) continue;
+        const nb = t.body.skeleton.bones[3];
+        const pos = nb.getWorldPosition(new THREE.Vector3());
+        if (pos.y > 1.1) bodySpots.push({ d2, pos, yaw: o.rotation.y });     // standing (not lying / slumped)
+      }
+      bodySpots.sort((a, b) => a.d2 - b.d2);
+      splashes.userData.setBodies(bodySpots);
+    }
     pipe.render(now, game.hitFlash);
   }
   function frame(nowMs) {
@@ -234,22 +250,33 @@ async function boot() {
         state2: () => ({ flashT: weapon.flashT, flashVis: weapon.flash.visible, fx: game.fx.items.length, fxLight: game.fx.light.intensity, decals: game.fx.decals.length, keys: Object.keys(game.keys).filter(k => game.keys[k]), touch: game.touch }),
         debug: () => { const out = []; pipe.weaponScene.traverse(o => { if (o.isMesh && o.visible) { const m = o.material; out.push([o.geometry.type, m.type, m.map ? 'map' : 'nomap', m.color && m.color.getHexString(), o.getWorldPosition(new THREE.Vector3()).toArray().map(v => v.toFixed(2)).join(',')]); } }); return out; },
         // QA close-up helper: place one posed soldier at a fixed spot (replaces the previous one). o: {side, weapon, helmet, x, z, yaw, aim, walk, speed, dead, seed, time, clear, look, light, lightColor, lx, ly, lz}
+        // add: true keeps the soldiers placed before (several soldiers in one scene, e.g. gameplay-range surveys);
+        // flash > 0: muzzle flash / fire event this frame; fallDir, hitX / hitZ: as the game passes them (death direction)
         soldier: (o = {}) => {
-          if (window.__qaSoldier) { scene.remove(window.__qaSoldier.root); if (window.__qaSoldier.qaLight) scene.remove(window.__qaSoldier.qaLight); window.__qaSoldier = null; }
+          const qs = window.__qaSoldiers || (window.__qaSoldiers = []);
+          if (!o.add || o.clear) { for (const q of qs) { scene.remove(q.root); if (q.qaLight) scene.remove(q.qaLight); } qs.length = 0; window.__qaSoldier = null; }
           if (o.clear) return null;
           const g = createSoldier({ side: o.side || 'opfor', weapon: o.weapon, helmet: o.helmet, look: o.look ?? 0 });
           g.root.rotation.order = 'YXZ'; g.root.position.set(o.x || 0, 0, o.z || 0); g.root.rotation.y = o.yaw ?? Math.PI;
-          g.s.seed = o.seed ?? 3.1; g.s.time = o.time ?? 5;
-          const st = { walk: o.walk || 0, speed: o.speed || 0, aim: o.aim || 0, flash: 0, hit: 0, dead: o.dead || 0, fallDir: 1 };
-          if (st.speed) { // walking: the gait needs a real phase rate, so advance the phase for 0.4 s of wall time
-            const t0 = performance.now();
-            for (let el = 0; el < 0.4; el = (performance.now() - t0) / 1000) poseSoldier(g, { ...st, walk: st.walk - 7 * (0.4 - el) });
+          const SETTLE = 1.5, DT = 1 / 30, N = Math.round(SETTLE / DT);
+          g.s.seed = o.seed ?? 3.1; g.s.time = (o.time ?? 5) - SETTLE;
+          const st = { walk: o.walk || 0, speed: o.speed || 0, aim: o.aim || 0, flash: 0, hit: 0, dead: 0, fallDir: o.fallDir ?? 1, hitX: o.hitX, hitZ: o.hitZ };
+          // settle the pose springs (aim raise, rifle lag, gait) over 1.5 s of simulated 30 Hz frames; walking advances
+          // the gait phase at 7 rad/s so the feet plant with a real cadence (poseSoldier takes dt from the clock, so the
+          // previous-pose time is set back by one frame before each call)
+          for (let k = 0; k <= N; k++) { g.s.t = performance.now() / 1000 - DT; poseSoldier(g, { ...st, walk: st.walk - (st.speed ? 7 * DT * (N - k) : 0) }); }
+          if (o.dead) { // the death starts from that pose, as in the game (shot: hit reaction toward hitX / hitZ)
+            g.s.t = performance.now() / 1000 - DT; poseSoldier(g, { ...st, hit: o.hitX !== undefined ? 1 : 0 });
+            st.dead = o.dead;
           }
-          for (let i = 0; i < 3; i++) poseSoldier(g, st);
+          for (let i = 0; i < 2; i++) { g.s.t = performance.now() / 1000 - DT; poseSoldier(g, st); }
+          if (o.flash) { g.s.t = performance.now() / 1000 - DT; poseSoldier(g, { ...st, flash: o.flash }); }
           if (o.light) { const L = new THREE.PointLight(o.lightColor ?? 0xffe2bd, o.light, 14, 2); L.position.set((o.x || 0) + (o.lx ?? 1.6), o.ly ?? 2.6, (o.z || 0) + (o.lz ?? 2.4)); scene.add(L); g.qaLight = L; }
-          scene.add(g.root); window.__qaSoldier = g;
+          scene.add(g.root); window.__qaSoldier = g; qs.push(g);
           return g.mesh.geometry.index.count / 3;
         },
+        // collision boxes near (x, z) (plan AABBs, metres): for placing QA scenes next to obstacles
+        blockers: (x = 0, z = 0, r = 12) => game.blockers.filter(b => Math.max(b.x1 - x, x - b.x2, 0) ** 2 + Math.max(b.z1 - z, z - b.z2, 0) ** 2 < r * r).map(b => [b.x1, b.z1, b.x2, b.z2, b.h].map(v => +(+v).toFixed(2))),
         renderFrame: (t = 10) => { const t0 = performance.now(); renderAt(t, 0.016); renderer.getContext().finish(); return performance.now() - t0; },
       }), configurable: false,
     });

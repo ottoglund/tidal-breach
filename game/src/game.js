@@ -3,7 +3,7 @@
 // mission plays identically; presentation and feel are new.
 import * as THREE from 'three';
 import { BOUNDS, SPAWN, NODES, EXTRACT, ENEMY_SPAWNS } from './world/level.js';
-import { createGuard, poseGuard } from './enemies.js';
+import { createGuard, poseGuard, setWorldProbe } from './enemies.js';
 import { gaitRate } from './characters/anim.js';
 import { createSoldier, poseSoldier } from './characters/squad.js';
 import { Squad } from './friendlies.js';
@@ -25,6 +25,7 @@ export class Game {
     this.scene = pipeline.scene;
     this.camera = pipeline.camera;
     this.blockers = level.blockers;
+    setWorldProbe((x, z, r) => this.blocked(x, z, r)); // dead bodies fall clear of containers / walls / drums (presentation)
     this.nodes = NODES.map((n, i) => ({ ...n, done: false, obj: level.nodeObjs[i] }));
     this.extract = EXTRACT;
     this.enemies = [];

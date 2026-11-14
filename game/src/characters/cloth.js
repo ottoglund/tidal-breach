@@ -154,7 +154,7 @@ varying vec3 vFabP;
 #ifdef FAB_BODY
 ${BODY_FS_DECL}
 #endif
-float fabMud = 0.0, fabWet = 0.0, fabRib = 0.0, fabHgt = 0.0, fabRoughK = 1.0, fabSheenK = 1.0;
+float fabMud = 0.0, fabWet = 0.0, fabFilm = 0.0, fabRib = 0.0, fabHgt = 0.0, fabRoughK = 1.0, fabSheenK = 1.0;
 float fabH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float fabN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(fabH(i), fabH(i + vec2(1.0, 0.0)), f.x), mix(fabH(i + vec2(0.0, 1.0)), fabH(i + vec2(1.0, 1.0)), f.x), f.y); }
@@ -291,6 +291,13 @@ ${weaveGLSL(weave)}
         // shoulders / crown / rig top are visibly wetter: darker and saturated, with a few run-off streaks
         fabWet = top * (0.55 + 0.45 * nz) * ${wetTop.toFixed(3)} * (0.4 + 0.6 * uWetness) * 2.0;
         diffuseColor.rgb *= 1.0 - 0.42 * clamp(fabWet, 0.0, 1.0);
+        // water film: the soaked weave itself stays matte, but a film of water sits on the shoulders / crown / rig top
+        // and runs down the sides in streaks (rest-pose space, so they stay on the cloth): lower roughness there ->
+        // the sodium / LED lamps draw soft specular highlights and a wet rim along the silhouette
+        float streak = smoothstep(0.56, 0.86, fabN(vec2((vFabP.x + vFabP.z) * 46.0, vFabP.y * 2.4 + nz)));
+        fabFilm = clamp(uWetness * (0.8 * clamp(fabWet, 0.0, 1.0) + 0.5 * streak * (1.0 - top) * (0.45 + 0.55 * nz)), 0.0, 1.0);
+        diffuseColor.rgb *= 1.0 - 0.14 * streak * uWetness * (1.0 - top);
+        fabSheenK += 0.9 * fabFilm + 0.35 * uWetness;
       }`)
       .replace('normal = normalize( tbn * mapN );', `
       #ifdef FAB_WEAVE
@@ -311,7 +318,7 @@ ${weaveGLSL(weave)}
         #else
         float rv = fabN(vFabP.xy * 17.0 + vFabP.z * 9.0) - 0.5;
         #endif
-        roughnessFactor = clamp(roughnessFactor * fabRoughK * (1.0 + ${rough.toFixed(3)} * 2.0 * rv) * (1.0 - ${mudGloss.toFixed(3)} * fabMud) * (1.0 - 0.3 * clamp(fabWet, 0.0, 1.0)), 0.18, 1.0);
+        roughnessFactor = clamp(roughnessFactor * fabRoughK * (1.0 + ${rough.toFixed(3)} * 2.0 * rv) * (1.0 - ${mudGloss.toFixed(3)} * fabMud) * (1.0 - 0.58 * fabFilm), 0.14, 1.0);
       }`)
       .replace('#include <opaque_fragment>', `
       {
@@ -325,7 +332,7 @@ ${weaveGLSL(weave)}
       #include <opaque_fragment>`);
     shareMapUv(shader, m);
   };
-  m.customProgramCacheKey = () => 'fab3' + (SHADER.lite ? 'L' : '') + uvShareKey(m) + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss + ribFull + (weaveFull ? weaveFull.cells + '/' + weaveFull.tile : '') + (o.body ? 'B' : '') + (gearFull ? 'G' : '') + (bootFull ? 'T' : '');
+  m.customProgramCacheKey = () => 'fab4' + (SHADER.lite ? 'L' : '') + uvShareKey(m) + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss + ribFull + (weaveFull ? weaveFull.cells + '/' + weaveFull.tile : '') + (o.body ? 'B' : '') + (gearFull ? 'G' : '') + (bootFull ? 'T' : '');
   return m;
 }
 

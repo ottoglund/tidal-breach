@@ -246,11 +246,46 @@ SIDES = {
     # for the thumb and the right index
     'R': dict(S=1, wrist=np.array([0.042, -0.152, 0.158]), mcp=np.array([0.03, -0.174, 0.05]), palm=np.array([-1.0, 0.0, -0.25]),
               elbow=np.array([0.17, -0.36, 0.52]), twist=0.0,
-              thumb=np.array([-0.029, -0.150, 0.050]), index=np.array([0.0215, -0.132, -0.022])),
+              # thumb wrapped round the left side of the grip (the old target, high on the receiver at z 0.05, was out
+              # of reach: the solved thumb stopped 4.7 cm short, in front of the grip)
+              thumb=np.array([-0.023, -0.188, 0.086]), index=np.array([0.0215, -0.132, -0.022])),
     'L': dict(S=-1, wrist=np.array([-0.092, -0.118, -0.165]), mcp=np.array([-0.008, -0.103, -0.228]), palm=np.array([0.3, 1.0, 0.0]),
               elbow=np.array([-0.24, -0.40, 0.12]), twist=0.0,
               thumb=np.array([-0.033, BORE + 0.003, -0.300]), index=np.array([0.03, -0.066, -0.262])),
 }
+
+
+def sdf_grad(P, f, eps=2e-4):
+    g = np.stack([(f(P + e) - f(P - e)) for e in np.eye(3) * eps], 1) / (2 * eps)
+    return g / (np.linalg.norm(g, axis=1, keepdims=True) + 1e-12)
+
+
+CONFORM = {'L': 0.013, 'R': 0.009}   # reach (m): glove surface facing the part within this distance is drawn onto it
+
+
+def conform(P, F, nb, sd, gap=GLOVE_T * 0.25):
+    """Pull the glove surface that faces the rifle and lies within CONFORM[sd] of it onto its surface (falloff with
+    distance, displacement smoothed over the mesh so the palm flattens as a whole), then push any remaining
+    penetration out. Returns the new positions."""
+    reach = CONFORM[sd]
+    d = rifle_sdf(P)
+    gr = sdf_grad(P, rifle_sdf)
+    n = normals(P, F)
+    facing = np.clip(-(n * gr).sum(1), 0, 1)
+    w = (1 - sstep(0.002, reach, d)) * sstep(0.25, 0.7, facing)
+    w = np.where(d < gap, 1.0, w)
+    disp = -gr * ((d - gap) * w)[:, None]
+    disp = np.clip(disp, -0.009, 0.009)
+    for _ in range(4):
+        disp = smooth(disp, nb, 1, 0.5)
+    Q = P + disp
+    for _ in range(2):
+        d2 = rifle_sdf(Q)
+        Q = Q + sdf_grad(Q, rifle_sdf) * np.clip(gap - d2, 0, None)[:, None]
+    if os.environ.get('ARMDBG'):
+        mv = np.linalg.norm(Q - P, axis=1)
+        print(sd, 'conform: moved > 1 mm', int((mv > 0.001).sum()), 'max %.4f' % mv.max())
+    return Q
 
 
 def build_arm(B, W, Wmh, pos, R, sd):
@@ -474,11 +509,11 @@ def build_arm(B, W, Wmh, pos, R, sd):
         if os.environ.get('ARMDBG'):
             A, p, q = best[1][-1]
             pts = np.vstack([((G[s] - xp) @ Ax.T + xq) for s, (Ax, xp, xq) in zip(smp, best[1])])
-            print(sd, 'solve', f, 'tip', np.round(to_gun(A @ (tip - p) + q, c)[0], 4), 'target', tg,
+            print(sd, 'solve', f, 'base', np.round(to_gun(heads[0], c)[0], 4), 'len', round(float(np.linalg.norm(tip - heads[0])), 4), 'tip', np.round(to_gun(A @ (tip - p) + q, c)[0], 4), 'target', tg,
                   'pen sum', round(float(np.clip(GLOVE_T + GAP - rifle_sdf(to_gun(pts, c)), 0, None).sum()), 4))
         return best[0]
 
-    e_th = solve(1, cfg['thumb'], (np.linspace(-1.4, 1.4, 22), np.linspace(-1.3, 1.3, 22), np.linspace(-0.4, 0.9, 7)),
+    e_th = solve(1, cfg['thumb'], (np.linspace(-1.4, 1.4, 22), np.linspace(-1.3, 1.3, 22), np.linspace(-0.4, 1.6, 11)),
                  np.array([-S, 0, 0.0]))
     e_ix = None
     if cfg['index'] is not None:
@@ -578,6 +613,9 @@ def build_arm(B, W, Wmh, pos, R, sd):
     # fabric wrinkles across the finger joints (inside of the bends) and over the back of the wrist
     nb_ = nbg
     Gd = smooth(Gd, nb_, 1, 0.3)
+    # soft tissue under grip pressure: the gloved palm / finger pads conform to the part they hold (the rigid hand
+    # placement leaves the hollow of the palm ~1 cm off the handguard / grip, so the hand read as resting beside it)
+    Gd = conform(Gd, Fg, nb_, sd)
     # glove aux: AO from contact with the rifle and cavities, seam field, pad, palm
     contact = np.clip(1 - rifle_sdf(Gd) / 0.012, 0, 1)
     lap = np.array([Gd[n].mean(0) if len(n) else Gd[i] for i, n in enumerate(nb_)]) - Gd
