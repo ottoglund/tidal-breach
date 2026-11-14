@@ -14,7 +14,7 @@ import { createSoldier, poseSoldier } from './characters/squad.js';
 import { loadSoldierBody } from './characters/body.js';
 import { loadViewmodelArms } from './viewmodel/arms.js';
 import { createContactShadows } from './characters/contact.js';
-import { computeProbe, blendProbe } from './characters/probe.js';
+import { computeProbe, blendProbe, GROUND_RHO } from './characters/probe.js';
 
 installFog(); // must run before any material compiles
 
@@ -105,6 +105,8 @@ async function boot() {
   attachFogUniforms(scene);
   let fogTick = 0;
   const bodySpots = [], puffs = [], probeTmp = new Float32Array(12);
+  let viewLux = -1;
+  const VIEW_LUX_K = 3.9;       // ground lux ahead -> eye-illuminance scale (spawn view: ~5.9 lx ahead, ~23 at the eye: exposure unchanged there)
 
   // exposure tuned for the night scene (physically based light units)
   renderer.toneMappingExposure = 0.9;
@@ -146,9 +148,20 @@ async function boot() {
     game.update(dt, now);
     game.syncVisuals(now, dt);
     updateWet(now);
-    // eye adaptation: under a floodlight the eye stops down, in dark lanes it opens up
+    // eye adaptation: under a floodlight the eye stops down, in dark lanes it opens up. Centre-weighted: half from the
+    // light falling on the eye (lamps near the camera), half from how lit the quay ahead is (ground illuminance at 4-22 m
+    // along the view, occluded by the collision boxes; characters/probe.js), scaled so the two agree at the spawn. A
+    // lamp next to the camera no longer stops the eye down for a dark lane it is looking into (and vice versa).
     { let lux = 0; const pp = pipe.camera.position;
       for (const l of lights) lux += l.intensity / (l.position.distanceToSquared(pp) + 4);
+      if ((fogTick % 8) === 0 || viewLux < 0) {
+        const f = new THREE.Vector3(0, 0, -1).applyQuaternion(pipe.camera.quaternion); f.y = 0;
+        if (f.lengthSq() < 1e-6) f.set(0, 0, -1); f.normalize();
+        let e = 0;
+        for (const d of [4, 8, 14, 22]) { computeProbe(probeTmp, pp.x + f.x * d, pp.z + f.z * d, lights, game.blockers); e += (0.3 * probeTmp[0] + 0.55 * probeTmp[1] + 0.15 * probeTmp[2]) / GROUND_RHO; }
+        viewLux = e / 4;
+      }
+      lux = 0.5 * lux + 0.5 * VIEW_LUX_K * viewLux;
       const target = Math.max(0.5, 1.15 / (1 + lux / 22)); renderer.toneMappingExposure += (target - renderer.toneMappingExposure) * Math.min(1, dt * 1.5 + (hold ? 1 : 0)); }
     if ((fogTick++ % 10) === 0) updateFogLamps(fogLamps.filter(l => !l.node || !l.node.done), pipe.camera.position);
     rain.material.uniforms.uCam.value.copy(pipe.camera.position);
@@ -271,7 +284,9 @@ async function boot() {
         enemyList: () => game.enemies.filter(e => e.alive).map(e => ({ x: e.x, z: e.z, los: game.wallHit(e.x, e.z, game.player.x, game.player.z) === null })),
         squadState: () => game.squad.members.map(m => ({ x: m.x, z: m.z, mag: m.mag, target: !!m.target })),
         peaceful: () => { for (const e of game.enemies) { e.alive = false; e.deathAt = -1e9; } },
-        perf: () => ({ fps: perf.fps, ms: perf.ms, quality: quality.name, renderer: glInfo, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, exposure: +renderer.toneMappingExposure.toFixed(3) }),
+        perf: () => ({ fps: perf.fps, ms: perf.ms, quality: quality.name, renderer: glInfo, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, exposure: +renderer.toneMappingExposure.toFixed(3), viewLux: +viewLux.toFixed(2) }),
+        // breath vapour puffs drawn this frame: [x, y, z, age]
+        puffs: () => puffs.map(b => [b.pos.x, b.pos.y, b.pos.z, b.age].map(v => +v.toFixed(3))),
         // the per-soldier light probe of the QA soldiers (characters/probe.js): [rho * E_ground rgb, mirror light rgb]
         probes: () => (window.__qaSoldiers || []).map(g => { const P = g.root.userData.tbSoldier.probe; return [P[0], P[1], P[2], P[8], P[9], P[10]].map(v => +v.toFixed(4)); }),
         quality: quality.name,

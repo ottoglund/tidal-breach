@@ -96,6 +96,8 @@ const { chromium } = require('playwright');
     for (const [n, gx] of [['left', -2], ['right', 2]]) await shot(`face_gaze_${n}`, [{ ...F, gaze: [gx, 1.6, 26] }], cam);
     for (const k of [0.3, 0.6, 1.0]) await shot(`face_speak_${k.toFixed(1)}`, [{ ...F, jaw: k, brow: k * 0.8 }], cam);
     for (const a of [0.25, 0.7]) await shot(`face_breath_${a.toFixed(2)}`, [{ ...F, puff: a }], cam);
+    // breath in profile against the dark quay (camera on the soldier's left)
+    for (const a of [0, 0.35]) await shot(`face_breath_side_${a.toFixed(2)}`, [{ ...F, puff: a > 0 ? a : undefined, light: 0 }], [-0.85, 22.5, look(-0.85, 22.5, 0, 22.25), -0.03]);
     await shot('face_look0_wet', [{ ...F, look: 0, light: 0 }], cam);
     await shot('face_opfor_speak', [{ ...F, side: 'opfor', weapon: 'ak74', jaw: 0.9, brow: 0.6 }], cam);
     await shot('face_helmet', [{ ...F, helmet: true, look: 3 }], cam);

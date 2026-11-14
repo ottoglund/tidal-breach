@@ -197,9 +197,11 @@ ${NOISE}`)
         if (vSkUv.y > 2500.0) {
           // teeth (MakeHuman teeth helpers): enamel, darker deeper in the mouth, which the lips shade; glossy (wet)
           float deep = smoothstep(frontZ - 0.012, frontZ + 0.02, p.z);
-          col = vec3(0.36, 0.33, 0.27) * (0.92 + 0.08 * skN(p * 600.0)) * 0.6;   // in the lips' shadow
-          col *= mix(1.0, 0.12, deep);
-          skWrap = 0.3; skRough = 0.25; skF0 = 0.04;
+          // enamel ~0.35 albedo, but inside the mouth it gets only the light that passes the parted lips (~1/3 at speech
+          // openings): folded into the albedo, as the light loop has no occlusion
+          col = vec3(0.36, 0.33, 0.27) * (0.92 + 0.08 * skN(p * 600.0)) * 0.3;
+          col *= mix(1.0, 0.15, deep);
+          skWrap = 0.0; skRough = 0.4; skF0 = 0.02;
         } else if (vSkUv.y > 1500.0) {
           // eyeball: sclera, limbal ring, iris with radial fibres, pupil (angle from the eye's forward axis, -Z)
           vec3 d = normalize(e);

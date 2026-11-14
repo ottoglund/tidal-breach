@@ -274,7 +274,7 @@ const BODY_SLOTS = 8, BODY_SPLASHES = 7;   // soldiers near the camera that get 
 // Breath vapour: PUFF_SLOTS nearest soldiers (< 14 m), PUFF_BLOBS soft blobs per exhalation. A breath at ~5 C in rain is
 // near saturation, so it condenses into a small, short-lived cloud: it leaves the mouth at ~1 m/s, slows, spreads to
 // ~15-20 cm and is gone after ~1.5 s. Seen by the light it scatters, coloured like the local lamps (the soldier's probe).
-const PUFF_SLOTS = 6, PUFF_BLOBS = 3, PUFF_SCATTER = 0.006;
+const PUFF_SLOTS = 6, PUFF_BLOBS = 3, PUFF_SCATTER = 0.03;   // ~ optical depth 0.4 (fresh breath) x isotropic phase (1 / 4 pi): L = 0.03 E
 const SPLASH_VERT = /* glsl */`
 float sstep01(float a, float b, float x) { float t = clamp((x - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
 attribute vec4 aSeed; attribute float aBody; uniform float uTime; uniform vec3 uCam; uniform vec4 uBody[${BODY_SLOTS}];
