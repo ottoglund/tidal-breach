@@ -1,0 +1,1331 @@
+// Guard: one continuous skinned body (see characters/soldier.js) with rigid gear,
+// a detailed Kalashnikov and a procedural animation layer:
+//  - foot-planted walk/run (stride derived from speed and phase rate, so feet do not skate)
+//  - pelvis bob/sway/twist with counter-rotating chest, idle breathing and weight shift
+//  - rifle carried at patrol low-ready, raised to a shouldered aim with cheek weld
+//  - two-bone IK keeps the right hand on the pistol grip and the left on the handguard
+//  - head stabilises its gaze, scans while patrolling, looks down the sights when aiming
+//  - hit flinch, recoil, and a keyed death (knees buckle, torso twists, fall, settle)
+import * as THREE from 'three';
+import { box, rcyl, cyl, xform } from './geo.js';
+import { mat, plainMat } from './materials.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG, slingAnchors, SLING_NODES, FI } from './characters/soldier.js';
+import { probeShading } from './characters/probe.js';
+import { fabricShading, ripstop } from './characters/cloth.js';
+import { skinShading, LOOKS } from './characters/skin.js';
+import { soldierBody } from './characters/body.js';
+import { locomote, locoState, spring, sp } from './characters/anim.js';
+
+function M(list) {
+  return mergeGeometries(list.map(([g, m]) => { const x = g.index ? g.toNonIndexed() : g.clone(); if (m) x.applyMatrix4(m); for (const k of Object.keys(x.attributes)) if (!['position', 'normal', 'uv'].includes(k)) x.deleteAttribute(k); return x; }));
+}
+
+let shared = null;
+/** Insignia atlas: left half = Swedish flag, right half = generic Home Guard shield ("HV"); drawn here, no external art. */
+function patchTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const x = c.getContext('2d');
+  // flag 0..128: blue field, yellow Nordic cross (vertical bar offset to the hoist side)
+  x.fillStyle = '#0b5c9a'; x.fillRect(0, 0, 128, 128);
+  x.fillStyle = '#e2b92b'; x.fillRect(128 * 5 / 16, 0, 128 * 2 / 16, 128); x.fillRect(0, 128 * 0.4, 128, 128 * 0.2);
+  x.strokeStyle = 'rgba(20,24,18,0.9)'; x.lineWidth = 6; x.strokeRect(3, 3, 122, 122);
+  x.strokeStyle = 'rgba(210,210,190,0.25)'; x.setLineDash([4, 4]); x.lineWidth = 1.5; x.strokeRect(8, 8, 112, 112);
+  x.setLineDash([]);
+  // shield 128..256: dark field, pale rim, "HV"
+  x.fillStyle = '#26291f'; x.fillRect(128, 0, 128, 128);
+  x.beginPath(); x.moveTo(146, 16); x.lineTo(238, 16); x.lineTo(238, 70); x.quadraticCurveTo(238, 108, 192, 120); x.quadraticCurveTo(146, 108, 146, 70); x.closePath();
+  x.fillStyle = '#14160f'; x.fill(); x.lineWidth = 6; x.strokeStyle = '#b8b38d'; x.stroke();
+  x.fillStyle = '#c9c49b'; x.font = 'bold 50px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('HV', 192, 62);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+
+
+/**
+ * Lens reflections: on top of the baked environment (scene.environment, dark at night), add a stylised view-dependent
+ * reflection: a sky/horizon gradient plus two lamp-like highlights (a mast lamp and a window-lit warehouse direction),
+ * weighted by Fresnel. The lenses are curved, so the highlights streak and slide across them as the head turns or the
+ * camera moves. This is NOT a captured reflection of the actual scene; it is a deliberate stylised stand-in.
+ */
+function lensShading(m) {
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+      {
+        vec3 Rv = reflect(-normalize(vViewPosition), normalize(normal));
+        vec3 Rw = normalize((vec4(Rv, 0.0) * viewMatrix).xyz);
+        float nv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
+        float fr = 0.05 + 0.95 * pow(1.0 - nv, 4.0);
+        vec3 sky = vec3(0.05, 0.065, 0.085) * (0.35 + 0.9 * smoothstep(-0.25, 0.9, Rw.y)) + vec3(0.12, 0.09, 0.06) * exp(-abs(Rw.y) * 14.0);
+        float lamp1 = pow(max(dot(Rw, normalize(vec3(-0.35, 0.5, 0.8))), 0.0), 140.0);
+        float lamp2 = pow(max(dot(Rw, normalize(vec3(0.7, 0.2, -0.65))), 0.0), 90.0);
+        outgoingLight += (sky * (0.5 + 3.5 * fr) + (lamp1 * 9.0 + lamp2 * 4.0) * vec3(1.0, 0.82, 0.6)) * (0.35 + 0.65 * fr) * 0.6;
+      }
+      #include <opaque_fragment>`);
+  };
+  m.customProgramCacheKey = () => 'lens1';
+  return m;
+}
+
+function materials() {
+  if (shared) return shared;
+  const body = soldierBody() || {};
+  const eyes = { eyeR: body.eyeR, eyeL: body.eyeL, headC: body.headC };
+  shared = {
+    // uniforms: ripstop yarn / twill relief aligned with the texture's grid, joint-driven folds, seams, panel
+    // dye lots and high-point wear (characters/cloth.js `body`)
+    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x9ea6a3 }), { dirt: 0.6, sheen: 0.12, soak: 0.55, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.4, 0.42) }),
+    // (the M90 helmet cover is in this material: beads above head height)
+    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0xaab2a6 }), { dirt: 0.6, sheen: 0.12, soak: 0.55, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.45, 0.45), beads: 0.35, beadsAbove: 1.6 }),
+    // rig / pouches: nylon cordura, a little smoother and shinier than the cotton-blend uniform, worn at the edges
+    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0xc2cbb8, roughness: 0.86 }), { dirt: 0.45, sheen: 0.14, soak: 0.3, wrinkle: 0.3, rough: 0.2, wetTop: 0.5, gear: true, beads: 0.45 }),
+    // knit: fine rib (7 cm tile) with a strong normal map and a fuzzy sheen so the balaclava reads as wool over the
+    // MakeHuman face shape, not as skin
+    knit: fabricShading(mat('olive_knit', { tile: 0.07, color: 0xb2b8a2, normalScale: 1.8 }), { dirt: 0.2, sheen: 0.32, soak: 0.35, wrinkle: 0.35, rough: 0.15, wetTop: 0.55, mudGloss: 0.2, rib: 0.0032 }),
+    // satin nylon / polymer hardware (buckles, soles, glove shells, strap tails): smoother than cloth, scuffed at the bottom
+    glove: fabricShading(mat('polymer', { tile: 0.25, color: 0x4a4c50, roughness: 0.85 }), { dirt: 0.7, sheen: 0.0, soak: 0.2, wrinkle: 0.0, rough: 0.35, wetTop: 0.3, mudGloss: 0.5 }),
+    metal: mat('gunmetal', { tile: 0.25, color: 0xc4c4c0, roughness: 0.75 }),   // buckles, snaps, D-rings, slides, eyelets
+    // skin (+ short hair and eyeballs, same draw call), one material per look (skin tone, hair and iris colour; same
+    // shader program): characters/skin.js
+    skins: LOOKS.map(l => skinShading(plainMat(l.skin, 0.5), { ...eyes, hair: l.hair, iris: l.iris })),
+    gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
+    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3, boot: true, beads: 0.3 }),
+    gun: mat('gunmetal'),
+    wood: mat('ak_wood', { tile: 0.3, color: 0xa39c96 }),
+    poly: mat('polymer', { tile: 0.25 }),
+    plum: mat('plum_polymer', { tile: 0.2 }),
+    patch: new THREE.MeshStandardMaterial({ map: patchTexture(), roughness: 0.9, metalness: 0 }),
+    // tinted, semi-mirrored lenses; see-through enough to show the eyes behind them
+    visor: lensShading(new THREE.MeshPhysicalMaterial({ color: 0x0d0e10, roughness: 0.04, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 3.0, transparent: true, opacity: 0.78, depthWrite: false })),
+  };
+  // every skinned soldier material also takes the per-soldier light probe (ground bounce + lamps mirrored in the wet
+  // quay, characters/probe.js); the lenses are left as they are (stylised reflection, transparent)
+  for (const k of ['uniform', 'uniformHV', 'vest', 'knit', 'glove', 'metal', 'gloveFab', 'boot', 'patch']) probeShading(shared[k]);
+  shared.skins.forEach(probeShading);
+  return shared;
+}
+
+
+/**
+ * Lofted handguard along -Z. secs: [{z, hw, ht, hb, cy}] half width, half height above/below centre cy.
+ * Cross-section is a super-ellipse (p) so it reads as a rounded rectangle, not a tube. groove(z, side)
+ * returns an inward offset for the underside (finger grooves) ; flutes = longitudinal rib count (0 = none).
+ */
+function loft(secs, N, p = 3.2, groove = null, flutes = 0, fluteAmp = 0.0011) {
+  const pos = [], uv = [], idx = [];
+  const e = 2 / p;
+  secs.forEach((q, i) => {
+    let acc = 0;
+    for (let j = 0; j <= N; j++) {
+      const a = (j % N) / N * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+      let x = q.hw * Math.sign(c) * Math.pow(Math.abs(c), e), y = q.cy + (sn > 0 ? q.ht : q.hb) * Math.sign(sn) * Math.pow(Math.abs(sn), e);
+      if (groove && sn < -0.25) y += groove(q.z) * Math.min(1, (-sn - 0.25) * 3);
+      if (flutes) { const f = fluteAmp * Math.cos(a * flutes); x += Math.cos(a) * f; y += Math.sin(a) * f; }
+      pos.push(x, y, q.z);
+      uv.push((j / N) * 2 * (q.hw + (q.ht + q.hb) / 2) * 1.6, -q.z);
+    }
+  });
+  const R = N + 1;
+  for (let i = 0; i < secs.length - 1; i++) for (let j = 0; j < N; j++) { const a = i * R + j, b = a + 1, c = a + R, d = c + 1; idx.push(a, b, c, b, d, c); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // orientation check: normals must point away from the axis
+  const n = g.attributes.normal, P = g.attributes.position, k = Math.floor(secs.length / 2) * R;
+  if (n.getX(k) * (P.getX(k) - 0) + (n.getY(k)) * (P.getY(k) - secs[Math.floor(secs.length / 2)].cy) < 0) {
+    const ix = g.index.array; for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
+    g.computeVertexNormals();
+  }
+  return g;
+}
+
+// Kalashnikov family at real scale. Barrel toward -Z, origin near the magazine well.
+// variant 'ak74': AK-74M (black polymer, plum magazine, AK-74 muzzle brake)
+// variant 'akm' : AKM pattern (laminated wood furniture, slant brake, steel magazine)
+function kalashnikov(S, variant) {
+  const g = new THREE.Group();
+  const akm = variant === 'akm';
+  const furn = akm ? S.wood : S.poly;
+  const magM = akm ? S.gun : S.plum;
+  const add = (list, m) => { const o = new THREE.Mesh(M(list), m); o.castShadow = true; g.add(o); return o; };
+  const Z = Math.PI / 2;
+  add([
+    [box(0.046, 0.058, 0.25, 0.004), xform(0, 0, 0.02)],                 // stamped receiver
+    [box(0.042, 0.024, 0.235, 0.011), xform(0, 0.038, 0.03)],           // ribbed dust cover
+    ...[0, 1, 2].map(i => [box(0.044, 0.004, 0.006), xform(0, 0.051, 0.13 - i * 0.012)]),
+    [box(0.05, 0.03, 0.03), xform(0, 0.005, -0.115)],            // front trunnion
+    [box(0.03, 0.02, 0.06), xform(0, 0.042, -0.125)],            // rear sight block
+    [box(0.026, 0.006, 0.08), xform(0, 0.056, -0.11)],           // sight leaf
+    [box(0.008, 0.012, 0.018), xform(0.03, 0.03, 0.02)],         // charging handle
+    // front end at real proportions (mag well -> muzzle: AK-74M ~0.53 m, AKM ~0.47 m; gas block at the end of the gas tube)
+    [cyl(0.0085, 0.0085, akm ? 0.34 : 0.36, 12), xform(0, 0.0, akm ? -0.28 : -0.29, 0, Z)],   // barrel
+    [cyl(0.011, 0.011, 0.215, 12), xform(0, 0.034, -0.2775, 0, Z)],   // gas tube
+    [box(0.024, 0.052, 0.034), xform(0, 0.021, -0.398)],          // gas block
+    [box(0.02, 0.032, 0.026), xform(0, 0.014, akm ? -0.432 : -0.448)],   // front sight base
+    [box(0.016, 0.03, 0.01), xform(0, 0.042, akm ? -0.436 : -0.452)],    // front sight ears
+    [box(0.006, 0.02, 0.06), xform(0.026, 0.005, 0.05)],         // selector lever
+    [box(0.01, 0.006, 0.07), xform(0, -0.038, 0.075)],           // trigger guard bottom
+    [box(0.006, 0.02, 0.008), xform(0, -0.032, 0.06, 0, -0.3)], // trigger
+    [box(0.024, 0.008, 0.012), xform(0, -0.012, akm ? -0.43 : -0.444)],   // bayonet lug
+    ...(akm
+      ? [[rcyl(0.012, 0.04, 0.003, 14), xform(0, 0.0, -0.45, 0, Z)]]
+      : [[rcyl(0.0135, 0.075, 0.004, 16), xform(0, 0.0, -0.495, 0, Z)], [box(0.03, 0.006, 0.012), xform(0, 0.0, -0.482)]]),
+  ], S.gun);
+  // handguards: lofted rounded-rectangle sections (not tubes). Lower: wide, flat-sided, wraps the barrel from below
+  // with finger grooves on the underside; upper: shallow shell over the gas tube with a rounded crown.
+  const lower = loft([
+    { z: -0.152, hw: 0.0215, ht: 0.0, hb: 0.0, cy: -0.012 },
+    { z: -0.156, hw: 0.0225, ht: 0.018, hb: 0.021, cy: -0.012 },
+    { z: -0.17, hw: 0.0235, ht: 0.026, hb: 0.024, cy: -0.011 },
+    ...Array.from({ length: 14 }, (_, i) => { const z = -0.19 - i * 0.0125; return { z, hw: 0.0235 - i * 0.0002, ht: 0.026 - i * 0.0003, hb: 0.0235 - i * 0.0002, cy: -0.011 }; }),
+    { z: -0.368, hw: 0.0215, ht: 0.0245, hb: 0.021, cy: -0.011 },
+    { z: -0.374, hw: 0.019, ht: 0.02, hb: 0.017, cy: -0.011 },
+    { z: -0.376, hw: 0.0, ht: 0.0, hb: 0.0, cy: -0.011 },
+  ], akm ? 14 : 18, akm ? 3.4 : 3.0, akm ? (z => 0.0034 * Math.pow(0.5 + 0.5 * Math.cos((z + 0.2) / 0.0235 * Math.PI * 2), 1.6) * (z < -0.19 && z > -0.34 ? 1 : 0)) : null, akm ? 0 : 14);
+  const upper = loft([
+    { z: -0.168, hw: 0.0, ht: 0.0, hb: 0.0, cy: 0.04 },
+    { z: -0.172, hw: 0.0175, ht: 0.016, hb: 0.014, cy: 0.04 },
+    { z: -0.19, hw: 0.0185, ht: 0.0175, hb: 0.016, cy: 0.04 },
+    { z: -0.28, hw: 0.0185, ht: 0.0175, hb: 0.016, cy: 0.04 },
+    { z: -0.38, hw: 0.0175, ht: 0.0165, hb: 0.0155, cy: 0.039 },
+    { z: -0.402, hw: 0.0155, ht: 0.0145, hb: 0.014, cy: 0.039 },
+    { z: -0.405, hw: 0.0, ht: 0.0, hb: 0.0, cy: 0.039 },
+  ], 12, 2.6, null, akm ? 0 : 12, 0.0009);
+  add([
+    [lower, null],
+    [upper, null],
+    [box(0.032, 0.1, 0.044, 0.012), xform(0, -0.082, 0.112, 0, -0.32)],               // pistol grip (raked back)
+    ...(akm
+      ? [[box(0.042, 0.065, 0.25, 0.014), xform(0, -0.022, 0.27, 0, 0.1)], [box(0.046, 0.13, 0.03, 0.012), xform(0, -0.05, 0.395, 0, 0.1)]]
+      : [[box(0.04, 0.03, 0.25, 0.01), xform(0, -0.005, 0.27, 0, 0.1)], [box(0.036, 0.024, 0.2, 0.008), xform(0, -0.06, 0.29, 0, 0.18)],
+        [box(0.044, 0.135, 0.03, 0.012), xform(0, -0.05, 0.395, 0, 0.1)], [box(0.036, 0.012, 0.03), xform(0, -0.03, 0.19, 0, 0.6)]]),
+  ], furn);
+  // curved 30-round magazine: segments rotated progressively, with a floor plate
+  const segs = [];
+  for (let i = 0; i < 5; i++) segs.push([box(0.028, 0.046, 0.072 - i * 0.002, 0.006), xform(0, -0.05 - i * 0.04, -0.07 - i * i * 0.007, 0, 0.12 + i * 0.12)]);
+  segs.push([box(0.032, 0.012, 0.068, 0.004), xform(0, -0.235, -0.18, 0, 0.66)]);
+  g.userData.mag = add(segs, magM);
+  g.userData.magGrip = new THREE.Vector3(-0.02, -0.112, -0.092);   // left-hand grip point on the magazine (rifle space)
+  g.userData.charge = null;                                       // AK charging handle is on the right: not racked by the left hand
+  // sling: front swivel on the left of the gas block, rear loop on the left of the stock (AKM: under the butt)
+  g.userData.slingF = new THREE.Vector3(-0.016, 0.012, -0.398);
+  g.userData.slingR = akm ? new THREE.Vector3(-0.01, -0.085, 0.36) : new THREE.Vector3(-0.022, -0.02, 0.36);
+  return g;
+}
+
+/**
+ * Swedish Ak 4C (G3 lineage, 7.62x51): stamped receiver, cocking tube above the barrel, slim ventilated handguard,
+ * straight 20-round magazine, collapsible stock, top rail with a red-dot tube. Matte black. Same frame as the AK.
+ */
+function ak4c(S) {
+  const g = new THREE.Group();
+  const add = (list, m) => { const o = new THREE.Mesh(M(list), m); o.castShadow = true; g.add(o); return o; };
+  const Z = Math.PI / 2;
+  add([
+    [box(0.046, 0.064, 0.4, 0.008), xform(0, 0.0, 0.065)],                // receiver
+    [box(0.05, 0.034, 0.1, 0.004), xform(0, 0.0, -0.14)],                  // barrel trunnion / handguard retainer
+    // front end at real proportions (mag well -> flash hider tip ~0.52 m, as the first-person Ak 4C)
+    [cyl(0.0095, 0.0095, 0.32, 14), xform(0, 0.004, -0.3, 0, Z)],          // barrel
+    [cyl(0.0125, 0.0125, 0.065, 14), xform(0, 0.004, -0.485, 0, Z)],      // flash hider body
+    ...[0, 1, 2, 3].map(i => [box(0.026, 0.0035, 0.008), xform(0, 0.004, -0.463 - i * 0.014)]),
+    [cyl(0.0085, 0.0085, 0.3, 12), xform(-0.004, 0.039, -0.03, 0, Z)],     // cocking tube
+    [box(0.014, 0.014, 0.02, 0.003), xform(-0.004, 0.039, -0.19)],         // cocking handle knob
+    [box(0.026, 0.008, 0.34, 0.002), xform(0, 0.036, 0.07)],               // top rail
+    ...Array.from({ length: 12 }, (_, i) => [box(0.028, 0.003, 0.004), xform(0, 0.0405, -0.07 + i * 0.026)]), // rail slots
+    [box(0.02, 0.05, 0.02), xform(0, 0.025, -0.43)],                       // front sight hood
+    [box(0.004, 0.026, 0.004), xform(0, 0.056, -0.43)],                    // front post
+    [box(0.007, 0.022, 0.07), xform(0.027, 0.006, 0.05)],                  // selector
+    [box(0.01, 0.006, 0.07), xform(0, -0.04, 0.095)],                      // trigger guard
+    [box(0.006, 0.02, 0.008), xform(0, -0.032, 0.07, 0, -0.3)],             // trigger
+    [box(0.014, 0.012, 0.012), xform(0.027, 0.005, -0.1)],                 // sling swivel
+  ], S.gun);
+  // red-dot sight: tube, objective hood, ocular, riser mount
+  add([
+    [cyl(0.0165, 0.0165, 0.1, 18), xform(0, 0.093, -0.045, 0, Z)],
+    [cyl(0.0195, 0.0165, 0.03, 18), xform(0, 0.093, -0.105, 0, Z)],
+    [cyl(0.0185, 0.0185, 0.014, 18), xform(0, 0.093, 0.012, 0, Z)],
+    [box(0.026, 0.044, 0.07, 0.004), xform(0, 0.056, -0.045)],
+    [box(0.01, 0.01, 0.014), xform(0.0, 0.113, -0.045)],             // elevation cap
+    [box(0.014, 0.012, 0.006), xform(0.019, 0.093, -0.045)],          // windage cap
+  ], S.poly);
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.0155, 16), S.visor);
+  lens.position.set(0, 0.093, -0.121); lens.rotation.y = Math.PI; lens.scale.set(1, 1, 1); g.add(lens);
+  // slim ventilated handguard with side slots and a rounded underside
+  const hg = loft([
+    { z: -0.11, hw: 0.0, ht: 0.0, hb: 0.0, cy: -0.004 },
+    { z: -0.114, hw: 0.025, ht: 0.027, hb: 0.024, cy: -0.004 },
+    { z: -0.2, hw: 0.027, ht: 0.028, hb: 0.026, cy: -0.004 },
+    { z: -0.33, hw: 0.025, ht: 0.026, hb: 0.024, cy: -0.004 },
+    { z: -0.385, hw: 0.023, ht: 0.024, hb: 0.022, cy: -0.004 },
+    { z: -0.388, hw: 0.0, ht: 0.0, hb: 0.0, cy: -0.004 },
+  ], 14, 2.8, null, 0);
+  const slots = [];
+  for (let i = 0; i < 6; i++) for (const sx of [-1, 1]) slots.push([box(0.004, 0.02, 0.026, 0.001), xform(sx * 0.0268, 0.0, -0.15 - i * 0.034)]);
+  add([[hg, null], ...slots,
+    [box(0.032, 0.1, 0.044, 0.012), xform(0, -0.08, 0.125, 0, -0.32)],      // pistol grip
+    [box(0.04, 0.06, 0.1, 0.01), xform(0, -0.03, 0.27, 0, 0.0)],             // stock slider
+    [cyl(0.0065, 0.0065, 0.17, 8), xform(0.014, 0.016, 0.34, 0, Z * 0, 0).multiply(new THREE.Matrix4().makeRotationX(Z))],
+    [cyl(0.0065, 0.0065, 0.17, 8), xform(-0.014, 0.016, 0.34, 0, Z * 0, 0).multiply(new THREE.Matrix4().makeRotationX(Z))],
+    [box(0.044, 0.125, 0.03, 0.012), xform(0, -0.02, 0.41, 0, 0.1)],         // butt
+  ], S.poly);
+  // straight 20-round magazine (ribbed steel) with floor plate
+  add([
+    [box(0.027, 0.15, 0.058, 0.004), xform(0, -0.1, -0.035)],
+    ...[0, 1, 2, 3, 4].map(i => [box(0.029, 0.004, 0.06), xform(0, -0.05 - i * 0.025, -0.035)]),
+    [box(0.031, 0.01, 0.063, 0.003), xform(0, -0.178, -0.035)],
+  ], S.gun);
+  g.userData.mag = g.children[g.children.length - 1];
+  g.userData.magGrip = new THREE.Vector3(-0.022, -0.1, -0.035);
+  g.userData.charge = new THREE.Vector3(-0.024, 0.039, -0.19);    // cocking handle (left, above the handguard)
+  g.userData.slingF = new THREE.Vector3(-0.026, -0.004, -0.37);   // sling: front of the handguard, rear of the stock (left side)
+  g.userData.slingR = new THREE.Vector3(-0.024, -0.03, 0.38);
+  return g;
+}
+
+/**
+ * Muzzle flash (shared by every soldier, one draw call): two crossed planes along the bore carry the forward flame
+ * and side jets, a disc facing down the bore carries a petalled star; additive, HDR colour so bloom picks it up. The
+ * texture is drawn here (own work): left half = flame seen from the side (bright core at the muzzle, tapering, ragged
+ * streaks), right half = star seen end-on. Rotated / scaled randomly per shot by poseGuard.
+ */
+let FLASH = null;
+function flashParts() {
+  if (FLASH) return FLASH;
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const x = c.getContext('2d');
+  const rnd = (() => { let k = 7; return () => (k = (k * 16807) % 2147483647) / 2147483647; })();
+  x.globalCompositeOperation = 'lighter';
+  // side flame: muzzle at the left edge (u 0), flame toward u 1 (0..128 px)
+  for (let i = 0; i < 26; i++) {
+    const len = 40 + rnd() * 80, w = 3 + rnd() * 9, a = (rnd() - 0.5) * 0.5;
+    const g = x.createLinearGradient(4, 64, 4 + len, 64);
+    g.addColorStop(0, 'rgba(255,240,200,0.55)'); g.addColorStop(0.35, 'rgba(255,170,70,0.3)'); g.addColorStop(1, 'rgba(255,90,20,0)');
+    x.save(); x.translate(4, 64); x.rotate(a); x.fillStyle = g;
+    x.beginPath(); x.moveTo(0, -w * 0.3); x.quadraticCurveTo(len * 0.4, -w, len, 0); x.quadraticCurveTo(len * 0.4, w, 0, w * 0.3); x.fill(); x.restore();
+  }
+  { const g = x.createRadialGradient(6, 64, 0, 6, 64, 30); g.addColorStop(0, 'rgba(255,255,235,1)'); g.addColorStop(1, 'rgba(255,200,120,0)'); x.fillStyle = g; x.fillRect(0, 24, 40, 80); }
+  // end-on star (128..256)
+  for (let i = 0; i < 7; i++) {
+    const a = i / 7 * Math.PI * 2 + rnd() * 0.4, len = 30 + rnd() * 30;
+    const g = x.createLinearGradient(192, 64, 192 + Math.cos(a) * len, 64 + Math.sin(a) * len);
+    g.addColorStop(0, 'rgba(255,230,180,0.7)'); g.addColorStop(1, 'rgba(255,120,40,0)');
+    x.save(); x.translate(192, 64); x.rotate(a); x.fillStyle = g;
+    x.beginPath(); x.moveTo(0, -5); x.lineTo(len, 0); x.lineTo(0, 5); x.fill(); x.restore();
+  }
+  { const g = x.createRadialGradient(192, 64, 0, 192, 64, 22); g.addColorStop(0, 'rgba(255,255,240,1)'); g.addColorStop(1, 'rgba(255,190,110,0)'); x.fillStyle = g; x.fillRect(160, 32, 64, 64); }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  // geometry: planes in rifle space, bore along -Z; muzzle at the mesh origin
+  const quad = (pts, uvs) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs.flat(), 2)); g.setIndex([0, 1, 2, 0, 2, 3]); return g; };
+  const L = 0.3, W = 0.07, R = 0.075;
+  const parts = [
+    quad([[-W, 0, 0.01], [W, 0, 0.01], [W, 0, -L], [-W, 0, -L]], [[0, 0], [0, 1], [0.5, 1], [0.5, 0]]),
+    quad([[0, -W, 0.01], [0, W, 0.01], [0, W, -L], [0, -W, -L]], [[0, 0], [0, 1], [0.5, 1], [0.5, 0]]),
+    quad([[-R, -R, -0.01], [R, -R, -0.01], [R, R, -0.01], [-R, R, -0.01]], [[0.5, 0], [1, 0], [1, 1], [0.5, 1]]),
+  ];
+  const geo = mergeGeometries(parts);
+  const m = new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(7, 4.2, 2.0), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: true });
+  m.forceSinglePass = true;   // additive: draw order of the two faces does not matter (one draw call, not two)
+  FLASH = [geo, m];
+  return FLASH;
+}
+
+function buildRifle(S, weapon) { return weapon === 'ak4c' ? ak4c(S) : kalashnikov(S, weapon === 'akm' ? 'akm' : 'ak74'); }
+
+/**
+ * createSoldier({ side: 'opfor' | 'hv', weapon: 'ak74' | 'akm' | 'ak4c', helmet?: boolean, look?: number })
+ *  side 'opfor': EMR camo, earmuffs + glasses.  side 'hv': Swedish Home Guard, M90 camo, sleeve patches (flag left,
+ *  generic HV shield right); helmet defaults to ~40 % random (true = M90-covered helmet, false = earmuffs, bare head).
+ *  look: index into characters/skin.js LOOKS (skin tone, hair, eyes; OPFOR show it round the eyes); random by default.
+ * Returns the same object as createGuard (root, rifle, flash, flashMesh, mesh, bones, rest, s); pose it with
+ * poseGuard / poseSoldier using the identical state object.
+ */
+export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
+  const S = materials();
+  const hv = side === 'hv';
+  weapon = weapon || (hv ? 'ak4c' : 'ak74');
+  const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
+  const root = new THREE.Group();
+  const { mesh, bones, rest, sling, face } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[(look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length], metal: S.metal }, kind);
+  root.add(mesh);
+  const rifle = buildRifle(S, weapon);
+  root.add(rifle);
+  const mz = weapon === 'ak4c' ? -0.525 : weapon === 'akm' ? -0.475 : -0.538;   // muzzle (flash origin)
+  const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.0, mz); rifle.add(flash);
+  const fl = new THREE.Mesh(...flashParts());
+  fl.position.set(0, 0.0, mz); fl.visible = false; fl.renderOrder = 6; rifle.add(fl);
+  root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
+  root.userData.tbSoldier = { body: mesh, probe: mesh.userData.probe, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')], geo: mesh.geometry, far: mesh.geometry.userData.far || null }; // distance policies for shadow / reflection passes: world/props/lod.js
+  const seed = Math.random() * 100;
+  const g = {
+    root, rifle, flash, flashMesh: fl, mesh, bones, rest, sling, face, side, weapon, kind,
+    s: { t: 0, time: seed, ph: null, rate: 0, seed, hitSide: 1, lastHit: 0, death: null, mm: bones.map(() => new THREE.Matrix4()), mq: bones.map(() => new THREE.Quaternion()) },
+  };
+  // breath vapour source (main.js): between the lips, head-bone space
+  syncRig();
+  Object.assign(root.userData.tbSoldier, { state: g.s, mouth: new THREE.Vector3(0, RIG.eye[1] - 0.088, RIG.eye[2] - 0.018) });
+  poseGuard(g, { walk: 0, speed: 0, aim: 0, flash: 0, hit: 0, dead: 0, fallDir: 1 });
+  return g;
+}
+
+/** OPFOR guard (API used by game.js): variant 'ak74' | 'akm'. */
+export function createGuard(variant = 'ak74') {
+  return createSoldier({ side: 'opfor', weapon: variant }); }
+
+// ------------------------------------------------------------------ math helpers
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const PARENT = BONE_DEFS.map(d => d[1]);
+const _qf = new THREE.Quaternion(), _e = new THREE.Euler(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
+const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
+const _S = new THREE.Vector3(), _T = new THREE.Vector3(), _E = new THREE.Vector3(), _u = new THREE.Vector3(), _w = new THREE.Vector3();
+const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+const UNIT = new THREE.Vector3(1, 1, 1);
+const _pLow = new THREE.Vector3(), _pAim = new THREE.Vector3(), _qLow = new THREE.Quaternion(), _qAim = new THREE.Quaternion();
+const qE = (x, y, z, q = new THREE.Quaternion()) => q.setFromEuler(_e.set(x, y, z, 'YXZ'));
+
+/** Model-space (root-local) forward kinematics for bone i (parents must be current). */
+function fk(g, i) {
+  const s = g.s, b = g.bones[i], p = PARENT[i];
+  b.updateMatrix();
+  if (p < 0) { s.mm[i].copy(b.matrix); s.mq[i].copy(b.quaternion); }
+  else { s.mm[i].multiplyMatrices(s.mm[p], b.matrix); s.mq[i].multiplyQuaternions(s.mq[p], b.quaternion); }
+}
+function fkFrom(g, i0) { for (let i = i0; i < g.bones.length; i++) fk(g, i); }
+const bonePos = (g, i, v) => v.setFromMatrixPosition(g.s.mm[i]);
+/** Set bone i so that its model-space orientation equals q. */
+function setModelRot(g, i, q) {
+  const p = PARENT[i];
+  g.bones[i].quaternion.copy(_q3.copy(g.s.mq[p]).invert().multiply(q));
+  fk(g, i);
+}
+
+/**
+ * Analytic two-bone IK in model space. Limbs point along local -Y.
+ * sign +1 (arm): local +Z faces the joint pole, lower bone flexes toward local -Z.
+ * sign -1 (leg): local -Z faces the joint pole (knee forward), shin flexes toward +Z.
+ */
+function twoBone(g, iu, il, L1, L2, target, pole, sign) {
+  bonePos(g, iu, _S);
+  _u.subVectors(target, _S);
+  let d = _u.length();
+  d = clamp(d, 0.05, (L1 + L2) * 0.9995);
+  _u.normalize();
+  const cosA = clamp((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d), -1, 1);
+  const sinA = Math.sqrt(1 - cosA * cosA);
+  _w.copy(pole).addScaledVector(_u, -pole.dot(_u));
+  if (_w.lengthSq() < 1e-8) _w.set(0, 0, sign); _w.normalize();
+  _E.copy(_S).addScaledVector(_u, L1 * cosA).addScaledVector(_w, L1 * sinA);
+  _T.copy(_S).addScaledVector(_u, d);
+  _a.subVectors(_E, _S).normalize();           // upper direction
+  _b.subVectors(_T, _E).normalize();           // lower direction
+  _y.copy(_a).negate();
+  _z.copy(_w).addScaledVector(_a, -_w.dot(_a)).normalize().multiplyScalar(sign);
+  _x.crossVectors(_y, _z).normalize();
+  _z.crossVectors(_x, _y);
+  _m.makeBasis(_x, _y, _z);
+  _q.setFromRotationMatrix(_m);
+  setModelRot(g, iu, _q);
+  const ang = Math.acos(clamp(_a.dot(_b), -1, 1));
+  g.bones[il].quaternion.setFromAxisAngle(_x.set(1, 0, 0), sign * ang);
+  fk(g, il);
+}
+
+// hand frames relative to the rifle (see soldier.js hand(): palm faces -X*side, grip centre at (palm*0.03, -0.097, 0))
+const GRIP_R = new THREE.Vector3(0, -0.062, 0.1);
+const GRIP_L = new THREE.Vector3(-0.004, -0.012, -0.21);
+const HAND_R_Q = (() => {
+  const X = new THREE.Vector3(1, 0, 0), Zd = new THREE.Vector3(0, -0.95, 0.31).normalize();
+  const Y = new THREE.Vector3().crossVectors(Zd, X).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Zd));
+})();
+const HAND_L_Q = (() => {
+  const al = 0.55, Y = new THREE.Vector3(-Math.cos(al), -Math.sin(al), 0), Zd = new THREE.Vector3(0, 0, 1);
+  const X = new THREE.Vector3().crossVectors(Y, Zd).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Zd));
+})();
+// body-dependent (soldier.js RIG; the MakeHuman body sets them when its asset is loaded): grip axis in hand space,
+// aiming eye in head space, sling-carry butt position (kept at the same model-space spot when the chest bone moves)
+const GRIP_IN_HAND_R = new THREE.Vector3(), GRIP_IN_HAND_L = new THREE.Vector3(), EYE = new THREE.Vector3(), BUTT_LOW = new THREE.Vector3();
+const BUTT = new THREE.Vector3(0, -0.05, 0.41);       // buttpad centre in rifle space
+let rigFor = null;
+function syncRig() {
+  if (rigFor === RIG.mh) return;
+  rigFor = RIG.mh;
+  GRIP_IN_HAND_R.fromArray(RIG.gripR); GRIP_IN_HAND_L.fromArray(RIG.gripL); EYE.fromArray(RIG.eye);
+  // sling carry: butt position in chest space (procedural chest at (0, 1.25, 0.01)); the MakeHuman torso is deeper
+  BUTT_LOW.set(0.18, -0.07 + 1.25 - RIG.chest[1], -0.13 + 0.01 - RIG.chest[2] + (RIG.mh ? -0.05 : 0));
+}
+
+// ------------------------------------------------------------------ alive pose (layered)
+// Layers, bottom to top: locomotion (characters/anim.js: planted feet, leg frame, pelvis sway / twist) -> pelvis
+// height, lean and reach correction -> spine / chest counter-rotation, aim blade, breathing -> reactions (hit spring
+// with stagger, recoil spring per shot, turn lead) -> head gaze -> rifle placement (low ready / aim / reload) -> arm IK.
+const _off = { x: 0, z: 0 };
+const _pRl = new THREE.Vector3(), _qRl = new THREE.Quaternion(), _qMag = new THREE.Quaternion(), _mInv = new THREE.Matrix4();
+const _wp = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+const HAND_MAG_Q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2).multiply(HAND_L_Q);
+const POUCH = new THREE.Vector3(-0.07, -0.2, -0.17);   // left magazine pouch on the rig front (chest space)
+const RL_POS = new THREE.Vector3(0.0, -0.13, -0.3);    // rifle origin (magazine well) during a reload (chest space)
+const RL_Q = qE(0.32, 0.42, -0.5);                     // muzzle up and left, canted so the well faces the support hand
+// support-hand timeline of a magazine change (progress 0..1): handguard -> magazine -> out -> pouch -> back -> seat -> (rack) -> handguard
+const RL_KEYS = [0, 0.14, 0.27, 0.46, 0.55, 0.74, 0.85, 1];
+
+function reactions(g, st, dt, root) {
+  const s = g.s, X = s.x;
+  // fire event (rising edge of the muzzle-flash timer) -> recoil impulse; also counts shots for a guard's reload
+  if (st.flash > s.lastFlash + 1e-4) {
+    X.rec.v += 62; X.recSide = (Math.random() - 0.5) * 2;
+    if (!('reload' in st)) {
+      s.shots++;
+      if (s.shots >= s.nextRl) { s.shots = 0; s.nextRl = 4 + Math.floor(Math.random() * 4); s.rlT = 0; }
+    }
+  }
+  s.lastFlash = st.flash;
+  spring(X.rec, 0, 30, 0.42, dt);
+  // hit (rising edge): directional impulse from the shooter's position when known, else from the front
+  const hit = clamp(st.hit, 0, 1);
+  if (hit > s.lastHit + 0.3) {
+    let lx = (Math.random() - 0.5) * 0.5, lz = 1;
+    if (st.hitX !== undefined) {
+      const dx = root.position.x - st.hitX, dz = root.position.z - st.hitZ, n = Math.hypot(dx, dz) || 1;
+      const c = Math.cos(root.rotation.y), sn = Math.sin(root.rotation.y);
+      lx = (dx * c - dz * sn) / n; lz = (dx * sn + dz * c) / n;    // travel direction of the bullet, body space
+    }
+    s.hitDir.set(lx, 0, lz); s.hitAt = s.time;
+    X.hx.v += lx * 1.9; X.hz.v += lz * 1.9; X.htw.v += (Math.random() < 0.5 ? -1 : 1) * 2.2;
+  }
+  s.lastHit = hit;
+  spring(X.hx, 0, 10, 0.4, dt); spring(X.hz, 0, 10, 0.4, dt); spring(X.htw, 0, 12, 0.5, dt);
+}
+
+function poseAlive(g, st, dt) {
+  syncRig();
+  const s = g.s, B = g.bones, t = s.time, X = s.x, L = s.L;
+  for (let i = 0; i < B.length; i++) { B[i].quaternion.identity(); B[i].position.copy(g.rest[i]); }
+  // reload progress: comrades pass st.reload (0 = none); guards play a short cosmetic change every few shots,
+  // timed to finish inside their minimum 1.25 s between shots
+  let rl = -1;
+  if ('reload' in st) rl = st.reload > 0 ? clamp(st.reload, 0, 1) : -1;
+  else if (s.rlT >= 0) { s.rlT += dt; rl = (s.rlT - 0.12) / 1.0; if (rl >= 1) { s.rlT = -1; rl = -1; } else if (rl < 0) rl = -1; }
+  const wr = rl >= 0 ? sstep(0, 0.14, rl) * (1 - sstep(0.86, 1, rl)) : 0;
+  const Araw = clamp(spring(X.aim, clamp(st.aim, 0, 1), 13, 1, dt), 0, 1);  // eased raise / lower (no snap at the start)
+  const A = Araw * (1 - wr);
+  // hit springs (body space, metres) and stagger offset of the stance spots
+  const hx = X.hx.x, hz = X.hz.x, hmag = Math.min(1, Math.hypot(hx, hz) / 0.12);
+  _off.x = hx * 1.5; _off.z = hz * 1.5;
+  locomote(L, g.root, st, dt, A, _off);
+  const m = L.m, run = L.run * m, yr = clamp(L.yawRate.x, -4, 4), duty = L.duty;
+  // breathing ~15/min with drift and a lopsided inhale / exhale; weight shift from two incommensurate slow sines
+  const bp = t * 1.65 + s.seed + 0.5 * Math.sin(t * 0.23 + s.seed * 2.0);
+  const breath = Math.sin(bp) * 0.85 + 0.22 * Math.sin(2 * bp + 0.7);
+  const shift = Math.sin(t * 0.33 + s.seed * 1.7) * 0.8 + 0.3 * Math.sin(t * 0.87 + s.seed * 0.6);
+  const sway = Math.sin(t * 0.21 + s.seed * 3.3);
+  const kick = X.rec.x;                                   // ~1 at the peak of a shot's recoil
+  const lean = clamp(L.accel.x, -1, 1);                   // forward acceleration (lean into a start, back on a stop)
+
+  // ---- pelvis: bob (high at mid-stance when walking, low when jogging), sway onto the support foot, twist toward
+  // the forward leg, hips turned into the leg frame, crouched jog, bladed aiming stance, hit stagger
+  const bobW = Math.cos(4 * Math.PI * (L.uR - duty / 2));
+  const bob = m * (0.02 * (1 - run) - 0.024 * run) * bobW;
+  const hy = RIG.hipY - 0.018 - 0.045 * A * (1 - 0.5 * m) - 0.075 * run + bob + 0.0012 * (1 - m) * breath - 0.05 * hmag;
+  const hxP = L.sway.x + (1 - m) * 0.02 * shift + hx * 0.55;
+  const hzP = 0.02 * A * (1 - m) + (1 - m) * 0.007 * sway + hz * 0.55;
+  const LY = L.legYaw.x, twist = L.twist;
+  const blade = -0.38 * A * (1 - 0.6 * m);
+  const pYaw = LY * 0.85 + twist + blade;
+  B[BI.hips].position.set(hxP, hy, hzP);
+  const pPitch = -(0.03 + 0.1 * run + 0.035 * A + 0.04 * m * (1 - run)) - 0.07 * lean * m + hz * 0.9;
+  const pRoll = -L.sway.x * 1.4 + clamp(yr * L.v * 0.035, -0.14, 0.14) + (1 - m) * 0.03 * shift;
+  qE(pPitch, pYaw, pRoll, B[BI.hips].quaternion);
+  // ---- spine / chest: shoulders counter-rotate the pelvis twist and the leg frame (the upper body keeps facing the
+  // root heading), keep part of the blade, lean into speed, lead a turn; hit lean / twist, recoil rock, breathing
+  const back = -(pYaw) - 0.45 * twist + 0.6 * blade + clamp(yr * 0.06, -0.15, 0.15) + X.htw.x * 0.12;
+  const hitP = hz * 2.6, hitR = -hx * 2.6;
+  qE(-0.02 - 0.05 * A - 0.03 * run + hitP * 0.45 + 0.02 * kick, back * 0.45, -0.02 * shift * (1 - m) + hitR * 0.45 - pRoll * 0.5, B[BI.spine].quaternion);
+  qE(0.01 * breath * (1 - 0.5 * A) - 0.03 * A - 0.05 * run - 0.03 * lean * m + hitP * 0.55 + kick * 0.05, back * 0.55, hitR * 0.55 - pRoll * 0.3, B[BI.chest].quaternion);
+  B[BI.chest].position.y += 0.0045 * breath;
+  B[BI.chest].position.z += -0.003 * breath * (1 - 0.5 * A);
+  qE(0, 0.06 * A - 0.05 * kick, 0.3 * A + 0.022 * breath, B[BI.clavR].quaternion);     // recoil pushes the right shoulder back
+  qE(0, -0.12 - 0.3 * A + 0.1 * wr, -0.04 * A - 0.022 * breath, B[BI.clavL].quaternion);
+  qE(-0.04 - 0.72 * A - 0.2 * wr + hitP * 0.3 - 0.06 * run, 0, -0.14 * A, B[BI.neck].quaternion);
+  fkFrom(g, 0);
+
+  // ---- legs: reach correction (drop the pelvis rather than let a planted foot slide or float), then IK
+  const ank = s.ank;
+  let drop = 0;
+  for (let k = 0; k < 2; k++) {
+    const R = k === 0, o = L.feet[k].out;
+    const fq = (R ? s.fqR : s.fqL).setFromEuler(_e.set(o.pitch, o.yaw, 0, 'YXZ'));
+    const piv = o.pitch >= 0 ? _a.set(0, -RIG.ankle, 0.04) : _a.set(0, -RIG.ankle, -0.15);
+    _c.copy(piv).applyAxisAngle(_d.set(0, 1, 0), o.yaw);
+    const T = ank[k].set(o.x, o.y + RIG.ankle, o.z).add(_c);   // heel / ball pivot on the ground (y = lift)
+    T.sub(_b.copy(piv).applyQuaternion(fq));                    // -> ankle
+    bonePos(g, R ? BI.thighR : BI.thighL, _S);
+    const h = Math.hypot(T.x - _S.x, T.z - _S.z), dy = _S.y - T.y, Lm = (LEN.thigh + LEN.shin) * 0.985;
+    if (h * h + dy * dy > Lm * Lm) drop = Math.max(drop, dy - Math.sqrt(Math.max(0, Lm * Lm - h * h)));
+  }
+  if (drop > 0) { B[BI.hips].position.y -= Math.min(drop, 0.16); fkFrom(g, 0); }
+  for (let k = 0; k < 2; k++) {
+    const R = k === 0, side = R ? 1 : -1, o = L.feet[k].out;
+    _d.set(side * 0.12, 0, -1).applyAxisAngle(_c.set(0, 1, 0), o.yaw * 0.6 + pYaw * 0.4);
+    twoBone(g, R ? BI.thighR : BI.thighL, R ? BI.shinR : BI.shinL, LEN.thigh, LEN.shin, ank[k], _d, -1);
+    setModelRot(g, R ? BI.footR : BI.footL, R ? s.fqR : s.fqL);
+  }
+
+  // ---- head: gaze-stabilised in model space; scans while patrolling, leads a turn, looks down the sights,
+  // snaps with a hit, glances at the magazine during a reload
+  const gk = t / 3.7 + s.seed, gi = Math.floor(gk), gf = sstep(0.82, 1.0, gk - gi);
+  const gh = k => Math.sin(k * 127.1 + s.seed * 311.7) * 43758.5453, gr = k => (gh(k) - Math.floor(gh(k))) * 2 - 1;
+  const glanceY = lerp(gr(gi), gr(gi + 1), gf) * 0.32, glanceP = lerp(gr(gi + 17), gr(gi + 18), gf) * 0.08;
+  const scan = (1 - A) * (1 - wr) * (0.3 * Math.sin(t * 0.27 + s.seed) + 0.1 * Math.sin(t * 0.71 + s.seed * 3) + glanceY * (1 - m)) * (1 - 0.6 * m);
+  const lookPitch = lerp(-0.1 + 0.03 * Math.sin(t * 0.4) + glanceP * (1 - m) + 0.008 * breath - 0.06 * run, -0.2, A) + hitP * 0.5 - 0.35 * wr;
+  setModelRot(g, BI.head, qE(lookPitch + A * 0.006 * Math.sin(t * 1.9), scan + clamp(yr * 0.2, -0.5, 0.5) * (1 - A) + 0.25 * wr + A * (0.04 + 0.01 * Math.sin(t * 0.7 + s.seed)) + X.htw.x * 0.1, -0.2 * A + (1 - A) * 0.025 * Math.sin(t * 0.27 + s.seed) - hitR * 0.3, _q2));
+  fkFrom(g, BI.head + 1);
+
+  // ---- rifle: low ready (chest-anchored, with a lagging bounce) -> shouldered (eye-anchored) -> reload pose
+  const ch = s.mm[BI.chest];
+  const chY = _a.setFromMatrixPosition(ch).y;
+  if (!X.lagOn) { X.lag.x = chY; X.lag.v = 0; X.lagOn = true; }   // start at rest (no rifle swing on a soldier's first frame)
+  const lag = spring(X.lag, chY, 16, 0.5, dt) - chY;
+  qE(-0.25 + lag * 2.5 - 0.08 * run, 1.2, 0.0, _q);
+  _m.compose(_a.copy(BUTT_LOW).sub(_b.copy(BUTT).applyQuaternion(_q)), _q, UNIT);
+  _a.y += lag * 0.6;
+  _m.setPosition(_a);
+  _m2.multiplyMatrices(ch, _m);
+  const pLow = _pLow.setFromMatrixPosition(_m2), qLow = _qLow.setFromRotationMatrix(_m2);
+  const qAim = qE(0.012 * breath + 0.004 * Math.sin(t * 1.7 + 1.0) + 0.003 * Math.sin(t * 0.37 + s.seed) + kick * 0.07 + hitP * 0.6,
+    0.006 * Math.sin(t * 0.9 + s.seed) + 0.004 * Math.sin(t * 2.3 + s.seed * 2) + 0.004 * Math.sin(t * 0.29) + kick * 0.012 * X.recSide, 0, _qAim);
+  const pAim = _pAim.copy(EYE).applyMatrix4(s.mm[BI.head]).sub(_b.set(0, 0.104, 0.2 - kick * 0.035).applyQuaternion(qAim));
+  const As = sstep(0, 1, A);
+  const rq = g.rifle.quaternion.slerpQuaternions(qLow, qAim, As);
+  g.rifle.position.lerpVectors(pLow, pAim, As);
+  if (wr > 0) {
+    _m.compose(RL_POS, RL_Q, UNIT); _m2.multiplyMatrices(ch, _m);
+    _pRl.setFromMatrixPosition(_m2); _qRl.setFromRotationMatrix(_m2);
+    g.rifle.position.lerp(_pRl, wr); rq.slerp(_qRl, wr);
+  }
+  g.rifle.updateMatrix();
+
+  // ---- arms: IK onto the rifle (support hand follows the reload timeline)
+  const ud = g.rifle.userData, mag = ud.mag;
+  let magOn = false;
+  for (const side of [1, -1]) {
+    const R = side > 0;
+    let hq = _q2.multiplyQuaternions(rq, R ? HAND_R_Q : HAND_L_Q);
+    let grip = _a.copy(R ? GRIP_R : GRIP_L).applyMatrix4(g.rifle.matrix);
+    if (!R && rl >= 0 && mag) {
+      // waypoints in rifle space: handguard, magazine, magazine pulled, pouch, (charging handle)
+      _wp[0].copy(GRIP_L); _wp[1].copy(ud.magGrip); _wp[2].copy(ud.magGrip).add(_d.set(0.0, -0.14, 0.05));
+      _mInv.copy(g.rifle.matrix).invert();
+      _wp[3].copy(POUCH).applyMatrix4(ch).applyMatrix4(_mInv);
+      const K = RL_KEYS;
+      let p0, p1, f, q0 = HAND_L_Q, q1 = HAND_MAG_Q;
+      if (rl < K[1]) { p0 = 0; p1 = 1; f = rl / K[1]; }
+      else if (rl < K[2]) { p0 = 1; p1 = 2; f = (rl - K[1]) / (K[2] - K[1]); q0 = HAND_MAG_Q; }
+      else if (rl < K[3]) { p0 = 2; p1 = 3; f = (rl - K[2]) / (K[3] - K[2]); q0 = HAND_MAG_Q; }
+      else if (rl < K[4]) { p0 = 3; p1 = 3; f = 0; q0 = HAND_MAG_Q; }
+      else if (rl < K[5]) { p0 = 3; p1 = 2; f = (rl - K[4]) / (K[5] - K[4]); q0 = HAND_MAG_Q; }
+      else if (rl < K[6]) { p0 = 2; p1 = 1; f = (rl - K[5]) / (K[6] - K[5]); q0 = HAND_MAG_Q; }
+      else if (ud.charge && rl < 0.93) { _wp[4].copy(ud.charge); p0 = 1; p1 = 4; f = (rl - K[6]) / (0.93 - K[6]); q0 = HAND_MAG_Q; q1 = HAND_L_Q; }
+      else if (ud.charge) { _wp[4].copy(ud.charge); p0 = 4; p1 = 0; f = (rl - 0.93) / 0.07; q0 = HAND_L_Q; q1 = HAND_L_Q; }
+      else { p0 = 1; p1 = 0; f = (rl - K[6]) / (1 - K[6]); q0 = HAND_MAG_Q; q1 = HAND_L_Q; }
+      const e = sstep(0, 1, f);
+      _w.lerpVectors(_wp[p0], _wp[p1], e);
+      // the pouch leg arcs out in front of the rig instead of cutting through it
+      if ((p0 === 2 && p1 === 3) || (p0 === 3 && p1 === 2)) _w.x -= 0.06 * Math.sin(Math.PI * e);
+      magOn = rl > K[1] && rl < K[6];
+      if (magOn) {
+        mag.position.copy(_w).sub(ud.magGrip);
+        const away = Math.min(1, mag.position.length() / 0.12);
+        mag.quaternion.copy(_qMag.setFromAxisAngle(_d.set(1, 0, 0), 0.35 * away));
+      }
+      grip.copy(_w).applyMatrix4(g.rifle.matrix);
+      hq = _q2.multiplyQuaternions(rq, _q3.copy(q0).slerp(q1, e));
+    }
+    const wrist = grip.sub(_b.copy(R ? GRIP_IN_HAND_R : GRIP_IN_HAND_L).applyQuaternion(hq));
+    const pole = R ? _d.set(0.55 + 0.3 * A, -1 + 0.3 * A, 0.3) : _d.set(-0.35 - 0.2 * A - 0.3 * wr, -1, 0.1 + 0.4 * wr);
+    _qf.copy(hq);
+    twoBone(g, R ? BI.uarmR : BI.uarmL, R ? BI.farmR : BI.farmL, LEN.upper, LEN.fore, wrist, pole, 1);
+    setModelRot(g, R ? BI.handR : BI.handL, _qf);
+  }
+  if (mag && !magOn && (mag.position.lengthSq() > 0 || mag.quaternion.w < 1)) { mag.position.set(0, 0, 0); mag.quaternion.identity(); }
+}
+
+// ------------------------------------------------------------------ death
+function keyPose(g, spec) {
+  const q = g.bones.map(() => new THREE.Quaternion()), p = g.rest.map(r => r.clone());
+  for (const [name, e] of Object.entries(spec)) {
+    if (name === 'pos') { p[0].set(...e); continue; }
+    qE(e[0] || 0, e[1] || 0, e[2] || 0, q[BI[name]]);
+  }
+  return { q, p };
+}
+/**
+ * Death keys. dir +1: falls backward (shot from the front): knees buckle, the seat drops to the ground, the torso
+ * rolls back onto the ground. dir -1: falls forward (shot from behind): drops to the knees, topples face down.
+ * side: which way the head / limbs fall.
+ */
+function deathKeys(g, dir, side) {
+  const snap = dir > 0 ? keyPose(g, {
+    pos: [0.02 * side, RIG.hipY - 0.07, 0.07],
+    hips: [0.12, 0.08 * side, 0.04 * side], spine: [0.14, 0.05 * side], chest: [0.16, 0.1 * side, 0.04 * side], neck: [0.28], head: [0.15, 0.15 * side],
+    thighR: [0.22, 0, 0.04], shinR: [-0.45], footR: [0.15], thighL: [0.28, 0, -0.04], shinL: [-0.55], footL: [0.2],
+    uarmR: [0.5, 0, 0.35], farmR: [0.7], uarmL: [0.6, 0, -0.35], farmL: [0.8], handR: [0.2], handL: [0.2],
+  }) : keyPose(g, {
+    pos: [0.02 * side, RIG.hipY - 0.06, -0.08],
+    hips: [0.08, 0.08 * side, 0.04 * side], spine: [0.12, 0.05 * side], chest: [0.14, 0.1 * side], neck: [0.25], head: [0.2, 0.1 * side],
+    thighR: [0.1, 0, 0.04], shinR: [-0.5], footR: [0.25], thighL: [0.05, 0, -0.04], shinL: [-0.45], footL: [0.2],
+    uarmR: [0.2, 0, 0.45], farmR: [0.5], uarmL: [0.3, 0, -0.45], farmL: [0.6], handR: [0.2], handL: [0.2],
+  });
+  const mid = dir > 0 ? keyPose(g, {
+    // seat on the ground behind the heels, knees up, torso still falling back, arms thrown forward
+    // (leg angles solved for the seat 0.55 m behind the planted feet: thigh 2.19 rad, shin 0.49 rad from vertical)
+    pos: [0.03 * side, 0.17, 0.55], hips: [0.75, 0.12 * side, 0.06 * side],
+    spine: [-0.05, 0.08 * side], chest: [-0.1, 0.15 * side, 0.05 * side], neck: [-0.3], head: [-0.15, 0.25 * side],
+    thighR: [1.44, 0, 0.16], shinR: [-1.7], footR: [-0.45], thighL: [1.36, 0, -0.2], shinL: [-1.6], footL: [-0.4],
+    clavR: [0, 0, 0.1], clavL: [0, 0, -0.1],
+    uarmR: [0.9, 0, 0.35], farmR: [0.5], uarmL: [1.0, 0, -0.3], farmL: [0.6], handR: [0.2], handL: [0.2],
+  }) : keyPose(g, {
+    // on the knees, torso pitching forward, arms hanging forward
+    pos: [0.02 * side, 0.52, -0.3], hips: [-0.3, 0.1 * side, 0.05 * side],
+    spine: [-0.15, 0.05 * side], chest: [-0.15, 0.1 * side], neck: [-0.15], head: [-0.1, 0.3 * side],
+    thighR: [0.28, 0, 0.06], shinR: [-1.75], footR: [0.75], thighL: [0.22, 0, -0.06], shinL: [-1.7], footL: [0.75],
+    uarmR: [0.6, 0, 0.2], farmR: [0.3], uarmL: [0.7, 0, -0.2], farmL: [0.35], handR: [0.1], handL: [0.1],
+  });
+  const lie = dir > 0 ? keyPose(g, {
+    // on the back, legs splayed, one knee raised, head rolled to one side
+    pos: [0.08 * side, 0.12, 0.85], hips: [1.55, 0.2 * side, 0.08 * side],
+    spine: [-0.02, 0.1 * side, 0], chest: [0.0, 0.16 * side, 0.05 * side], neck: [0.32], head: [0.14, 0.85 * side, 0.15 * side],
+    thighR: side > 0 ? [0.45, 0, 0.12] : [-0.09, 0, 0.18], shinR: side > 0 ? [-0.98] : [-0.06], footR: side > 0 ? [-0.6] : [0.35, 0, 0.3],
+    thighL: side < 0 ? [0.45, 0, -0.12] : [-0.09, 0, -0.18], shinL: side < 0 ? [-0.98] : [-0.06], footL: side < 0 ? [-0.6] : [0.35, 0, -0.3],
+    clavR: [0, 0, 0.1], clavL: [0, 0, -0.1],
+    uarmR: [0.15, 0, 1.0], farmR: [0.7], handR: [0.3], uarmL: [0.4, 0, -0.7], farmL: [1.0], handL: [0.3],
+  }) : keyPose(g, {
+    // face down, head turned, arms tucked
+    pos: [0.08 * side, 0.12, -0.75], hips: [-1.55, 0.2 * side, -0.08 * side],
+    spine: [-0.03, 0.1 * side, 0], chest: [-0.03, 0.15 * side, 0], neck: [0.05], head: [0.1, 1.1 * side, 0.1 * side],
+    thighR: [-0.05, 0, 0.12], shinR: [-0.15], footR: [1.1], thighL: [-0.1, 0, -0.1], shinL: [-0.08], footL: [1.0],
+    uarmR: [-0.1, 0, 0.3], farmR: [0.1], handR: [0, 0.8], uarmL: [-0.2, 0, -0.45], farmL: [0.15], handL: [0, -0.8],
+  });
+  return { snap, mid, lie };
+}
+
+const GROUND_PROBES = [
+  [BI.hips, 0, 0, 0, 0.12], [BI.spine, 0, 0.08, 0, 0.12], [BI.chest, 0, 0.12, 0, 0.13], [BI.head, 0, 0.13, -0.01, 0.1],
+  [BI.shinR, 0, 0, 0, 0.06], [BI.shinL, 0, 0, 0, 0.06], [BI.farmR, 0, 0, 0, 0.05], [BI.farmL, 0, 0, 0, 0.05],
+  [BI.handR, 0, -0.08, 0, 0.025], [BI.handL, 0, -0.08, 0, 0.025],
+  [BI.footR, 0, null, 0.05, 0], [BI.footR, 0, -0.06, -0.2, 0], [BI.footL, 0, null, 0.05, 0], [BI.footL, 0, -0.06, -0.2, 0], // null: sole (ankle height)
+];
+const _qy = new THREE.Quaternion(), _Y = new THREE.Vector3(0, 1, 0), _ankT = new THREE.Vector3();
+function poseDeath(g, st) {
+  const s = g.s, B = g.bones, D = s.death;
+  const T = st.dead * 0.9; // seconds since death
+  s.deathT = T;
+  // timing: hit snap (ease-out), collapse under gravity (ease-in), topple to the ground (ease-in), impact + settle
+  const w1 = 1 - (1 - sstep(0, 0.16, T)) ** 2;
+  const c2 = clamp((T - 0.1) / 0.42, 0, 1), w2 = c2 * c2 * (1.4 - 0.4 * c2);
+  const c3 = clamp((T - 0.42) / 0.5, 0, 1), w3 = c3 * c3;
+  const tI = T - 0.92, settle = tI > 0 ? Math.sin(Math.min(1, tI / 0.3) * Math.PI) * Math.exp(-tI * 4) : 0;
+  for (let i = 0; i < B.length; i++) {
+    _q.slerpQuaternions(D.k0.q[i], D.snap.q[i], w1);
+    _q.slerp(D.mid.q[i], w2);
+    B[i].quaternion.slerpQuaternions(_q, D.lie.q[i], w3);
+    _a.lerpVectors(D.k0.p[i], D.snap.p[i], w1);
+    _a.lerp(D.mid.p[i], w2);
+    B[i].position.lerpVectors(_a, D.lie.p[i], w3);
+  }
+  // the fall turns toward the bullet's direction (momentum), progressively through the collapse
+  const yaw = D.yaw * sstep(0.05, 0.8, T);
+  _qy.setFromAxisAngle(_Y, yaw);
+  B[0].quaternion.premultiply(_qy);
+  B[0].position.applyAxisAngle(_Y, yaw);
+  // impact: the torso and head rebound slightly, then still
+  B[BI.chest].quaternion.multiply(qE(-settle * 0.07 * D.dir, 0, 0, _q));
+  B[BI.neck].quaternion.multiply(qE(-settle * 0.12 * D.dir, 0, 0, _q));
+  fkFrom(g, 0);
+  // ground contact: never below the ground; once down, also never floating above it
+  let lift = -1;
+  const wIK = 1 - sstep(0.95, 1.2, T);
+  for (const [i, x, y, z, r] of GROUND_PROBES) {
+    if (wIK > 0.6 && (i === BI.footR || i === BI.footL)) continue;      // planted by the IK below
+    _a.set(x, y ?? -RIG.ankle, z).applyMatrix4(s.mm[i]); lift = Math.max(lift, r - _a.y);
+  }
+  const rest = sstep(0.85, 1.05, T);
+  const dy = lift > 0 ? lift : lift * rest;
+  if (dy !== 0) { B[0].position.y += dy; fkFrom(g, 0); }
+  // while the knees buckle the feet stay where they stood (IK onto the planted ankles), released as the body goes down
+  if (wIK > 0) {
+    for (let k = 0; k < 2; k++) {
+      const R = k === 0, it = R ? BI.thighR : BI.thighL, is = R ? BI.shinR : BI.shinL, ifo = R ? BI.footR : BI.footL;
+      _qLow.copy(B[it].quaternion); _qAim.copy(B[is].quaternion); _q2.copy(B[ifo].quaternion);
+      _d.set((R ? 1 : -1) * 0.2, 0.25, -1).applyAxisAngle(_Y, yaw);
+      _ankT.lerpVectors(D.ank[k], D.ank1[k], w3).applyAxisAngle(_Y, yaw * w3);   // heels slide as the legs go out
+      twoBone(g, it, is, LEN.thigh, LEN.shin, _ankT, _d, -1);
+      setModelRot(g, ifo, _qy.copy(D.footQ[k]).slerp(D.footQ1[k], w3));
+      _qy.setFromAxisAngle(_Y, yaw);
+      // (slerp from the keyed pose toward the IK result; the IK result is in the bones, so slerp FK -> IK in place)
+      B[it].quaternion.copy(_qLow.slerp(B[it].quaternion, wIK));
+      B[is].quaternion.copy(_qAim.slerp(B[is].quaternion, wIK));
+      B[ifo].quaternion.copy(_q2.slerp(B[ifo].quaternion, wIK));
+      fkFrom(g, it);
+    }
+  }
+  // rifle: released, drops and clatters onto its side next to the body
+  const r = clamp((T - 0.1) / 0.5, 0, 1), rf = r * r;
+  const bounce = T > 0.6 ? Math.abs(Math.sin((T - 0.6) * 9)) * Math.exp(-(T - 0.6) * 7) * 0.05 : 0;
+  g.rifle.position.lerpVectors(D.r0p, D.r1p, rf); g.rifle.position.y += bounce;
+  g.rifle.quaternion.slerpQuaternions(D.r0q, D.r1q, sstep(0, 1, r));
+  const mag = g.rifle.userData.mag; if (mag) { mag.position.set(0, 0, 0); mag.quaternion.identity(); }
+}
+
+// ------------------------------------------------------------------ death: variants, ground contact, obstacles
+// World collision probe used to keep bodies out of containers, walls and drums: fn(x, z, r) -> true when a circle of
+// radius r at (x, z) overlaps a blocker (game.js passes Game.blocked: the same 2D boxes the player and guards collide
+// with, plus the quay bounds). Without a probe (tools / tests) the fall ignores obstacles, as before.
+let worldProbe = null;
+export function setWorldProbe(fn) { worldProbe = fn; }
+
+const _fp = new THREE.Vector3();
+/** Model-space point on bone i (offset in the bone's frame) of the current FK. */
+const boneOff = (g, i, x, y, z, v) => v.set(x, y, z).applyMatrix4(g.s.mm[i]);
+
+/**
+ * Lay the arms of a lying / slumped key pose on the ground (or the lap) with arm IK, so hands and forearms rest on
+ * something instead of hanging in the air. targets: [right, left] as {a, b, h}: a = metres out to the soldier's side
+ * from the shoulder, b = metres along the body toward the head (negative: toward the feet), h = height above the
+ * ground (hand centre). The pose is FK'd in model space (the fall's yaw is a rotation about Y and keeps heights).
+ */
+function groundArms(g, key, targets) {
+  const B = g.bones;
+  for (let i = 0; i < B.length; i++) { B[i].quaternion.copy(key.q[i]); B[i].position.copy(key.p[i]); }
+  fkFrom(g, 0);
+  const hip = bonePos(g, BI.hips, new THREE.Vector3()), head = bonePos(g, BI.head, new THREE.Vector3());
+  const along = head.clone().sub(hip); along.y = 0; along.normalize();
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.s.mq[BI.chest]); right.y = 0; right.normalize();
+  [[BI.uarmR, BI.farmR, BI.handR, 1], [BI.uarmL, BI.farmL, BI.handL, -1]].forEach(([iu, il, ih, sd], k) => {
+    const t = targets[k];
+    const sh = bonePos(g, iu, new THREE.Vector3());
+    const T = sh.clone().addScaledVector(right, sd * t.a).addScaledVector(along, t.b);
+    T.y = t.h + 0.03;
+    const pole = right.clone().multiplyScalar(sd).add(_fp.set(0, 0.3, 0)).normalize();   // elbow out to the side, not into the ground
+    twoBone(g, iu, il, LEN.upper, LEN.fore, T, pole, 1);
+    // limp hand: continues the forearm, palm turned to the ground
+    fk(g, ih);
+    key.q[iu].copy(B[iu].quaternion); key.q[il].copy(B[il].quaternion); key.q[ih].copy(B[ih].quaternion);
+  });
+}
+
+/**
+ * Death keys. dir +1: falls backward (shot from the front): knees buckle, the seat drops to the ground, the torso
+ * rolls back onto the ground. dir -1: falls forward (shot from behind): drops to the knees, topples face down.
+ * side: which way the head / limbs fall. variant 0..2: final pose (arms flung out / one across the body / along the
+ * sides; legs splayed or straight). slump > 0: the fall ends sitting against an obstacle (seat that far behind the
+ * feet, back against the wall) instead of lying flat.
+ */
+function deathKeysV(g, dir, side, variant, slump) {
+  const keys = deathKeys(g, dir, side);
+  const v = variant;
+  if (slump > 0) {
+    // slumped against a wall: seat on the ground, torso leaning back on the obstacle, head fallen forward to one side,
+    // one leg out straight, the other bent
+    const bentR = (side > 0) !== (v === 1);
+    keys.lie = keyPose(g, {
+      pos: [0.03 * side, 0.15, slump], hips: [0.55, 0.1 * side, 0.05 * side],
+      spine: [-0.08, 0.05 * side], chest: [-0.12, 0.08 * side, 0.06 * side], neck: [-0.45, 0, 0.1 * side], head: [-0.2, 0.35 * side, 0.3 * side],
+      thighR: bentR ? [1.55, 0, 0.18] : [1.12, 0, 0.06], shinR: bentR ? [-1.35] : [-0.12], footR: bentR ? [0.15] : [-0.35, 0, 0.25],
+      thighL: bentR ? [1.12, 0, -0.06] : [1.55, 0, -0.18], shinL: bentR ? [-0.12] : [-1.35], footL: bentR ? [-0.35, 0, -0.25] : [0.15],
+      clavR: [0, 0, 0.12], clavL: [0, 0, -0.12], handR: [0.3], handL: [0.3],
+    });
+    // the falling seat must not pass through the obstacle: sit down short of it, torso already more upright
+    keys.mid.p[0].z = Math.min(keys.mid.p[0].z, slump + 0.05);
+    qE(0.5, 0.12 * side, 0.06 * side, keys.mid.q[BI.hips]);
+    // legs by IK so the heels rest on the ground: the bent leg's foot near the seat, the straight one out in front
+    {
+      const B = g.bones, key = keys.lie;
+      for (let i = 0; i < B.length; i++) { B[i].quaternion.copy(key.q[i]); B[i].position.copy(key.p[i]); }
+      fkFrom(g, 0);
+      for (const [it, is, ifo, sd] of [[BI.thighR, BI.shinR, BI.footR, 1], [BI.thighL, BI.shinL, BI.footL, -1]]) {
+        const bent = (sd > 0) === bentR;
+        const hp = bonePos(g, it, new THREE.Vector3());
+        const T = new THREE.Vector3(hp.x + sd * (bent ? 0.05 : 0.12), RIG.ankle + 0.01, hp.z - (bent ? 0.42 : 0.8));
+        twoBone(g, it, is, LEN.thigh, LEN.shin, T, _fp.set(sd * 0.25, bent ? 1 : 0.2, -1).normalize(), -1);
+        key.q[it].copy(B[it].quaternion); key.q[is].copy(B[is].quaternion);
+      }
+    }
+    groundArms(g, keys.lie, v === 2
+      ? [{ a: 0.02, b: -0.42, h: 0.2 }, { a: 0.2, b: -0.08, h: 0.0 }]           // one hand in the lap
+      : [{ a: 0.2, b: -0.06, h: 0.0 }, { a: 0.18, b: -0.1, h: 0.0 }]);         // both hands on the ground by the hips
+    return keys;
+  }
+  if (dir > 0) {
+    // on the back: legs per variant (one knee raised / both out / crossed over), arms laid on the ground
+    const legs = [
+      null,                                                                    // keyed in deathKeys (one knee up)
+      { thighR: [0.1, 0, 0.2], shinR: [-0.1], footR: [0.2, 0, 0.35], thighL: [0.06, 0, -0.16], shinL: [-0.15], footL: [0.25, 0, -0.35] },
+      { thighR: [0.2, 0, -0.04 * side], shinR: [-0.3], footR: [0.1, 0, 0.3], thighL: [0.25, 0, 0.02 * side], shinL: [-0.4], footL: [0.1, 0, -0.3] },
+    ][v];
+    if (legs) for (const [n, e] of Object.entries(legs)) qE(e[0] || 0, e[1] || 0, e[2] || 0, keys.lie.q[BI[n]]);
+    groundArms(g, keys.lie, [
+      [{ a: 0.5, b: 0.05, h: 0.0 }, { a: 0.42, b: -0.2, h: 0.0 }],               // flung out
+      [{ a: -0.12, b: -0.32, h: 0.17 }, { a: 0.55, b: 0.28, h: 0.0 }],           // right hand across the belly, left out by the head
+      [{ a: 0.26, b: -0.5, h: 0.0 }, { a: 0.3, b: -0.44, h: 0.0 }],              // along the sides
+    ][v]);
+  } else {
+    // face down: arms bent up by the head / along the body / one out wide
+    groundArms(g, keys.lie, [
+      [{ a: 0.32, b: 0.2, h: 0.0 }, { a: 0.3, b: 0.05, h: 0.0 }],
+      [{ a: 0.24, b: -0.48, h: 0.0 }, { a: 0.22, b: -0.5, h: 0.0 }],
+      [{ a: 0.58, b: 0.1, h: 0.0 }, { a: 0.22, b: -0.45, h: 0.0 }],
+    ][v]);
+  }
+  return keys;
+}
+
+// footprint of a final pose (model space, before the fall's yaw): [bone, x, y, z offset, probe radius]
+const FOOTPRINT = [
+  [BI.hips, 0, 0, 0, 0.16], [BI.chest, 0, 0.1, 0, 0.18], [BI.head, 0, 0.1, 0, 0.12],
+  [BI.handR, 0, -0.06, 0, 0.06], [BI.handL, 0, -0.06, 0, 0.06], [BI.farmR, 0, 0, 0, 0.06], [BI.farmL, 0, 0, 0, 0.06],
+  [BI.shinR, 0, 0, 0, 0.08], [BI.shinL, 0, 0, 0, 0.08], [BI.footR, 0, 0, -0.08, 0.07], [BI.footL, 0, 0, -0.08, 0.07],
+];
+/** Footprint points of a key pose in model space: [x, z, r]. */
+function footprint(g, key) {
+  for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(key.q[i]); g.bones[i].position.copy(key.p[i]); }
+  fkFrom(g, 0);
+  return FOOTPRINT.map(([i, x, y, z, r]) => { boneOff(g, i, x, y, z, _fp); return [_fp.x, _fp.z, r]; });
+}
+/** How much of a footprint (rotated by the fall's yaw) lies inside obstacles (0 = clear). */
+function blockedScore(g, pts, yaw, extra) {
+  if (!worldProbe) return 0;
+  const ry = g.root.rotation.y, c0 = Math.cos(ry), s0 = Math.sin(ry), c1 = Math.cos(yaw), s1 = Math.sin(yaw);
+  const px = g.root.position.x, pz = g.root.position.z;
+  let n = 0;
+  for (const [x0, z0, r] of extra ? pts.concat(extra) : pts) {
+    const x = x0 * c1 + z0 * s1, z = -x0 * s1 + z0 * c1;              // fall yaw (model space)
+    if (worldProbe(px + x * c0 + z * s0, pz - x * s0 + z * c0, r)) n += r;
+  }
+  return n;
+}
+/** Free distance behind a candidate fall (model +Z turned by yaw): 0.15..1.3 m, the first blocked step. */
+function freeBehind(g, yaw) {
+  const ry = g.root.rotation.y + yaw, bx = Math.sin(ry), bz = Math.cos(ry);
+  for (let d = 0.15; d < 1.3; d += 0.05) if (worldProbe(g.root.position.x + bx * d, g.root.position.z + bz * d, 0.14)) return d;
+  return 1.3;
+}
+
+const _keyHash = (s, k) => { const x = Math.sin(s * 91.7 + k * 37.3) * 43758.5453; return x - Math.floor(x); };
+/** Set up the fall (s.death) from the current living pose. */
+function startDeath(g, st) {
+  const s = g.s;
+  // fall away from the shooter when the killing shot's direction is known, else the game's fallDir
+  const recent = s.time - s.hitAt < 0.6, h = s.hitDir;
+  let dir = recent ? (h.z >= 0 ? 1 : -1) : (st.fallDir >= 0 ? 1 : -1);
+  let yaw = 0;
+  if (recent) yaw = dir > 0 ? Math.atan2(h.x, h.z) : Math.atan2(-h.x, -h.z);
+  yaw = clamp(yaw, -0.9, 0.9);
+  let side = Math.abs(yaw) > 0.15 ? Math.sign(yaw) * dir : (_keyHash(s.seed, 1) < 0.5 ? -1 : 1);
+  const variant = Math.floor(_keyHash(s.seed, 2) * 3) % 3;
+  const k0 = { q: g.bones.map(b => b.quaternion.clone()), p: g.bones.map(b => b.position.clone()) };
+  // planted ankles / foot orientations of the last living pose (model space), for the knee buckle
+  // (feet set flat on the ground with their heading kept, also when the shot caught a foot mid-step)
+  const ank = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = RIG.ankle; return v; });
+  const footQ = [BI.footR, BI.footL].map(i => { const f = _d.set(0, 0, -1).applyQuaternion(g.s.mq[i]); return new THREE.Quaternion().setFromAxisAngle(_Y, Math.atan2(-f.x, -f.z)); });
+  const rifleAt = (dir_, side_, slump) => slump > 0 ? [0.4 * side_, slump * 0.5, 0.1] : [0.42 * side_, -0.15 * dir_, 0.1];
+  let keys = deathKeysV(g, dir, side, variant, 0), slump = 0;
+  // obstacles: keep the body (torso, head, limbs) and the dropped rifle out of containers, walls and drums. Turn the
+  // fall a little at a time (preferring the shooter's direction), then try falling the other way; with nothing clear
+  // (backed against a wall), slump down against it
+  if (worldProbe) {
+    const ex = r => { const [x, z, rr] = rifleAt(r.dir, r.side, 0); return [[x, z, rr]]; };
+    let best = null;
+    const fp = {};
+    for (const d of [dir, -dir]) for (const sd of [side, -side]) {
+      const kk = d === dir && sd === side ? keys : deathKeysV(g, d, sd, variant, 0);
+      fp[d + "," + sd] = { keys: kk, pts: footprint(g, kk.lie) };
+    }
+    const search = (dirs, dys) => {
+      for (const dy of dys) for (const d of dirs) {
+        const y2 = yaw + dy, sd = Math.abs(y2) > 0.15 ? Math.sign(y2) * d : side;
+        const c = fp[d + ',' + sd];
+        const cost = Math.abs(dy) + (d !== dir ? 0.9 : 0);
+        if ((!best || cost < best.cost) && blockedScore(g, c.pts, y2, ex({ dir: d, side: sd })) === 0) best = { cost, d, sd, y2, keys: c.keys };
+      }
+    };
+    search([dir], [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]);
+    // backed against an obstacle (falling backward into it): slump down against it rather than pitch the other way
+    const wall = !best && dir > 0 && freeBehind(g, yaw) < 1.25;
+    if (!best && !wall) search([dir, -dir], [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.4, -1.4]);
+    if (best) { dir = best.d; side = best.sd; yaw = best.y2; keys = best.keys; }
+    else if (blockedScore(g, fp[dir + ',' + side].pts, yaw)) {
+      // slump: back to the nearest obstacle behind (yaw searched around the shot direction), seat just in front of it
+      let sb = null;
+      for (const dy of [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2, 1.6, -1.6, 2.2, -2.2, Math.PI]) {
+        const f = freeBehind(g, yaw + dy);
+        if (f < 1.25 && f > 0.42 && (!sb || Math.abs(dy) < Math.abs(sb.dy))) sb = { dy, f };
+      }
+      if (sb) {
+        dir = 1; yaw += sb.dy; slump = clamp(sb.f - 0.3, 0.2, 0.8);
+        keys = deathKeysV(g, 1, side, variant, slump);
+        if (blockedScore(g, [], yaw, [rifleAt(1, side, slump)])) side = -side;
+      }
+    }
+  }
+  // ankles / feet of the final pose (model space, before the fall's yaw): the IK targets slide there
+  for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(keys.lie.q[i]); g.bones[i].position.copy(keys.lie.p[i]); }
+  fkFrom(g, 0);
+  const ank1 = [BI.footR, BI.footL].map(i => { const v = bonePos(g, i, new THREE.Vector3()); v.y = Math.max(RIG.ankle, v.y - keys.lie.p[0].y + 0.17); return v; });
+  const footQ1 = [BI.footR, BI.footL].map(i => g.s.mq[i].clone());
+  for (let i = 0; i < g.bones.length; i++) { g.bones[i].quaternion.copy(k0.q[i]); g.bones[i].position.copy(k0.p[i]); }
+  fkFrom(g, 0);
+  const r1q = qE(0, side * 0.9 + 0.4 * dir + yaw + (variant - 1) * 0.35, Math.PI / 2 * side);
+  const [rx, rz] = rifleAt(dir, side, slump);
+  s.death = {
+    dir, side, yaw, slump, variant, k0, ank, footQ, ank1, footQ1, ...keys,
+    r0p: g.rifle.position.clone(), r0q: g.rifle.quaternion.clone(),
+    r1p: new THREE.Vector3(rx, 0.026, rz).applyAxisAngle(_Y, yaw), r1q,
+  };
+  s.L.init = false;                                      // re-plant the feet if this soldier is reused
+}
+
+// ------------------------------------------------------------------ sling
+// The two free segments of the sling (soldier.js slingGeometry) are short ropes of SLING_NODES nodes, simulated in model
+// space every frame (Verlet, ~60 Hz substeps): the ends are pinned (segment 1: rifle front swivel -> top of the left
+// shoulder; segment 2: right side of the back -> rear sling loop), the links are inextensible but may go slack, so the
+// strap sags in a catenary-like curve under gravity and swings with the body (the root's own motion is fed back as
+// inertia); nodes and link midpoints are pushed out of capsules round the torso / rig, upper arms, forearms and hands,
+// so the strap drapes over the body instead of cutting through it. On death both straps are released from the rifle
+// (it is dropped away from the body; a pinned strap would stretch to it) and fall onto the body / ground.
+// Node bones: position = node, orientation = strap frame (z along the strap, y away from the body, x across).
+// strap length of each free segment (m): the front run is ~0.8-0.9 m from swivel to shoulder in the carry / aim poses, so
+// ~0.2 m of slack hangs in a loop; the rear run (back -> stock) is ~0.3 m apart and hangs in a short loop
+const SLING_LEN = [1.05, 0.52];
+const SL_N = SLING_NODES, SL_G = 9.81, SL_DAMP = 0.985;
+const _sA = new THREE.Vector3(), _sB = new THREE.Vector3(), _sT = new THREE.Vector3(), _sX = new THREE.Vector3(), _sY = new THREE.Vector3();
+const _sM = new THREE.Matrix4(), _sR = new THREE.Matrix4(), _sQ = new THREE.Quaternion(), _sP = new THREE.Vector3(), _sC = new THREE.Vector3();
+let SLING_A = null;
+// collision capsules: [bone of end a, offset a, bone of end b, offset b, radius]; offsets in the bone's frame (m)
+const SL_CAPS = (() => {
+  const c = [];
+  // torso + chest rig + belt pouches: two side-by-side capsules (hips -> top of the chest), a little forward of the spine
+  for (const x of [-0.065, 0.065]) c.push([BI.hips, [x, 0.04, -0.035], BI.chest, [x, 0.14, -0.03], 0.155]);
+  for (const s of ['R', 'L']) {
+    c.push([BI['uarm' + s], [0, 0, 0], BI['farm' + s], [0, 0, 0], 0.062]);
+    c.push([BI['farm' + s], [0, 0, 0], BI['hand' + s], [0, 0, 0], 0.05]);
+    c.push([BI['hand' + s], [0, 0, 0], BI['hand' + s], [0, -0.09, 0], 0.045]);
+  }
+  c.push([BI.neck, [0, 0, 0], BI.head, [0, 0.12, -0.02], 0.1]);
+  return c;
+})();
+const _capA = SL_CAPS.map(() => new THREE.Vector3()), _capB = SL_CAPS.map(() => new THREE.Vector3());
+function capsulesNow(g) {
+  for (let k = 0; k < SL_CAPS.length; k++) {
+    const [ia, oa, ib, ob] = SL_CAPS[k];
+    _capA[k].set(oa[0], oa[1], oa[2]).applyMatrix4(g.s.mm[ia]);
+    _capB[k].set(ob[0], ob[1], ob[2]).applyMatrix4(g.s.mm[ib]);
+  }
+}
+/** Push point p (array offset o) out of every capsule; returns the outward normal of the deepest contact in _sC. */
+function pushOut(P, o) {
+  _sP.set(P[o], P[o + 1], P[o + 2]);
+  let hit = false;
+  for (let k = 0; k < SL_CAPS.length; k++) {
+    const a = _capA[k], b = _capB[k], r = SL_CAPS[k][4];
+    _sT.subVectors(b, a);
+    const l2 = _sT.lengthSq();
+    const t = l2 > 1e-9 ? clamp(_sX.subVectors(_sP, a).dot(_sT) / l2, 0, 1) : 0;
+    _sY.copy(a).addScaledVector(_sT, t);
+    _sX.subVectors(_sP, _sY);
+    const d = _sX.length();
+    if (d < r) {
+      if (d < 1e-6) _sX.set(0, 0, -1); else _sX.multiplyScalar(1 / d);
+      _sP.copy(_sY).addScaledVector(_sX, r);
+      hit = true;
+    }
+  }
+  if (hit) { P[o] = _sP.x; P[o + 1] = _sP.y; P[o + 2] = _sP.z; }
+  return hit;
+}
+function slingInit(g, k, A, B) {
+  const R = g.s.sl, P = R.p[k], Q = R.q[k];
+  const d = A.distanceTo(B), slack = Math.max(0, SLING_LEN[k] - d);
+  for (let i = 0; i < SL_N; i++) {
+    const t = i / (SL_N - 1);
+    P[i * 3] = lerp(A.x, B.x, t); P[i * 3 + 1] = lerp(A.y, B.y, t) - slack * 0.6 * 4 * t * (1 - t); P[i * 3 + 2] = lerp(A.z, B.z, t);
+  }
+  Q.set(P);
+}
+function updateSling(g, dt) {
+  const sl = g.sling, ud = g.rifle.userData, s = g.s;
+  if (!sl || !ud.slingF) return;
+  if (!SLING_A) SLING_A = slingAnchors();
+  g.rifle.updateMatrix();
+  const ch = s.mm[BI.chest];
+  let R = s.sl;
+  if (!R) R = s.sl = { p: [new Float32Array(SL_N * 3), new Float32Array(SL_N * 3)], q: [new Float32Array(SL_N * 3), new Float32Array(SL_N * 3)], init: false, root: new THREE.Matrix4(), x: [new THREE.Vector3(1, 0, 0), new THREE.Vector3(1, 0, 0)] };
+  const free = !!s.death;                      // released from the rifle on death
+  const ends = (k, A, B) => {
+    if (k === 0) { A.copy(ud.slingF).applyMatrix4(g.rifle.matrix); B.copy(SLING_A[0]).applyMatrix4(ch); }
+    else { A.copy(SLING_A[1]).applyMatrix4(ch); B.copy(ud.slingR).applyMatrix4(g.rifle.matrix); }
+  };
+  capsulesNow(g);
+  // root motion since the last frame -> inertia (the rope stays where it was in the world, the constraints drag it)
+  g.root.updateMatrix();
+  if (R.init) {
+    _sR.copy(g.root.matrix).invert().multiply(R.root);
+    for (let k = 0; k < 2; k++) for (const Ar of [R.p[k], R.q[k]]) for (let i = 0; i < SL_N; i++) {
+      _sP.set(Ar[i * 3], Ar[i * 3 + 1], Ar[i * 3 + 2]).applyMatrix4(_sR); Ar[i * 3] = _sP.x; Ar[i * 3 + 1] = _sP.y; Ar[i * 3 + 2] = _sP.z;
+    }
+  }
+  R.root.copy(g.root.matrix);
+  // QA jumps (a soldier placed already dead) settle the released strap over ~2 s of simulated time
+  const settle = !R.init || (free && !R.freeSeen && (s.deathT ?? 0) > 1.2);
+  const steps = settle ? 120 : Math.max(1, Math.ceil(Math.min(dt, 0.1) * 60));
+  const h = settle ? 1 / 60 : Math.min(dt, 0.1) / steps;
+  for (let k = 0; k < 2; k++) {
+    ends(k, _sA, _sB);
+    if (!R.init) slingInit(g, k, _sA, _sB);
+    const P = R.p[k], Q = R.q[k], rest = SLING_LEN[k] / (SL_N - 1);
+    const pinA = !(free && k === 0), pinB = !(free && k === 1);   // the rifle ends are released on death
+    for (let it = 0; it < steps; it++) {
+      // integrate
+      for (let i = 0; i < SL_N; i++) {
+        const o = i * 3;
+        if ((i === 0 && pinA) || (i === SL_N - 1 && pinB)) continue;
+        for (let c = 0; c < 3; c++) { const v = (P[o + c] - Q[o + c]) * SL_DAMP; Q[o + c] = P[o + c]; P[o + c] += v; }
+        P[o + 1] -= SL_G * h * h;
+      }
+      if (pinA) { P[0] = _sA.x; P[1] = _sA.y; P[2] = _sA.z; }
+      if (pinB) { const o = (SL_N - 1) * 3; P[o] = _sB.x; P[o + 1] = _sB.y; P[o + 2] = _sB.z; }
+      // the body-side end stays on the body even when released from the rifle
+      if (free) { if (k === 0) { const o = (SL_N - 1) * 3; P[o] = _sB.x; P[o + 1] = _sB.y; P[o + 2] = _sB.z; } else { P[0] = _sA.x; P[1] = _sA.y; P[2] = _sA.z; } }
+      const fixedA = pinA || (free && k === 1), fixedB = pinB || (free && k === 0);
+      for (let pass = 0; pass < 6; pass++) {
+        // inextensible links (a rope: only stretching is corrected)
+        for (let i = 0; i < SL_N - 1; i++) {
+          const a = i * 3, b = a + 3;
+          const dx = P[b] - P[a], dy = P[b + 1] - P[a + 1], dz = P[b + 2] - P[a + 2], d = Math.hypot(dx, dy, dz);
+          if (d <= rest || d < 1e-9) continue;
+          const wa = (i === 0 && fixedA) ? 0 : 1, wb = (i + 1 === SL_N - 1 && fixedB) ? 0 : 1;
+          if (wa + wb === 0) continue;
+          const c = (d - rest) / d / (wa + wb);
+          P[a] += dx * c * wa; P[a + 1] += dy * c * wa; P[a + 2] += dz * c * wa;
+          P[b] -= dx * c * wb; P[b + 1] -= dy * c * wb; P[b + 2] -= dz * c * wb;
+        }
+        // body capsules (free nodes) and the ground
+        for (let i = 0; i < SL_N; i++) {
+          if ((i === 0 && fixedA) || (i === SL_N - 1 && fixedB)) continue;
+          pushOut(P, i * 3);
+          if (P[i * 3 + 1] < 0.012) P[i * 3 + 1] = 0.012;
+        }
+      }
+      // link midpoints: a link must not cut through a forearm between two nodes that are outside it
+      for (let i = 0; i < SL_N - 1; i++) {
+        const a = i * 3, b = a + 3;
+        const m = [(P[a] + P[b]) / 2, (P[a + 1] + P[b + 1]) / 2, (P[a + 2] + P[b + 2]) / 2], m0 = m.slice();
+        if (!pushOut(m, 0)) continue;
+        const dx = m[0] - m0[0], dy = m[1] - m0[1], dz = m[2] - m0[2];
+        if (!(i === 0 && fixedA)) { P[a] += dx; P[a + 1] += dy; P[a + 2] += dz; }
+        if (!(i + 1 === SL_N - 1 && fixedB)) { P[b] += dx; P[b + 1] += dy; P[b + 2] += dz; }
+      }
+    }
+    // node frames: z along the strap, y away from the torso (lying flat on the body / ground), x across
+    const X = R.x[k];
+    for (let i = 0; i < SL_N; i++) {
+      const i0 = Math.max(0, i - 1), i1 = Math.min(SL_N - 1, i + 1);
+      _sT.set(P[i1 * 3] - P[i0 * 3], P[i1 * 3 + 1] - P[i0 * 3 + 1], P[i1 * 3 + 2] - P[i0 * 3 + 2]);
+      if (_sT.lengthSq() < 1e-10) _sT.set(0, -1, 0);
+      _sT.normalize();
+      _sP.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+      // away from the nearest torso axis point (the chest capsules' midline)
+      _sC.lerpVectors(_capA[0], _capA[1], 0.5); _sY.lerpVectors(_capB[0], _capB[1], 0.5);
+      _sX.subVectors(_sY, _sC); const l2 = _sX.lengthSq();
+      const tt = l2 > 1e-9 ? clamp(_sB.subVectors(_sP, _sC).dot(_sX) / l2, 0, 1) : 0;
+      _sY.subVectors(_sP, _sC.addScaledVector(_sX, tt));
+      if (_sP.y < 0.06) _sY.set(0, 1, 0);                      // lying on the ground: flat
+      _sX.crossVectors(_sY, _sT);
+      if (_sX.lengthSq() < 1e-8) _sX.copy(X); else _sX.normalize();
+      if (_sX.dot(X) < 0) _sX.negate();                         // no flips along the strap
+      X.copy(_sX);
+      _sY.crossVectors(_sT, _sX);
+      _sQ.setFromRotationMatrix(_sM.makeBasis(_sX, _sY, _sT));
+      const b = sl[k * SL_N + i];
+      b.position.copy(_sP); b.quaternion.copy(_sQ);
+    }
+  }
+  if (free && s.death) R.freeSeen = true;
+  R.init = true;
+}
+
+// ------------------------------------------------------------------ face
+// Face rig (soldier.js FACE_NAMES, weights from the MakeHuman face bones). Rotation sizes from MakeHuman's face pose
+// units (tools/mh/sources/face-poseunits.bvh): upper lid closed 33.2 deg, lower lid up 16.3 deg, eye up / down
+// ~20 deg with the upper lid following 29 % (up) / 56 % (down) and the lower lid 37 % (down), jaw drop 20.2 deg.
+//  - blinks: every 2-7 s (fewer while aiming, a reflex blink on a hit or on the soldier's own shot), ~70 ms closing,
+//    ~150 ms opening
+//  - gaze: fixations with fast saccades (~25 ms) and microsaccades; toward st.lookAt (world point: the player for an
+//    engaged guard, the target / the player for a comrade) when it is within reach of the eyes, else short glances
+//  - speech: jaw opening from the text of the line being spoken (vowels open, m / b / p close), louder lines raise the
+//    brows; cries open the mouth and draw the brows down (speak() is called by game.js / friendlies.js when a bark is
+//    actually voiced)
+//  - dead: lids two-thirds closed, eyes rolled slightly up and still, jaw slack
+// QA / tools: st.face = { blink, jaw, brow } (0..1) overrides, st.lookAt = [x, y, z].
+const RAD = Math.PI / 180;
+const LID_CLOSE = -33.2 * RAD, LIDL_UP = 16.3 * RAD * 0.45, JAW_MAX = 20.2 * RAD;
+// relaxed, awake lids: the MakeHuman rest pose has the upper lid margin ~2 mm above the pupil (a sleepy look, half the
+// iris covered); a living eye shows the iris almost to its top: open the upper lid by 7 deg (UpperLidOpen is 17.6)
+const LID_REST = 7 * RAD;
+const VOWEL = /[аеёиоуыэюяaeiouyåäö]/i, WIDE = /[аоaoåä]/i, CLOSED = /[мбпmbpвфvf]/i;
+const _fM = new THREE.Matrix4(), _fV = new THREE.Vector3(), _fQ = new THREE.Quaternion();
+const hash1 = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+
+/** Start a spoken line on a soldier (presentation only). o: { dur (s), loud 0..1, cry } */
+export function speak(g, text, o = {}) {
+  if (!g || !g.s) return;
+  const f = faceState(g);
+  f.speech = { t0: g.s.time, dur: Math.max(0.3, o.dur ?? (0.2 + String(text).length * 0.06)), text: String(text || ''), loud: clamp(o.loud ?? 0.7, 0, 1), cry: !!o.cry };
+  f.puffAt = g.s.time;                       // a line is an exhalation
+}
+function faceState(g) {
+  const s = g.s;
+  if (!s.f) s.f = { next: 1 + hash1(s.seed, 1) * 3, bt: -1, blink: 0, ey: 0, ep: 0, ty: 0, tp: 0, fix: 0, micro: 0, mx: 0, my: 0, jaw: sp(), brow: 0, speech: null, puffAt: -99, lastHit: -99, lastShot: 0, exh: false };
+  return s.f;
+}
+function updateFace(g, st, dt) {
+  const F = g.face; if (!F) return;
+  const s = g.s, f = faceState(g), t = s.time, ov = st.face || null;
+  const dead = !!s.death, A = s.x ? clamp(s.x.aim.x, 0, 1) : 0;
+  // ---- blinks
+  if (s.hitAt > f.lastHit + 1e-6) { f.lastHit = s.hitAt; if (f.bt < 0) f.bt = 0; }
+  if (s.lastFlash > 0 && st.flash > 0 && t - f.lastShot > 0.4) { f.lastShot = t; if (f.bt < 0 && hash1(t, s.seed) < 0.35) f.bt = 0; }
+  f.next -= dt;
+  if (f.next <= 0 && f.bt < 0) { f.bt = 0; const r = hash1(t * 3.1, s.seed); f.next = (A > 0.6 ? 3.5 : 2.0) + 5.0 * r * r; }
+  let blink = 0;
+  if (f.bt >= 0) {
+    f.bt += dt;
+    const b = f.bt;
+    blink = b < 0.07 ? sstep(0, 0.07, b) : b < 0.1 ? 1 : 1 - sstep(0.1, 0.25, b);
+    if (b > 0.25) f.bt = -1;
+  }
+  // ---- gaze: fixation target (yaw, pitch in head space, rad)
+  f.fix -= dt; f.micro -= dt;
+  let want = null;
+  if (st.lookAt && !dead) {
+    const la = st.lookAt;
+    // world -> model (root: position + yaw only) -> head space, from the eye centre
+    _fV.set(la[0] ?? la.x, la[1] ?? la.y, la[2] ?? la.z).sub(g.root.position).applyAxisAngle(_Y, -g.root.rotation.y);
+    _fV.applyMatrix4(_fM.copy(s.mm[BI.head]).invert());
+    _fV.x -= (F[FI.eyeR].position.x + F[FI.eyeL].position.x) / 2; _fV.y -= F[FI.eyeR].position.y; _fV.z -= F[FI.eyeR].position.z;
+    const yaw = Math.atan2(_fV.x, -_fV.z), pitch = Math.atan2(_fV.y, Math.hypot(_fV.x, _fV.z));
+    if (Math.abs(yaw) < 0.75 && pitch > -0.6 && pitch < 0.5) want = [clamp(yaw, -0.5, 0.5), clamp(pitch, -0.4, 0.3)];
+  }
+  if (f.fix <= 0) {
+    const r1 = hash1(t, s.seed + 1), r2 = hash1(t, s.seed + 2), r3 = hash1(t, s.seed + 3);
+    if (want && r3 < 0.8) { f.ty = want[0]; f.tp = want[1]; f.fix = 0.6 + 1.6 * r1; f.onT = true; }
+    else {
+      // glance: small while aiming (down the sights), wider while patrolling / idle
+      const k = A > 0.6 ? 0.06 : 0.3;
+      f.ty = (r1 * 2 - 1) * k; f.tp = (r2 * 2 - 1) * k * 0.4 - 0.03; f.fix = 0.4 + 1.8 * r3; f.onT = false;
+    }
+    // a large saccade usually comes with a blink
+    if (Math.abs(f.ty - f.ey) > 0.25 && f.bt < 0 && r2 < 0.5) f.bt = 0;
+  } else if (want && f.onT) { f.ty = want[0]; f.tp = want[1]; }        // smooth pursuit of a moving target
+  if (f.micro <= 0) { f.micro = 0.25 + 0.6 * hash1(t, s.seed + 5); f.mx = (hash1(t, s.seed + 6) - 0.5) * 0.02; f.my = (hash1(t, s.seed + 7) - 0.5) * 0.015; }
+  const ks = 1 - Math.exp(-dt * 45);               // saccade: ~25 ms to land
+  f.ey += (f.ty + f.mx - f.ey) * ks; f.ep += (f.tp + f.my - f.ep) * ks;
+  let ey = f.ey, ep = f.ep, lids = 0;
+  // ---- speech -> jaw / brows
+  let jawT = 0, brow = 0;
+  const S = f.speech;
+  if (S) {
+    const u = (t - S.t0) / S.dur;
+    if (u >= 1) f.speech = null;
+    else if (u >= 0) {
+      const txt = S.text, n = Math.max(1, txt.length), ci = Math.min(n - 1, Math.floor(u * n)), c = txt[ci] || ' ';
+      jawT = S.cry ? 0.85 : VOWEL.test(c) ? (WIDE.test(c) ? 0.8 : 0.5) : CLOSED.test(c) ? 0.0 : /[\s.,!?…-]/.test(c) ? 0.05 : 0.22;
+      jawT *= 0.45 + 0.55 * S.loud;
+      const env = sstep(0, 0.08, u * S.dur) * (1 - sstep(S.dur - 0.12, S.dur, u * S.dur));
+      brow = (S.cry ? -0.9 : S.loud * 0.9) * env;
+      lids = S.cry ? 0.35 : 0;                       // cries squeeze the eyes
+    }
+  }
+  // ---- breathing (same phase as the chest in poseAlive): exhalation starts a vapour puff (main.js / atmosphere.js)
+  const bp = t * 1.65 + s.seed + 0.5 * Math.sin(t * 0.23 + s.seed * 2.0);
+  const exh = Math.cos(bp) < 0;
+  if (exh && !f.exh && !dead && !(f.speech)) f.puffAt = t;
+  f.exh = exh;
+  if (!dead) jawT += 0.03 * (exh ? 1 : 0) + 0.02;   // lips just parted, a little more on the out-breath
+  const jaw = spring(f.jaw, jawT, 34, 0.9, dt);
+  // ---- dead face
+  let wDead = 0;
+  if (dead) {
+    wDead = sstep(0.2, 1.2, s.deathT ?? 1);
+    ey *= 1 - wDead; ep = lerp(ep, 0.12, wDead);
+    blink = lerp(blink, 0.62, wDead);
+  }
+  if (ov) {
+    if (ov.blink !== undefined) blink = ov.blink;
+    if (ov.brow !== undefined) brow = ov.brow;
+  }
+  const jawV = ov && ov.jaw !== undefined ? ov.jaw : (dead ? lerp(clamp(jaw, 0, 1), 0.3, wDead) : clamp(jaw, 0, 1));
+  f.blink = blink; f.brow = brow;
+  // ---- apply (local rotations relative to the head; +x rotation lifts the front of a bone)
+  for (const [ie, il, iu] of [[FI.eyeR, FI.lidLR, FI.lidUR], [FI.eyeL, FI.lidLL, FI.lidUL]]) {
+    F[ie].quaternion.setFromEuler(_e.set(ep, -ey, 0, 'YXZ'));
+    const close = clamp(blink + lids * (1 - blink), 0, 1);
+    F[iu].rotation.set((ep < 0 ? 0.56 : 0.29) * ep + LID_REST * (1 - close) + LID_CLOSE * close, -0.45 * ey, 0);
+    F[il].rotation.set((ep < 0 ? 0.37 : 0.1) * ep + LIDL_UP * close, -0.45 * ey, 0);
+  }
+  F[FI.jaw].rotation.set(-JAW_MAX * 0.75 * jawV, 0, 0);
+  for (const ib of [FI.browR, FI.browL]) {
+    const b = F[ib], p0 = b.userData.p0 || (b.userData.p0 = b.position.clone());
+    b.position.copy(p0); b.position.y += 0.0032 * brow; b.position.z -= 0.0008 * Math.max(0, brow);
+  }
+}
+
+// ------------------------------------------------------------------ public
+/**
+ * Pose a guard / soldier. st: {walk, speed(0..1), aim(0..1), flash, hit, dead (0 alive, then s/0.9), fallDir}
+ * Optional (presentation only): hitX / hitZ = world position of the last shooter (directional hit reaction and fall),
+ * reload = magazine-change progress 0..1 (0 = none; when the key is absent a guard plays a short cosmetic change
+ * every few shots inside its fire cooldown).
+ */
+export const poseSoldier = (g, st) => poseGuard(g, st);
+export function poseGuard(g, st) {
+  const s = g.s;
+  if (!s.L) {
+    s.L = locoState();
+    s.x = { aim: sp(st.aim || 0), rec: sp(), hx: sp(), hz: sp(), htw: sp(), lag: sp(), recSide: 0 };
+    s.hitDir = new THREE.Vector3(0, 0, 1); s.hitAt = -99; s.lastFlash = 0; s.shots = 0; s.nextRl = 4 + Math.floor(Math.random() * 4); s.rlT = -1;
+    s.ank = [new THREE.Vector3(), new THREE.Vector3()]; s.fqR = new THREE.Quaternion(); s.fqL = new THREE.Quaternion();
+  }
+  const now = performance.now() / 1000;
+  const dt = s.t ? clamp(now - s.t, 0, 0.1) : 0.016;
+  s.t = now; s.time += dt;
+  if (s.ph === null) s.ph = st.walk;
+  if (dt > 1e-4) s.rate += (clamp((st.walk - s.ph) / dt, 0, 14) - s.rate) * Math.min(1, dt * 8);
+  s.ph = st.walk;
+
+  g.flash.intensity = st.flash > 0 ? 18 : 0;
+  g.flashMesh.visible = st.flash > 0;
+  g.flashMesh.rotation.z = Math.random() * 6.28;
+  g.flashMesh.scale.setScalar(0.8 + Math.random() * 0.6);
+
+  reactions(g, st, dt, g.root);
+  if (!(st.dead > 0)) {
+    s.death = null; s.deathT = 0;
+    if (s.sl) s.sl.freeSeen = false;
+    poseAlive(g, st, dt);
+  } else {
+    if (!s.death) startDeath(g, st);
+    poseDeath(g, st);
+    g.flash.intensity = 0; g.flashMesh.visible = false;
+  }
+  g.root.rotation.x = 0; g.root.rotation.z = 0;
+  g.rifle.visible = true;
+  updateFace(g, st, dt);
+  updateSling(g, dt);
+}
