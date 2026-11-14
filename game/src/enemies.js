@@ -321,6 +321,7 @@ function flashParts() {
   ];
   const geo = mergeGeometries(parts);
   const m = new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(7, 4.2, 2.0), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: true });
+  m.forceSinglePass = true;   // additive: draw order of the two faces does not matter (one draw call, not two)
   FLASH = [geo, m];
   return FLASH;
 }

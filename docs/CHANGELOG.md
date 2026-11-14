@@ -7,6 +7,13 @@ Nothing here has run on a real GPU, iPhone or Windows PC yet; every number below
 - Soldiers rebuilt on the CC0 MakeHuman body (`game/assets/models/soldier_body.bin`, first-person arms `viewmodel_arms.bin`; provenance in `docs/ASSETS.md`), bare-headed Home Guard soldiers with hair, eyes and wrap-lit skin (`characters/skin.js`), a fabric layer with ripstop / twill relief, joint-flexion folds, seams and wear (`characters/cloth.js`), and procedural locomotion / combat animation (`characters/anim.js`).
 - Procedural body / hands remain as fallback when the `.bin` files cannot be loaded (now covered by tests: missing and corrupt files).
 
+**Soldiers at gameplay range (implemented; SwiftShader renders only; not accepted)**
+- Deaths avoid obstacles: the fall direction is turned (or reversed) until the final pose and the dropped rifle are clear of the collision boxes; a soldier backed against a container slumps sitting against it. Arms are laid on the ground by IK (no more arms raised off the ground), three final-pose variants per direction (`enemies.js` `startDeath`, `setWorldProbe` wired to `Game.blocked`).
+- Soldier rifles at real proportions (front end ~10 cm shorter; AK gas block at the end of the gas tube); two-point sling over the left shoulder skinned to six extra bones in the existing nylon material group; muzzle flash is now flame / side-jet planes and an end-on star (canvas texture drawn in code, one draw call) instead of a sphere.
+- Wet weather: cloth water film and run-off streaks (`cloth.js`), rain bursts on the nearest soldiers' shoulders / heads inside the existing splash draw call (`atmosphere.js`), soft contact shadows under all soldiers in one instanced draw call (`characters/contact.js`).
+- First-person grip: contact step in `tools/mh/build_arms.py` (glove surface facing the rifle within 13 / 9 mm drawn onto it), reachable right-thumb target, `viewmodel_arms.bin` rebuilt.
+- Rifle lag spring starts at rest (no swing on a soldier's first frame). QA: `soldier()` settles pose springs over 1.5 s of simulated frames, takes `add`, `flash`, `fallDir`, `hitX` / `hitZ`; `blockers(x, z, r)`; new `tools/range_shots.js` survey (5-25 m, medium / high, obstacle scene).
+
 **Audio (implemented; needs listening on real hardware)**
 - Rain-loop ambience removed (reported as synthetic); Swedish comrade barks use on-device speech at a faster rate with a squelch click, static bed and squelch tail to read as group radio. Browser speech cannot be filtered through Web Audio, so the voices themselves are not band-limited.
 
