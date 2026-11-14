@@ -12,10 +12,11 @@ function lerpAngle(a, b, t) { const d = (b - a + Math.PI * 3) % (Math.PI * 2) - 
 // formation slots relative to the player's facing: (right, back) in metres
 const SLOTS = [[-2.2, 2.6], [2.4, 3.4]];
 const CALLSIGNS = ['Grön 2', 'Grön 3'];
-const SV_BARKS = {
-  contact: ['Kontakt framåt!', 'Fiende!', 'Där borta!'],
-  reload: ['Laddar om!', 'Byter magasin!'],
-  down: ['Han ligger!', 'Träff!'],
+// English radio barks (on-device Swedish voices sounded too synthetic in a listening test)
+const BARKS = {
+  contact: ['Contact front!', 'Enemy, twelve o\'clock!', 'Contact, contact!'],
+  reload: ['Reloading!', 'Changing mag!'],
+  down: ['Tango down!', 'Got him!'],
 };
 
 export class Squad {
@@ -132,20 +133,21 @@ export class Squad {
     }
   }
 
-  /** Swedish radio-style barks via on-device speech only (never network voices). */
+  /** English radio-style barks via on-device speech only (never network voices). */
   bark(m, kind, time) {
     if (time - m.lastBark < 4 || this.game.mode !== 'play') return;
     m.lastBark = time;
     try {
       const synth = window.speechSynthesis; if (!synth) return;
-      const voice = synth.getVoices().find(v => v.localService && /^sv/i.test(v.lang));
+      const vs = synth.getVoices().filter(v => v.localService && /^en/i.test(v.lang));
+      const voice = vs.find(v => /^en-GB/i.test(v.lang)) || vs.find(v => /^en-US/i.test(v.lang)) || vs[0];
       if (!voice || synth.speaking) return;
-      const lines = SV_BARKS[kind]; const text = lines[Math.floor(Math.random() * lines.length)];
+      const lines = BARKS[kind]; const text = lines[Math.floor(Math.random() * lines.length)];
       const u = new SpeechSynthesisUtterance(text);
       // Heard over the group radio, not directly: brisk clipped delivery at a fixed radio level.
       // speechSynthesis cannot be routed through Web Audio, so the radio character comes from the
       // squelch/static bed wrapped around the utterance (audio.radioStart/radioEnd).
-      u.voice = voice; u.lang = voice.lang; u.rate = 1.55; u.pitch = 0.9 + m.i * 0.12; u.volume = 0.75;
+      u.voice = voice; u.lang = voice.lang; u.rate = 1.25; u.pitch = 0.9 + m.i * 0.12; u.volume = 0.75;
       const a = this.game.audio, est = 0.25 + text.length * 0.055;
       u.onend = u.onerror = () => { try { a?.radioEnd?.(); } catch (_) {} };
       a?.radioStart?.(est);

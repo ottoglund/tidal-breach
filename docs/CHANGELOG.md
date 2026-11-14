@@ -75,3 +75,7 @@ Nothing here has run on a real GPU, iPhone or Windows PC yet; every number below
 ### Audio feedback round 1 (from user listening test on Windows)
 - Rain ambience loops (roar, hiss, drops, drips) removed: reported as synthetic ("like shells").
 - Swedish comrade barks: faster (rate 1.55), fixed radio level, squelch-open click + band-limited static bed + squelch tail so they read as group radio. Browser speech cannot be filtered through Web Audio, so the voice itself is not band-limited.
+
+### Audio feedback round 2
+- Comrade radio barks switched from Swedish to English (on-device en-GB/en-US voices, rate 1.25); the Swedish on-device voice was reported as too synthetic. Radio squelch/static unchanged.
+- Added `.github/workflows/pages.yml` for GitHub Pages publishing from `main` (static files only).

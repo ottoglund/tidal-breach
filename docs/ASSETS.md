@@ -132,7 +132,7 @@ the left side of the pistol grip.
 
 All sounds are synthesised at runtime with the Web Audio API
 (`game/src/audio.js`). No sample files.
-Rifle reports, echoes and outdoor impulse response, casings, bullet snaps, wet footsteps, foley, sea/engine/crane ambience (rain loops removed after listening feedback), squad-radio squelch and static and the fallback enemy "voice" murmur are generated procedurally in code (own work, no third-party audio). Enemy Russian barks use the browser's built-in `speechSynthesis` restricted to on-device voices (`voice.localService === true`); no network voices, no external calls; if no local Russian voice exists a synthesised unintelligible shout is used instead. Swedish comrade barks use on-device Swedish voices the same way, framed by synthesised radio squelch and static.
+Rifle reports, echoes and outdoor impulse response, casings, bullet snaps, wet footsteps, foley, sea/engine/crane ambience (rain loops removed after listening feedback), squad-radio squelch and static and the fallback enemy "voice" murmur are generated procedurally in code (own work, no third-party audio). Enemy Russian barks use the browser's built-in `speechSynthesis` restricted to on-device voices (`voice.localService === true`); no network voices, no external calls; if no local Russian voice exists a synthesised unintelligible shout is used instead. Comrade radio barks are in English (changed from Swedish after listening feedback) and use on-device English voices the same way, framed by synthesised radio squelch and static.
 
 ## Fonts
 
