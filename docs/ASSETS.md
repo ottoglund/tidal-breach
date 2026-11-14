@@ -50,6 +50,8 @@ the set's real tile size (physically scaled slopes).
 Soldier materials reuse the sets above; the only texture added for the people is `skin_detail` (synthesised, see the table). Additional soldier surfaces are shader-/material-only: skin, eyes and short hair (`game/src/characters/skin.js`: albedo per look in the measured light-skin range, procedural mottling, capillary redness, small moles, eyelid creases, eyebrows, stubble tinted by the hair colour, procedural forehead / crow's-feet / under-eye / nasolabial / neck creases as a bump, skin specular F0 0.028 with an oily T-zone, iris / sclera / lid shadow, scalp hair-density fade (~2.5 cm, strand-broken, low-pass filtered hairline), hair strands with Kajiya-Kay style anisotropic highlights, wrap lighting; all evaluated from the bind-pose position, no image data except `skin_detail`; six looks - skin tone from fair to medium brown, hair from blond to black, iris colour - in `LOOKS`), the knitted rib relief of the balaclava and the uniform / gear / boot surface layers (`game/src/characters/cloth.js`, procedural, no image data: analytic ripstop double-yarn and 2/1 twill relief aligned with the `camo_*` texture grid and faded below a pixel, compression folds at elbows / knees / hips driven by each soldier's own bone matrices in the vertex shader, sewn seams and panel dye-lot shifts placed from the body's bind-pose segments, high-point and seam abrasion with pilling, physically motivated wet darkening, curvature-based cordura edge wear, boot vamp flex creases and scuffed toe caps; the first-person sleeves reuse the yarn relief and add fold-crest wear in `game/src/viewmodel/arms.js`), metal hardware (`gunmetal` set, recoloured), satin polymer hardware (`polymer` set, recoloured) and the sunglass lenses (semi-transparent physical material plus a stylised procedural reflection in `game/src/enemies.js`, not a captured or photographic reflection). The first-person glove seams and stitches, knuckle strip, cordura basket weave, pebbled synthetic-leather palm, fold relief, fabric sheen, wear and sleeve stitching are drawn by `game/src/viewmodel/arms.js` from per-vertex data in the arms file (no textures beyond `glove_green` / `camo_m90`). The Home Guard helmet on the bare head (shell, rails, shroud, counterweight, Y-strap and chin strap laid on the face surface) is generated in `game/src/characters/soldier.js` (`helmetMH`, `chinStrap`) from the body asset's own head vertices.
 
 Soldier insignia (Swedish flag, generic dark "HV" shield) are drawn at runtime on a canvas in `game/src/enemies.js` (original simple graphics, no copied artwork).
+
+The soldiers' muzzle flash (side-view flame with ragged streaks and an end-on petalled star) is also drawn at runtime on a canvas in `game/src/enemies.js` (`flashParts`, own work, no image data). The rifle sling (webbing strap over the left shoulder, `slingGeometry` in `game/src/characters/soldier.js`), the rain-water film / run-off streaks on wet cloth (`game/src/characters/cloth.js`), the rain bursts on soldiers' shoulders and heads (`createSplashes` in `game/src/world/atmosphere.js`) and the soft ground contact shadows under soldiers (`game/src/characters/contact.js`) are procedural geometry / shader code (own work, no image data).
 | water | normal | harbour water ripples |
 | puddles | mask | world-scale puddle / wetness distribution |
 | marking | mask | worn road-paint alpha |
@@ -119,7 +121,11 @@ fingertips, padded knuckle strip, gauntlet with strap) and a baggy M90 sleeve
 thickness), and bakes per-vertex ambient occlusion (rays against a voxelised
 copy of the arm and the rifle) plus seam / strip / palm fields used by the
 shader. ~10.4 k triangles for both arms (5.2 k each). If the file fails to load,
-the procedural hands are used.
+the procedural hands are used. A last contact step (`conform`) draws the glove
+surface that faces the rifle within 13 mm (left hand, handguard) / 9 mm (right
+hand, grip) onto it with a smoothed falloff (soft tissue under grip pressure) and
+pushes any penetration out; the right thumb is solved toward a reachable spot on
+the left side of the pistol grip.
 
 ## Audio
 

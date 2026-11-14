@@ -156,6 +156,13 @@ class SkinBuilder {
     else for (let i = 0; i < p.count; i++) G.idx.push(base + i);
   }
 
+  /** Append raw skinned vertices (model / bind space) with explicit bone indices / weights (4 each) and indices. */
+  raw(key, pos, nor, uv, si, sw, idx) {
+    const G = this.g.get(key), base = G.pos.length / 3;
+    G.pos.push(...pos); G.nor.push(...nor); G.uv.push(...uv); G.si.push(...si); G.sw.push(...sw);
+    for (const i of idx) G.idx.push(base + i);
+  }
+
   build() {
     const pos = [], nor = [], uv = [], si = [], sw = [], idx = [];
     const geo = new THREE.BufferGeometry();
@@ -868,6 +875,62 @@ function farGeometry(kind) {
   return g;
 }
 
+// ---------------------------------------------------------------- rifle sling
+// Two-point sling worn over the left shoulder: front swivel -> top of the left shoulder (free segment 1), across the
+// back to the right side of the lower back (static strap on the chest bone), -> rear sling loop on the stock (free
+// segment 2). The free segments are part of the body mesh ('black' nylon group: no extra draw call) and are skinned to six
+// extra bones that are not part of the animation skeleton (BONE_DEFS): per segment start / sag control / end, posed
+// every frame by enemies.js (updateSling). With all three bones at identity in bind space, a strap vertex at canonical
+// cross-section offset c (local x = strap width, y = thickness) and weights (1-t)^2, 2t(1-t), t^2 skins to
+// sum w_k (R_k c + p_k): the quadratic Bezier through the three bone positions, with the strap's section carried by
+// the bones' orientation.
+export const SLING_BONES = 6;
+const SLING_SEG = 12;
+/** Body anchor points of the sling in chest-bone space (rest pose): [top of the left shoulder, right side of the back]. */
+export function slingAnchors() {
+  const P = n => V(...BONE_DEFS[BI[n]][2]);
+  const ch = P('chest'), uL = P('uarmL'), uR = P('uarmR');
+  const back = y => (FIT ? rowsAt(FIT.torso, y)[1] : 0.13) + 0.022;
+  const a1 = V(uL.x * 0.55, uL.y + 0.075, (uL.z + back(uL.y)) * 0.5 - 0.005);
+  const y2 = uR.y - 0.24;
+  const a2 = V(uR.x * 0.95 + 0.02, y2, back(y2) - 0.03);
+  return [a1.sub(ch), a2.sub(ch), back];
+}
+function slingGeometry(B) {
+  const [a1, a2, back] = slingAnchors();
+  const ch = V(...BONE_DEFS[BI.chest][2]);
+  const A1 = a1.clone().add(ch), A2 = a2.clone().add(ch);
+  // static part across the back (identity-rest space -> bind space via B.xf, no torso refit)
+  const yb = (A1.y + A2.y) / 2;
+  const pts = [A1, V(A1.x * 0.6, A1.y - 0.015, back(A1.y - 0.015) - 0.005), V(-0.02, yb + 0.03, back(yb + 0.03)), V(A2.x * 0.55, A2.y + 0.05, back(A2.y + 0.05) - 0.004), A2];
+  const fit = B.fit; B.fit = null;
+  const strap = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 14, 0.0115, 4, false);
+  B.rigid('black', strap, null, BI.chest);
+  B.fit = fit;
+  // free segments: canonical rings along local z (t), weights to bones 19 + 3k .. 21 + 3k
+  const W = 0.0135, T = 0.0028, sec = [[-W, -T], [W, -T], [W, T], [-W, T]], sn = [[0, -1], [0, -1], [0, 1], [0, 1]];
+  const nb = BONE_DEFS.length;
+  for (let k = 0; k < 2; k++) {
+    const pos = [], nor = [], uv = [], si = [], sw = [], idx = [];
+    for (let i = 0; i <= SLING_SEG; i++) {
+      const t = i / SLING_SEG, w = [(1 - t) * (1 - t), 2 * t * (1 - t), t * t];
+      for (let j = 0; j < 4; j++) {
+        // flat strap: the wide faces' normals are +-y, the edges blend toward +-x (smooth shading of a rounded edge)
+        pos.push(sec[j][0], sec[j][1], 0);
+        const nx = Math.sign(sec[j][0]) * 0.45, ny = sn[j][1];
+        const l = Math.hypot(nx, ny); nor.push(nx / l, ny / l, 0);
+        uv.push(j * 0.012, t * 0.7);
+        si.push(nb + 3 * k, nb + 3 * k + 1, nb + 3 * k + 2, 0); sw.push(w[0], w[1], w[2], 0);
+      }
+    }
+    for (let i = 0; i < SLING_SEG; i++) for (let j = 0; j < 4; j++) {
+      const a = i * 4 + j, b = i * 4 + (j + 1) % 4, c = a + 4, d = b + 4;
+      idx.push(a, b, c, b, d, c);
+    }
+    B.raw('black', pos, nor, uv, si, sw, idx);
+  }
+}
+
 const geoCache = {};
 /**
  * kind: 'opfor' (earmuffs + glasses), 'hv' (Swedish Home Guard, earmuffs), 'hv_helmet' (helmet with M90 cover).
@@ -892,6 +955,7 @@ export function soldierGeometry(kind = 'opfor') {
   // where the cushions already close over the MakeHuman ears
   if (FIT) FIT.headCur = helmet ? FIT.headMBare : FIT.headM;
   rig(B, { helmet, glasses: kind === 'opfor' });
+  slingGeometry(B);
   if (kind !== 'opfor') hvInsignia(B, helmet);
   if (FIT) FIT.headCur = null;
   const g = geoCache[kind] = B.build();
@@ -936,14 +1000,16 @@ export function createSoldierMesh(materials, kind = 'opfor') {
     const q = FIT.A.bones.map(b => new THREE.Quaternion(...b.bindQuat));
     BONE_DEFS.forEach(([, parent], i) => bones[i].quaternion.copy(parent >= 0 ? q[parent].clone().invert().multiply(q[i]) : q[i]));
   }
+  // sling bones (see slingGeometry): children of the mesh, identity at bind; posed in model space by enemies.js
+  const sling = Array.from({ length: SLING_BONES }, (_, i) => { const b = new THREE.Bone(); b.name = 'sling' + i; mesh.add(b); return b; });
   mesh.updateMatrixWorld(true);
-  mesh.bind(new THREE.Skeleton(bones));
+  mesh.bind(new THREE.Skeleton(bones.concat(sling)));
   if (FIT) { bones.forEach(b => b.quaternion.identity()); mesh.updateMatrixWorld(true); }
   mesh.castShadow = true; mesh.receiveShadow = true;
   // generous fixed bounds (covers lying poses) so culling never uses stale skinned bounds
   mesh.boundingSphere = new THREE.Sphere(V(0, 0.8, 0), 2.0);
   const rest = bones.map(b => b.position.clone());
-  return { mesh, bones, rest };
+  return { mesh, bones, rest, sling };
 }
 
 /** Swedish-style combat helmet (hjälm 18 type): low-cut shell with M90 cover, ear cut-outs, rail shroud, chin strap. */

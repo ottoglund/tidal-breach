@@ -13,6 +13,7 @@ import { lodManager } from './world/props/lod.js';
 import { createSoldier, poseSoldier } from './characters/squad.js';
 import { loadSoldierBody } from './characters/body.js';
 import { loadViewmodelArms } from './viewmodel/arms.js';
+import { createContactShadows } from './characters/contact.js';
 
 installFog(); // must run before any material compiles
 
@@ -85,6 +86,7 @@ async function boot() {
   scene.add(rain);
   const splashes = createSplashes(quality.splashes);
   scene.add(splashes);
+  const contact = createContactShadows(scene);   // soft ground occlusion under soldiers (one instanced draw call)
 
   // ---- player
   const weapon = new Weapon(pipe.weaponScene);
@@ -150,6 +152,7 @@ async function boot() {
     if ((fogTick++ % 10) === 0) updateFogLamps(fogLamps.filter(l => !l.node || !l.node.done), pipe.camera.position);
     rain.material.uniforms.uCam.value.copy(pipe.camera.position);
     splashes.material.uniforms.uCam.value.copy(pipe.camera.position);
+    contact.update(pipe.camera.position);
     // rain bursting on the shoulders / heads of the nearest soldiers (same splash draw call; presentation only)
     if ((fogTick % 3) === 0) {
       const cp = pipe.camera.position; bodySpots.length = 0;

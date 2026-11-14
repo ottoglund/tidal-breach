@@ -22,7 +22,7 @@ const { chromium } = require('playwright');
   await p.click('#startBtn');
   await p.evaluate(() => { const Q = window.__TIDAL_QA__; Q.freeze(true); Q.squad(false); Q.guards(false); Q.weapon(false); });
   // the soldiers are the subject: no HUD / objective markers / first-person rifle over them
-  await p.addStyleTag({ content: 'body > *:not(#viewport) { visibility: hidden !important; }' });
+  await p.addStyleTag({ content: 'body > *:not(#viewport), #cross, #cross * { visibility: hidden !important; }' });
   const CZ = 24;
   const scene = (set, d) => {
     const z = CZ - d, k = d / 10;   // lateral spacing grows with distance (same angular layout at every range)

@@ -318,7 +318,9 @@ ${weaveGLSL(weave)}
         #else
         float rv = fabN(vFabP.xy * 17.0 + vFabP.z * 9.0) - 0.5;
         #endif
-        roughnessFactor = clamp(roughnessFactor * fabRoughK * (1.0 + ${rough.toFixed(3)} * 2.0 * rv) * (1.0 - ${mudGloss.toFixed(3)} * fabMud) * (1.0 - 0.58 * fabFilm), 0.14, 1.0);
+        roughnessFactor = clamp(roughnessFactor * fabRoughK * (1.0 + ${rough.toFixed(3)} * 2.0 * rv) * (1.0 - ${mudGloss.toFixed(3)} * fabMud), 0.18, 1.0);
+        // water film over the soaked weave: a smooth layer (roughness ~0.3) where it collects
+        roughnessFactor = mix(roughnessFactor, min(roughnessFactor, 0.3), 0.85 * fabFilm);
       }`)
       .replace('#include <opaque_fragment>', `
       {

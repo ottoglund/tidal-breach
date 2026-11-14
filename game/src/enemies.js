@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { box, rcyl, cyl, xform } from './geo.js';
 import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG } from './characters/soldier.js';
+import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG, slingAnchors } from './characters/soldier.js';
 import { fabricShading, ripstop } from './characters/cloth.js';
 import { skinShading, LOOKS } from './characters/skin.js';
 import { soldierBody } from './characters/body.js';
@@ -154,17 +154,19 @@ function kalashnikov(S, variant) {
     [box(0.03, 0.02, 0.06), xform(0, 0.042, -0.125)],            // rear sight block
     [box(0.026, 0.006, 0.08), xform(0, 0.056, -0.11)],           // sight leaf
     [box(0.008, 0.012, 0.018), xform(0.03, 0.03, 0.02)],         // charging handle
-    [cyl(0.0085, 0.0085, 0.3, 12), xform(0, 0.0, -0.4, 0, Z)],         // barrel
-    [cyl(0.011, 0.011, 0.2, 12), xform(0, 0.034, -0.27, 0, Z)],       // gas tube
-    [box(0.022, 0.05, 0.035), xform(0, 0.022, -0.52)],           // front sight block / gas block
-    [box(0.016, 0.03, 0.01), xform(0, 0.055, -0.525)],           // front sight ears
+    // front end at real proportions (mag well -> muzzle: AK-74M ~0.53 m, AKM ~0.47 m; gas block at the end of the gas tube)
+    [cyl(0.0085, 0.0085, akm ? 0.34 : 0.36, 12), xform(0, 0.0, akm ? -0.28 : -0.29, 0, Z)],   // barrel
+    [cyl(0.011, 0.011, 0.215, 12), xform(0, 0.034, -0.2775, 0, Z)],   // gas tube
+    [box(0.024, 0.052, 0.034), xform(0, 0.021, -0.398)],          // gas block
+    [box(0.02, 0.032, 0.026), xform(0, 0.014, akm ? -0.432 : -0.448)],   // front sight base
+    [box(0.016, 0.03, 0.01), xform(0, 0.042, akm ? -0.436 : -0.452)],    // front sight ears
     [box(0.006, 0.02, 0.06), xform(0.026, 0.005, 0.05)],         // selector lever
     [box(0.01, 0.006, 0.07), xform(0, -0.038, 0.075)],           // trigger guard bottom
     [box(0.006, 0.02, 0.008), xform(0, -0.032, 0.06, 0, -0.3)], // trigger
-    [box(0.024, 0.008, 0.012), xform(0, -0.012, -0.505)],        // bayonet lug
+    [box(0.024, 0.008, 0.012), xform(0, -0.012, akm ? -0.43 : -0.444)],   // bayonet lug
     ...(akm
-      ? [[rcyl(0.012, 0.045, 0.003, 14), xform(0, 0.0, -0.565, 0, Z)]]
-      : [[rcyl(0.0135, 0.085, 0.004, 16), xform(0, 0.0, -0.585, 0, Z)], [box(0.03, 0.006, 0.012), xform(0, 0.0, -0.57)]]),
+      ? [[rcyl(0.012, 0.04, 0.003, 14), xform(0, 0.0, -0.45, 0, Z)]]
+      : [[rcyl(0.0135, 0.075, 0.004, 16), xform(0, 0.0, -0.495, 0, Z)], [box(0.03, 0.006, 0.012), xform(0, 0.0, -0.482)]]),
   ], S.gun);
   // handguards: lofted rounded-rectangle sections (not tubes). Lower: wide, flat-sided, wraps the barrel from below
   // with finger grooves on the underside; upper: shallow shell over the gas tube with a rounded crown.
@@ -202,6 +204,9 @@ function kalashnikov(S, variant) {
   g.userData.mag = add(segs, magM);
   g.userData.magGrip = new THREE.Vector3(-0.02, -0.112, -0.092);   // left-hand grip point on the magazine (rifle space)
   g.userData.charge = null;                                       // AK charging handle is on the right: not racked by the left hand
+  // sling: front swivel on the left of the gas block, rear loop on the left of the stock (AKM: under the butt)
+  g.userData.slingF = new THREE.Vector3(-0.016, 0.012, -0.398);
+  g.userData.slingR = akm ? new THREE.Vector3(-0.01, -0.085, 0.36) : new THREE.Vector3(-0.022, -0.02, 0.36);
   return g;
 }
 
@@ -216,15 +221,16 @@ function ak4c(S) {
   add([
     [box(0.046, 0.064, 0.4, 0.008), xform(0, 0.0, 0.065)],                // receiver
     [box(0.05, 0.034, 0.1, 0.004), xform(0, 0.0, -0.14)],                  // barrel trunnion / handguard retainer
-    [cyl(0.0095, 0.0095, 0.42, 14), xform(0, 0.004, -0.37, 0, Z)],         // barrel
-    [cyl(0.0125, 0.0125, 0.065, 14), xform(0, 0.004, -0.6, 0, Z)],        // flash hider body
-    ...[0, 1, 2, 3].map(i => [box(0.026, 0.0035, 0.008), xform(0, 0.004, -0.578 - i * 0.014)]),
+    // front end at real proportions (mag well -> flash hider tip ~0.52 m, as the first-person Ak 4C)
+    [cyl(0.0095, 0.0095, 0.32, 14), xform(0, 0.004, -0.3, 0, Z)],          // barrel
+    [cyl(0.0125, 0.0125, 0.065, 14), xform(0, 0.004, -0.485, 0, Z)],      // flash hider body
+    ...[0, 1, 2, 3].map(i => [box(0.026, 0.0035, 0.008), xform(0, 0.004, -0.463 - i * 0.014)]),
     [cyl(0.0085, 0.0085, 0.3, 12), xform(-0.004, 0.039, -0.03, 0, Z)],     // cocking tube
     [box(0.014, 0.014, 0.02, 0.003), xform(-0.004, 0.039, -0.19)],         // cocking handle knob
     [box(0.026, 0.008, 0.34, 0.002), xform(0, 0.036, 0.07)],               // top rail
     ...Array.from({ length: 12 }, (_, i) => [box(0.028, 0.003, 0.004), xform(0, 0.0405, -0.07 + i * 0.026)]), // rail slots
-    [box(0.02, 0.05, 0.02), xform(0, 0.025, -0.51)],                       // front sight hood
-    [box(0.004, 0.026, 0.004), xform(0, 0.056, -0.51)],                    // front post
+    [box(0.02, 0.05, 0.02), xform(0, 0.025, -0.43)],                       // front sight hood
+    [box(0.004, 0.026, 0.004), xform(0, 0.056, -0.43)],                    // front post
     [box(0.007, 0.022, 0.07), xform(0.027, 0.006, 0.05)],                  // selector
     [box(0.01, 0.006, 0.07), xform(0, -0.04, 0.095)],                      // trigger guard
     [box(0.006, 0.02, 0.008), xform(0, -0.032, 0.07, 0, -0.3)],             // trigger
@@ -268,6 +274,8 @@ function ak4c(S) {
   g.userData.mag = g.children[g.children.length - 1];
   g.userData.magGrip = new THREE.Vector3(-0.022, -0.1, -0.035);
   g.userData.charge = new THREE.Vector3(-0.024, 0.039, -0.19);    // cocking handle (left, above the handguard)
+  g.userData.slingF = new THREE.Vector3(-0.026, -0.004, -0.37);   // sling: front of the handguard, rear of the stock (left side)
+  g.userData.slingR = new THREE.Vector3(-0.024, -0.03, 0.38);
   return g;
 }
 
@@ -333,11 +341,11 @@ export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
   weapon = weapon || (hv ? 'ak4c' : 'ak74');
   const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
   const root = new THREE.Group();
-  const { mesh, bones, rest } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[(look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length], metal: S.metal }, kind);
+  const { mesh, bones, rest, sling } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[(look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length], metal: S.metal }, kind);
   root.add(mesh);
   const rifle = buildRifle(S, weapon);
   root.add(rifle);
-  const mz = weapon === 'ak4c' ? -0.64 : -0.66;
+  const mz = weapon === 'ak4c' ? -0.525 : weapon === 'akm' ? -0.475 : -0.538;   // muzzle (flash origin)
   const flash = new THREE.PointLight(0xffa040, 0, 7, 2); flash.position.set(0, 0.0, mz); rifle.add(flash);
   const fl = new THREE.Mesh(...flashParts());
   fl.position.set(0, 0.0, mz); fl.visible = false; fl.renderOrder = 6; rifle.add(fl);
@@ -345,7 +353,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
   root.userData.tbSoldier = { body: mesh, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')], geo: mesh.geometry, far: mesh.geometry.userData.far || null }; // distance policies for shadow / reflection passes: world/props/lod.js
   const seed = Math.random() * 100;
   const g = {
-    root, rifle, flash, flashMesh: fl, mesh, bones, rest, side, weapon, kind,
+    root, rifle, flash, flashMesh: fl, mesh, bones, rest, sling, side, weapon, kind,
     s: { t: 0, time: seed, ph: null, rate: 0, seed, hitSide: 1, lastHit: 0, death: null, mm: bones.map(() => new THREE.Matrix4()), mq: bones.map(() => new THREE.Quaternion()) },
   };
   poseGuard(g, { walk: 0, speed: 0, aim: 0, flash: 0, hit: 0, dead: 0, fallDir: 1 });
@@ -972,6 +980,41 @@ function startDeath(g, st) {
   s.L.init = false;                                      // re-plant the feet if this soldier is reused
 }
 
+// ------------------------------------------------------------------ sling
+// Pose the six sling bones (soldier.js slingGeometry) in model space: segment 1 from the rifle's front swivel to the top
+// of the left shoulder, segment 2 from the right side of the back to the rifle's rear loop. The middle bone of each
+// segment is the Bezier control point: the slack the strap does not need hangs down (gravity), a little out from the
+// body. Bones are oriented so the strap's width lies across its run, roughly level.
+const _sA = new THREE.Vector3(), _sB = new THREE.Vector3(), _sC = new THREE.Vector3(), _sD = new THREE.Vector3(), _sX = new THREE.Vector3(), _sY = new THREE.Vector3();
+const _sM = new THREE.Matrix4(), _sQ = new THREE.Quaternion();
+let SLING_A = null;
+const SLING_LEN = [0.78, 0.62];      // strap length of each free segment (m)
+function updateSling(g) {
+  const sl = g.sling, ud = g.rifle.userData;
+  if (!sl || !ud.slingF) return;
+  if (!SLING_A) SLING_A = slingAnchors();
+  g.rifle.updateMatrix();
+  const ch = g.s.mm[BI.chest];
+  for (let k = 0; k < 2; k++) {
+    if (k === 0) { _sA.copy(ud.slingF).applyMatrix4(g.rifle.matrix); _sB.copy(SLING_A[0]).applyMatrix4(ch); }
+    else { _sA.copy(SLING_A[1]).applyMatrix4(ch); _sB.copy(ud.slingR).applyMatrix4(g.rifle.matrix); }
+    const d = _sA.distanceTo(_sB), slack = Math.max(0, SLING_LEN[k] - d);
+    // control point: midpoint, dropped by the slack (a Bezier sags by half its control offset), pushed off the body
+    _sC.addVectors(_sA, _sB).multiplyScalar(0.5);
+    _sD.copy(_sC).sub(_sX.setFromMatrixPosition(ch)); _sD.y = 0;
+    if (_sD.lengthSq() > 1e-6) _sD.normalize();
+    _sC.y -= Math.min(0.5, slack * 1.1); _sC.addScaledVector(_sD, 0.03 + slack * 0.15);
+    // orientation: z along the run, x level across it
+    _sD.subVectors(_sB, _sA).normalize();
+    _sX.crossVectors(_sY.set(0, 1, 0), _sD); if (_sX.lengthSq() < 1e-6) _sX.set(1, 0, 0); _sX.normalize();
+    _sY.crossVectors(_sD, _sX);
+    _sQ.setFromRotationMatrix(_sM.makeBasis(_sX, _sY, _sD));
+    const b0 = sl[3 * k], b1 = sl[3 * k + 1], b2 = sl[3 * k + 2];
+    b0.position.copy(_sA); b1.position.copy(_sC); b2.position.copy(_sB);
+    b0.quaternion.copy(_sQ); b1.quaternion.copy(_sQ); b2.quaternion.copy(_sQ);
+  }
+}
+
 // ------------------------------------------------------------------ public
 /**
  * Pose a guard / soldier. st: {walk, speed(0..1), aim(0..1), flash, hit, dead (0 alive, then s/0.9), fallDir}
@@ -1011,4 +1054,5 @@ export function poseGuard(g, st) {
   }
   g.root.rotation.x = 0; g.root.rotation.z = 0;
   g.rifle.visible = true;
+  updateSling(g);
 }
