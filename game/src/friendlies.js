@@ -122,7 +122,13 @@ export class Squad {
       r.visible = this.enabled;
       r.position.set(m.x, 0, m.z);
       r.rotation.y = m.angle + Math.PI;
-      this.pose(m.model, { walk: m.walk, speed: m.speed, aim: m.aim, flash: m.flash, hit: m.hit, dead: 0, fallDir: 1, reload: m.reloadT > 0 ? clamp(1 - m.reloadT / 2.4, 0.001, 1) : 0 });
+      // eyes (presentation only): on the target while engaging, else on the player when he is close
+      const p = this.game.player, tg = m.target && m.aim > 0.3 ? m.target : null;
+      m.look = m.look || [0, 0, 0];
+      let look = null;
+      if (tg) { m.look[0] = tg.x; m.look[1] = 1.55; m.look[2] = tg.z; look = m.look; }
+      else if (Math.hypot(p.x - m.x, p.z - m.z) < 8) { m.look[0] = p.x; m.look[1] = p.y; m.look[2] = p.z; look = m.look; }
+      this.pose(m.model, { walk: m.walk, speed: m.speed, aim: m.aim, flash: m.flash, hit: m.hit, dead: 0, fallDir: 1, reload: m.reloadT > 0 ? clamp(1 - m.reloadT / 2.4, 0.001, 1) : 0, lookAt: look });
     }
   }
 
@@ -144,6 +150,8 @@ export class Squad {
       u.onend = u.onerror = () => { try { a?.radioEnd?.(); } catch (_) {} };
       a?.radioStart?.(est);
       setTimeout(() => { try { synth.speak(u); } catch (_) {} }, 90);
+      // the comrade's face speaks the line into his radio (jaw / brows; presentation only, enemies.js speak())
+      this.speak?.(m.model, text, { dur: est / 1.1, loud: kind === 'contact' ? 0.8 : 0.55 });
     } catch (_) { /* speech unavailable */ }
   }
 

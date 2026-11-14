@@ -10,7 +10,8 @@ step below are own code.
 Pipeline
  1. targets: young adult caucasian male, muscle 0.70 / weight 0.40 (bilinear mix of the universal macro targets),
     50 % 'ideal proportions'
- 2. helper geometry dropped (tights, skirt, hair, teeth, tongue, lashes, joint cubes); the two eyeball helpers are kept
+ 2. helper geometry dropped (tights, skirt, hair, tongue, lashes, joint cubes); the two eyeball helpers and the upper /
+    lower teeth are kept
  3. units: decimetres -> metres, scaled to a 1.79 m stature, turned to face -Z (game convention), soles on y = 0
  4. skeleton: the 19 game bones are placed on MakeHuman joints. The mesh stays in MakeHuman's A pose, which becomes the
     *bind* pose: per bone a bind orientation is exported (limb along local -Y, elbow / knee pole on local +-Z, palm on
@@ -23,7 +24,8 @@ Pipeline
     its lower part doubling as a neck gaiter - plus fabric folds; a second, bare head (undressed face + neck, 'face')
     with a short-hair shell ('hair') for the Swedish soldiers; the eyeballs are kept ('eye')
  7. weights: MakeHuman's 160-bone weights summed onto the 19 game bones (hand / forearm blend spread at the wrist),
-    4 influences
+    4 influences; the face keeps 9 extra bones (jaw, eyes, upper / lower lids, brows: FACE_BONES) for blinks, gaze and
+    speech, each the sum of the MakeHuman face bones below it (pivots = MakeHuman joint positions)
  8. triangulated, decimated (quadric half-edge collapse) to the close-range budget, plus a far LOD
 """
 import argparse
@@ -139,7 +141,7 @@ def load_body():
         add(f'male-young-{mm}-{wm}-idealproportions.target', PROPORTION * k)
 
     groups = o['groups']
-    keep = {'body': 'body', 'helper-l-eye': 'eyeL', 'helper-r-eye': 'eyeR'}
+    keep = {'body': 'body', 'helper-l-eye': 'eyeL', 'helper-r-eye': 'eyeR', 'helper-upper-teeth': 'teethU', 'helper-lower-teeth': 'teethL'}
     fsel = [i for i, g in enumerate(o['fgrp']) if groups[g] in keep]
     faces = [o['f'][i] for i in fsel]
     fuv = [o['fuv'][i] for i in fsel]
@@ -341,6 +343,37 @@ def game_weights(nv, weights):
     s = W.sum(1)
     W[s < 1e-6, GI['head']] = 1          # unweighted helper vertices (not used by the body)
     return W / W.sum(1, keepdims=True)
+
+
+# face rig: MakeHuman face bones -> 9 game face bones (children of 'head', bind = rest, identity orientation; skin index
+# len(GAME_BONES) + k). A MakeHuman bone counts for the first of these it is (or descends from); everything else under
+# 'head' stays on 'head'. Pivots: the MakeHuman joint (bone head) positions. Rotation sizes used at runtime are taken from
+# MakeHuman's face pose units (tools/mh/sources/face-poseunits.bvh, see SOURCES.md).
+FACE_BONES = [('jaw', 'jaw'), ('eyeR', 'eye.R'), ('eyeL', 'eye.L'), ('lidUR', 'orbicularis03.R'), ('lidUL', 'orbicularis03.L'),
+              ('lidLR', 'orbicularis04.R'), ('lidLL', 'orbicularis04.L'), ('browR', 'oculi01.R'), ('browL', 'oculi01.L')]
+FACE_OF = {mh: k for k, (_, mh) in enumerate(FACE_BONES)}
+FACE_OF.update({'oculi02.R': FACE_OF['oculi01.R'], 'oculi02.L': FACE_OF['oculi01.L']})
+
+
+def face_weights(nv, weights, bones):
+    """Per-vertex fraction of the total skin weight that belongs to each face bone (nv x len(FACE_BONES)); the same
+    normalisation as game_weights, so W[:, head] - Wf.sum(1) is what stays on the head bone."""
+    def face_of(b):
+        while b:
+            if b in FACE_OF:
+                return FACE_OF[b]
+            if b == 'head':
+                return None
+            b = bones[b].get('parent')
+        return None
+    tot = np.zeros(nv)
+    Wf = np.zeros((nv, len(FACE_BONES)))
+    for b, (idx, w) in weights.items():
+        tot[idx] += w
+        k = face_of(b)
+        if k is not None:
+            Wf[idx, k] += w
+    return Wf / np.maximum(tot, 1e-9)[:, None]
 
 
 # short-back-and-sides hairline: height above the eyes (m) by angle round the head from the forehead (rad)
@@ -1235,14 +1268,32 @@ def main():
     grips = curl_hands(B, R, pos, weights)
     W = game_weights(len(B['v']), weights)
     W = soften_wrists(B, W, pos, R)
+    Wf = face_weights(len(B['v']), weights, B['bones'])
+    # teeth: the lower row rides the jaw, the upper row the skull (whatever MakeHuman weighted them with)
+    for kind, k in (('teethL', 0), ('teethU', None)):
+        tv = np.unique(np.concatenate([np.array(f) for f, kk in zip(B['faces'], B['fkind']) if kk == kind]))
+        W[tv] = 0; W[tv, GI['head']] = 1; Wf[tv] = 0
+        if k is not None:
+            Wf[tv, k] = 1
     info = dress(B, W, pos, R)
     W = W[B['src']]                      # appended bare-head / hair vertices inherit their source vertex weights
+    Wf = Wf[B['src']]
+    # the balaclava does not blink or frown with the face under it (it keeps the jaw: the knit over the mouth moves)
+    used = {}
+    for f, m in zip(B['faces'], B['fmat']):
+        for x in f:
+            used.setdefault(x, set()).add(m)
+    knit_only = np.array([i for i, ms in used.items() if ms <= {'knit', 'gaiter'}], np.int64)
+    Wf[knit_only, 1:] = 0
+    Wfull = np.hstack([W, Wf])
+    Wfull[:, GI['head']] = np.maximum(W[:, GI['head']] - Wf.sum(1), 0.0)
+    Wfull /= Wfull.sum(1, keepdims=True)
     V = B['v']
-    F, Fuv, fm = [], [], []
-    for f, t, m in zip(B['faces'], B['fuv'], B['fmat']):
-        F.append((f[0], f[1], f[2])); Fuv.append((t[0], t[1], t[2])); fm.append(m)
+    F, Fuv, fm, fk = [], [], [], []
+    for f, t, m, k in zip(B['faces'], B['fuv'], B['fmat'], B['fkind']):
+        F.append((f[0], f[1], f[2])); Fuv.append((t[0], t[1], t[2])); fm.append(m); fk.append(k)
         if len(f) == 4:
-            F.append((f[0], f[2], f[3])); Fuv.append((t[0], t[2], t[3])); fm.append(m)
+            F.append((f[0], f[2], f[3])); Fuv.append((t[0], t[2], t[3])); fm.append(m); fk.append(k)
     F, Fuv = np.array(F), np.array(Fuv)
     # metric UVs: every UV island of MakeHuman's 0..1 atlas is scaled so one UV unit ~ one metre on the body (the
     # atlas gives the face and hands more texels than the torso; the tiling cloth textures need a uniform scale)
@@ -1259,11 +1310,11 @@ def main():
             if vi not in vuv:
                 p_ = V[vi]
                 # face, hair and eyes share the skin material: v >= 1000 marks hair (u = angle round the head from
-                # the forehead, v - 1000 = height above the eyes), v >= 2000 marks the eyeballs
+                # the forehead, v - 1000 = height above the eyes), v >= 2000 marks the eyeballs, v >= 3000 the teeth
                 if m == 'hair':
                     uv = (B['hairUV'][vi, 0], 1000.0 + B['hairUV'][vi, 1])   # angle round the head, height - eyes
                 elif m == 'eye':
-                    uv = (0.0, 2000.0)
+                    uv = (0.0, 3000.0 if fk[i].startswith('teeth') else 2000.0)   # v >= 3000: teeth
                 elif m == 'glove':
                     sd = 'R' if p_[0] > 0 else 'L'
                     h = (p_ - pos['hand' + sd]) @ R['hand' + sd]
@@ -1278,7 +1329,7 @@ def main():
             Fuv[i][k] = vuv[vi]
     UVm = np.vstack([UVm, np.array(extra)])
     print('faces', len(F))
-    Fc, Fuvc, fmc = decimate(V, F, Fuv, fm, W, a.close)
+    Fc, Fuvc, fmc = decimate(V, F, Fuv, fm, W, a.close)   # (face rig weights do not steer the decimation)
     cnt = {m: fmc.count(m) for m in sorted(set(fmc))}
     print('close LOD', len(Fc), cnt, 'balaclava variant', len(Fc) - cnt.get('face', 0) - cnt.get('hair', 0),
           'bare-head variant', len(Fc) - cnt.get('knit', 0) - cnt.get('skin', 0))
@@ -1287,7 +1338,8 @@ def main():
     Fc_b, Fuvc_b = Fc[base_head], Fuvc[base_head]
     Ff, Fuvf, _ = decimate(V, Fc_b, Fuvc_b, ['camo'] * len(Fc_b), W, a.far, wpen=0.0)
     print('far LOD', len(Ff))
-    lods = [build_lod('close', V, W, UVm, Fc, Fuvc, fmc), build_lod('far', V, W, UVm, Ff, Fuvf, ['camo'] * len(Ff))]
+    # the far LOD has no face rig (sub-pixel at > 42 m): face weights folded back into the head
+    lods = [build_lod('close', V, Wfull, UVm, Fc, Fuvc, fmc), build_lod('far', V, W, UVm, Ff, Fuvf, ['camo'] * len(Ff))]
     bones = []
     for n, p in GAME_BONES:
         bones.append({'name': n, 'parent': p, 'rest': np.round(rest[n], 5).tolist(),
@@ -1300,6 +1352,8 @@ def main():
         'eyeR': np.round(eyeR, 4).tolist(), 'eyeL': np.round(H['eye.L'], 4).tolist(),
         'grip': {k: np.round(g, 4).tolist() for k, g in grips.items()},
         'headC': np.round(info['headC'], 4).tolist(),
+        # face rig (skin indices len(bones) + k): name and pivot (bind = rest, model space, A pose)
+        'face': [{'name': n, 'pivot': np.round(H[mh], 5).tolist()} for n, mh in FACE_BONES],
         'landmarks': landmarks(V, F, fm, W, pos, R, rest, info),
     }
     data = pack(lods, header)

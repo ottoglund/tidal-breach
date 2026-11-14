@@ -875,17 +875,29 @@ function farGeometry(kind) {
   return g;
 }
 
+// ---------------------------------------------------------------- face rig
+// Nine face bones from the body asset (tools/mh/build_soldier.py FACE_BONES: the MakeHuman jaw, eyes, upper / lower lids
+// and brows, each the sum of the MakeHuman face bones below it). They are children of the head bone, identity in the
+// bind pose, placed at the MakeHuman joint (pivot); skin indices BONE_DEFS.length + k. enemies.js (updateFace) rotates
+// them for blinks, gaze, speech and dead faces. Without the asset (procedural body) they exist but carry no weights.
+export const FACE_NAMES = ['jaw', 'eyeR', 'eyeL', 'lidUR', 'lidUL', 'lidLR', 'lidLL', 'browR', 'browL'];
+export const FACE_N = FACE_NAMES.length;
+export const FI = Object.fromEntries(FACE_NAMES.map((n, i) => [n, i]));
+
 // ---------------------------------------------------------------- rifle sling
 // Two-point sling worn over the left shoulder: front swivel -> top of the left shoulder (free segment 1), across the
 // back to the right side of the lower back (static strap on the chest bone), -> rear sling loop on the stock (free
-// segment 2). The free segments are part of the body mesh ('black' nylon group: no extra draw call) and are skinned to six
-// extra bones that are not part of the animation skeleton (BONE_DEFS): per segment start / sag control / end, posed
-// every frame by enemies.js (updateSling). With all three bones at identity in bind space, a strap vertex at canonical
-// cross-section offset c (local x = strap width, y = thickness) and weights (1-t)^2, 2t(1-t), t^2 skins to
-// sum w_k (R_k c + p_k): the quadratic Bezier through the three bone positions, with the strap's section carried by
-// the bones' orientation.
-export const SLING_BONES = 6;
-const SLING_SEG = 12;
+// segment 2). The free segments are part of the body mesh ('black' nylon group: no extra draw call) and are skinned to
+// SLING_NODES bones per segment that are not part of the animation skeleton (BONE_DEFS): a short rope of nodes that
+// enemies.js simulates every frame (updateSling: slack under gravity, pushed out of capsules round the torso and arms,
+// released from the rifle when the soldier dies). With every node bone at identity in bind space, a strap vertex at
+// canonical cross-section offset c (local x = strap width, y = thickness) and weights (1-f, f) to the two nodes it lies
+// between skins to the chord between them, with the strap's section carried by the nodes' orientation.
+export const SLING_NODES = 6;
+export const SLING_BONES = 2 * SLING_NODES;
+const SLING_RINGS = 15;          // rings per free segment (3 per link)
+/** Skin index of the first sling bone (after the animation skeleton and the face bones). */
+export const SLING_BASE = () => BONE_DEFS.length + FACE_N;
 /** Body anchor points of the sling in chest-bone space (rest pose): [top of the left shoulder, right side of the back]. */
 export function slingAnchors() {
   const P = n => V(...BONE_DEFS[BI[n]][2]);
@@ -907,23 +919,23 @@ function slingGeometry(B) {
   const strap = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 14, 0.0115, 4, false);
   B.rigid('black', strap, null, BI.chest);
   B.fit = fit;
-  // free segments: canonical rings along local z (t), weights to bones 19 + 3k .. 21 + 3k
+  // free segments: canonical rings along the rope parameter t, two influences (the nodes either side)
   const W = 0.0135, T = 0.0028, sec = [[-W, -T], [W, -T], [W, T], [-W, T]], sn = [[0, -1], [0, -1], [0, 1], [0, 1]];
-  const nb = BONE_DEFS.length;
+  const nb = SLING_BASE();
   for (let k = 0; k < 2; k++) {
     const pos = [], nor = [], uv = [], si = [], sw = [], idx = [];
-    for (let i = 0; i <= SLING_SEG; i++) {
-      const t = i / SLING_SEG, w = [(1 - t) * (1 - t), 2 * t * (1 - t), t * t];
+    for (let i = 0; i <= SLING_RINGS; i++) {
+      const t = i / SLING_RINGS, u = t * (SLING_NODES - 1), n0 = Math.min(SLING_NODES - 2, Math.floor(u)), f = u - n0;
       for (let j = 0; j < 4; j++) {
         // flat strap: the wide faces' normals are +-y, the edges blend toward +-x (smooth shading of a rounded edge)
         pos.push(sec[j][0], sec[j][1], 0);
         const nx = Math.sign(sec[j][0]) * 0.45, ny = sn[j][1];
         const l = Math.hypot(nx, ny); nor.push(nx / l, ny / l, 0);
         uv.push(j * 0.012, t * 0.7);
-        si.push(nb + 3 * k, nb + 3 * k + 1, nb + 3 * k + 2, 0); sw.push(w[0], w[1], w[2], 0);
+        si.push(nb + SLING_NODES * k + n0, nb + SLING_NODES * k + n0 + 1, 0, 0); sw.push(1 - f, f, 0, 0);
       }
     }
-    for (let i = 0; i < SLING_SEG; i++) for (let j = 0; j < 4; j++) {
+    for (let i = 0; i < SLING_RINGS; i++) for (let j = 0; j < 4; j++) {
       const a = i * 4 + j, b = i * 4 + (j + 1) % 4, c = a + 4, d = b + 4;
       idx.push(a, b, c, b, d, c);
     }
@@ -1000,17 +1012,40 @@ export function createSoldierMesh(materials, kind = 'opfor') {
     const q = FIT.A.bones.map(b => new THREE.Quaternion(...b.bindQuat));
     BONE_DEFS.forEach(([, parent], i) => bones[i].quaternion.copy(parent >= 0 ? q[parent].clone().invert().multiply(q[i]) : q[i]));
   }
+  // face bones (see FACE_NAMES): children of the head bone at their pivots, identity orientation (the head's bind
+  // orientation is the identity, so bind = rest for them); rotated relative to the head by enemies.js
+  const hp = BONE_DEFS[BI.head][2], fp = FIT && FIT.A.face;
+  const face = FACE_NAMES.map((n, i) => {
+    const b = new THREE.Bone(); b.name = 'face_' + n;
+    const p = fp && fp[i] && fp[i].name === n ? fp[i].pivot : [0, hp[1] + 0.07, hp[2] - 0.08];
+    b.position.set(p[0] - hp[0], p[1] - hp[1], p[2] - hp[2]);
+    bones[BI.head].add(b);
+    return b;
+  });
   // sling bones (see slingGeometry): children of the mesh, identity at bind; posed in model space by enemies.js
   const sling = Array.from({ length: SLING_BONES }, (_, i) => { const b = new THREE.Bone(); b.name = 'sling' + i; mesh.add(b); return b; });
   mesh.updateMatrixWorld(true);
-  mesh.bind(new THREE.Skeleton(bones.concat(sling)));
+  const skel = new THREE.Skeleton(bones.concat(face, sling));
+  mesh.bind(skel);
   if (FIT) { bones.forEach(b => b.quaternion.identity()); mesh.updateMatrixWorld(true); }
+  // per-soldier light probe (enemies.js / main.js): PROBE_TEXELS RGBA texels written after the bone matrices into the
+  // spare tail of the bone texture, read by the soldier materials' fragment shaders (characters/probe.js); no uniform
+  // per draw, no extra draw call
+  const probe = mesh.userData.probe = new Float32Array(PROBE_TEXELS * 4);
+  const up = skel.update;
+  skel.update = function () {
+    up.call(this);
+    const bm = this.boneMatrices, off = this.bones.length * 16;
+    if (bm && off + probe.length <= bm.length) bm.set(probe, off);
+  };
   mesh.castShadow = true; mesh.receiveShadow = true;
   // generous fixed bounds (covers lying poses) so culling never uses stale skinned bounds
   mesh.boundingSphere = new THREE.Sphere(V(0, 0.8, 0), 2.0);
   const rest = bones.map(b => b.position.clone());
-  return { mesh, bones, rest, sling };
+  return { mesh, bones, rest, sling, face };
 }
+/** RGBA texels of per-soldier light-probe data after the bone matrices (see characters/probe.js). */
+export const PROBE_TEXELS = 3;
 
 /** Swedish-style combat helmet (hjälm 18 type): low-cut shell with M90 cover, ear cut-outs, rail shroud, chin strap. */
 function helmetShell(B) {

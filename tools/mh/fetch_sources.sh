@@ -16,6 +16,9 @@ done
 for t in averagemuscle-averageweight averagemuscle-minweight maxmuscle-averageweight maxmuscle-minweight; do
   get targets/male-young-$t-idealproportions.target $M/targets/macrodetails/proportions/male-young-$t-idealproportions.target
 done
+mkdir -p poseunits
+get poseunits/face-poseunits.bvh $M/poseunits/face-poseunits.bvh
+get poseunits/face-poseunits.json $M/poseunits/face-poseunits.json
 get LICENSE.ASSETS.md $BASE/LICENSE.ASSETS.md
 get LICENSE.makehuman.md $BASE/LICENSE.md
 grep -E '^\| `' SOURCES.md | awk -F'|' '{gsub(/[` ]/,"",$2); gsub(/ /,"",$4); print $4"  "$2}' | sha256sum -c -

@@ -970,8 +970,10 @@ export class Audio {
     this.kindLast[kind] = tt; this.lastBark = tt; st.last = tt;
     const text = pick(LINES[kind]);
     const cry = kind === 'death' || /^А-а/.test(text);
-    if (!cry && this.ru.length && this.speech && !this.speechBusy()) return this.say(text, st, d);
-    return this.murmur(text, st, o, d, kind);
+    const spoken = (!cry && this.ru.length && this.speech && !this.speechBusy()) ? this.say(text, st, d) : this.murmur(text, st, o, d, kind);
+    // presentation hook (game.js): the guard's face speaks the line (jaw / brows, enemies.js speak())
+    if (spoken) try { this.onSpeech?.({ guardId: o.guardId ?? 0, text, kind, cry, dur: this._lastDur || (0.25 + text.length * 0.06 / st.rate) }); } catch (_) { /* presentation only */ }
+    return spoken;
   }
 
   speechBusy() { return this.speaking && wall() - (this._spokeAt || 0) < 4; }
@@ -983,7 +985,7 @@ export class Audio {
       u.voice = st.voice; u.lang = st.voice.lang || 'ru-RU';
       u.pitch = st.pitch; u.rate = st.rate; u.volume = clamp(1.1 - d / 32, 0.1, 1); // speech cannot be routed through Web Audio: level by distance only
       u.onend = u.onerror = () => { if (this.utt === u) { this.speaking = false; this.utt = null; } };
-      this.utt = u; this.speaking = true; this._spokeAt = wall();
+      this.utt = u; this.speaking = true; this._spokeAt = wall(); this._lastDur = 0.2 + text.length * 0.07 / st.rate;
       this.speech.speak(u);
       return true;
     } catch (_) { this.speaking = false; return false; }
@@ -992,6 +994,7 @@ export class Audio {
   /** fallback (and cries): synthesised, muffled, unintelligible shout, positioned in 3D */
   murmur(text, st, o, d, kind) {
     const buf = this.buf([genVocal(LOW, text, { f0: st.f0, cry: kind === 'hit' || kind === 'death', death: kind === 'death', lp: 2600 })], LOW);
+    this._lastDur = buf.duration;
     const pos = o.x != null ? { x: o.x, y: 1.65, z: o.z } : null;
     this.play(buf, { at: this.ctx.currentTime + d / 343, gain: 0.45 * Math.pow(4 / (4 + d), 0.8), lp: clamp(4200 * Math.exp(-d / 30), 900, 4200), pos, pan: pos ? 0 : (o.pan || 0), send: 0.35, rate: rr(0.97, 1.03) });
     return true;

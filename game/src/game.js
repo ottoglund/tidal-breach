@@ -3,7 +3,7 @@
 // mission plays identically; presentation and feel are new.
 import * as THREE from 'three';
 import { BOUNDS, SPAWN, NODES, EXTRACT, ENEMY_SPAWNS } from './world/level.js';
-import { createGuard, poseGuard, setWorldProbe } from './enemies.js';
+import { createGuard, poseGuard, setWorldProbe, speak } from './enemies.js';
 import { gaitRate } from './characters/anim.js';
 import { createSoldier, poseSoldier } from './characters/squad.js';
 import { Squad } from './friendlies.js';
@@ -26,6 +26,8 @@ export class Game {
     this.camera = pipeline.camera;
     this.blockers = level.blockers;
     setWorldProbe((x, z, r) => this.blocked(x, z, r)); // dead bodies fall clear of containers / walls / drums (presentation)
+    // a guard's voiced bark moves his face (jaw / brows; presentation only)
+    if (audio) audio.onSpeech = (o) => { const m = this.guardPool[o.guardId]; if (m) speak(m, o.text, { dur: o.dur, loud: o.kind === 'search' ? 0.35 : 0.9, cry: o.cry || o.kind === 'hit' }); };
     this.nodes = NODES.map((n, i) => ({ ...n, done: false, obj: level.nodeObjs[i] }));
     this.extract = EXTRACT;
     this.enemies = [];
@@ -41,6 +43,7 @@ export class Game {
     // Hemvärnet comrades (Grön 2 with balaclava/earmuffs, Grön 3 with helmet); different faces (skin.js LOOKS)
     this.lookBase = Math.floor(Math.random() * 6);
     this.squad = new Squad(this, i => createSoldier({ side: 'hv', weapon: 'ak4c', helmet: i === 1, look: this.lookBase + i * 2 }), poseSoldier);
+    this.squad.speak = speak;
     this.bindInput();
   }
 
@@ -355,7 +358,9 @@ export class Game {
       m.root.visible = e.alive || deadFor < 25;
       m.root.position.set(e.x, 0, e.z);
       m.root.rotation.y = e.angle + Math.PI;
-      poseGuard(m, { walk: e.walk, speed: e.speed, aim: e.aim, flash: e.flash, hit: e.hit, dead: e.alive ? 0 : deadFor / 0.9, fallDir: e.fallDir, hitX: e.hitX, hitZ: e.hitZ });
+      // eyes on the player while engaging (presentation only: enemies.js updateFace)
+      if (e.aim > 0.2 && e.alive) { e._look = e._look || [0, 0, 0]; e._look[0] = p.x; e._look[1] = p.y; e._look[2] = p.z; } else e._look = null;
+      poseGuard(m, { walk: e.walk, speed: e.speed, aim: e.aim, flash: e.flash, hit: e.hit, dead: e.alive ? 0 : deadFor / 0.9, fallDir: e.fallDir, hitX: e.hitX, hitZ: e.hitZ, lookAt: e._look });
     }
     // node LED blink
     for (const n of this.nodes) if (!n.done && n.obj) n.obj.ledMat.emissiveIntensity = (Math.sin(time * 6 + n.x) > 0.2) ? 40 : 2;

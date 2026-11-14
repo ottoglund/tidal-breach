@@ -271,10 +271,37 @@ export function createRain(count, lamps) {
 
 // Ground splashes: little crowns that pop around the player.
 const BODY_SLOTS = 8, BODY_SPLASHES = 7;   // soldiers near the camera that get splashes, splashes per soldier
+// Breath vapour: PUFF_SLOTS nearest soldiers (< 14 m), PUFF_BLOBS soft blobs per exhalation. A breath at ~5 C in rain is
+// near saturation, so it condenses into a small, short-lived cloud: it leaves the mouth at ~1 m/s, slows, spreads to
+// ~15-20 cm and is gone after ~1.5 s. Seen by the light it scatters, coloured like the local lamps (the soldier's probe).
+const PUFF_SLOTS = 6, PUFF_BLOBS = 3, PUFF_SCATTER = 0.006;
 const SPLASH_VERT = /* glsl */`
+float sstep01(float a, float b, float x) { float t = clamp((x - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
 attribute vec4 aSeed; attribute float aBody; uniform float uTime; uniform vec3 uCam; uniform vec4 uBody[${BODY_SLOTS}];
-varying vec2 vUv; varying float vLife;
+uniform vec4 uPuff[${PUFF_SLOTS}]; uniform vec4 uPuffD[${PUFF_SLOTS}]; uniform vec3 uPuffC[${PUFF_SLOTS}];
+varying vec2 vUv; varying float vLife; varying vec3 vPuff;
 void main(){
+  vPuff = vec3(0.0);
+  if (aBody >= 100.0) {
+    // breath puff: slot = mouth position + age (w < 0: off), D = forward (xyz); blob k drifts a little differently
+    int k = int(aBody) - 100;
+    vec4 P = uPuff[k / ${PUFF_BLOBS}];
+    float b = float(k - (k / ${PUFF_BLOBS}) * ${PUFF_BLOBS});
+    float age = P.w;
+    if (age < 0.0 || age > 1.6) { gl_Position = vec4(0.0, 0.0, -2.0, 1.0); return; }
+    vec3 fwd = uPuffD[k / ${PUFF_BLOBS}].xyz;
+    vec3 side = normalize(cross(fwd, vec3(0.0, 1.0, 0.0)) + 1e-4);
+    float travel = 0.22 * (1.0 - exp(-age * 2.6)) * (0.8 + 0.25 * b);       // decelerating jet
+    vec3 p = P.xyz + fwd * (0.02 + travel) + vec3(0.0, 0.05 * age, 0.0) + side * (b - 1.0) * 0.025 * (0.3 + age)
+           + vec3(0.12, 0.0, 0.06) * age * age;                               // drift with the wind
+    float s = 0.025 + 0.085 * sqrt(age) * (0.85 + 0.15 * b);
+    float dens = sstep01(0.0, 0.06, age) * pow(1.0 - age / 1.6, 1.6) * (0.9 - 0.2 * b);
+    vPuff = uPuffC[k / ${PUFF_BLOBS}] * dens;
+    vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]), up = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+    vUv = position.xy; vLife = 0.0;
+    gl_Position = projectionMatrix * viewMatrix * vec4(p + (right * (position.x - 0.5) + up * (position.y - 0.5)) * s * 2.0, 1.0);
+    return;
+  }
   float period = 0.55 + aSeed.w * 0.4;
   float t = uTime / period + aSeed.w * 7.0;
   float cycle = floor(t); vLife = fract(t);
@@ -299,8 +326,14 @@ void main(){
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 }`;
 const SPLASH_FRAG = /* glsl */`
-uniform vec3 uColor; varying vec2 vUv; varying float vLife;
+uniform vec3 uColor; varying vec2 vUv; varying float vLife; varying vec3 vPuff;
 void main(){
+  if (vPuff.r + vPuff.g + vPuff.b > 0.0) {
+    vec2 q = vUv * 2.0 - 1.0;
+    float r2 = dot(q, q);
+    gl_FragColor = vec4(vPuff * exp(-r2 * 3.2) * (1.0 - smoothstep(0.7, 1.0, r2)), 1.0);
+    return;
+  }
   // thin upward spray: narrow at the base, fading with height and age
   float x = (vUv.x - 0.5) * (5.0 - vUv.y * 2.5);
   float a = exp(-x * x * 4.0) * (1.0 - vUv.y) * (1.0 - vLife) * (1.0 - vLife);
@@ -313,20 +346,36 @@ void main(){
 export function createSplashes(count) {
   const base = new THREE.InstancedBufferGeometry();
   base.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0], 3));
-  const n = count + BODY_SLOTS * BODY_SPLASHES;
+  const nb = count + BODY_SLOTS * BODY_SPLASHES, n = nb + PUFF_SLOTS * PUFF_BLOBS;
   const seeds = new Float32Array(n * 4), body = new Float32Array(n).fill(-1);
   for (let i = 0; i < seeds.length; i++) seeds[i] = Math.random();
-  for (let i = count; i < n; i++) body[i] = Math.floor((i - count) / BODY_SPLASHES);
+  for (let i = count; i < nb; i++) body[i] = Math.floor((i - count) / BODY_SPLASHES);
+  for (let i = nb; i < n; i++) body[i] = 100 + (i - nb);
   base.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 4));
   base.setAttribute('aBody', new THREE.InstancedBufferAttribute(body, 1));
   base.instanceCount = n;
   const uBody = { value: Array.from({ length: BODY_SLOTS }, () => new THREE.Vector4()) };
+  const uPuff = { value: Array.from({ length: PUFF_SLOTS }, () => new THREE.Vector4(0, 0, 0, -1)) };
+  const uPuffD = { value: Array.from({ length: PUFF_SLOTS }, () => new THREE.Vector4()) };
+  const uPuffC = { value: Array.from({ length: PUFF_SLOTS }, () => new THREE.Color(0, 0, 0)) };
   const m = new THREE.Mesh(base, new THREE.ShaderMaterial({
     vertexShader: SPLASH_VERT, fragmentShader: SPLASH_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    uniforms: { uTime: WET.uTime, uCam: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0.06, 0.06, 0.055) }, uBody },
+    uniforms: { uTime: WET.uTime, uCam: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0.06, 0.06, 0.055) }, uBody, uPuff, uPuffD, uPuffC },
   }));
   m.userData.setBodies = (list) => {
     for (let i = 0; i < BODY_SLOTS; i++) { const b = list[i]; if (b) uBody.value[i].set(b.pos.x, b.pos.y, b.pos.z, b.yaw + 10); else uBody.value[i].set(0, 0, 0, 0); }
+  };
+  // list: [{ pos (world), fwd (world, unit), age (s), light: probe Float32Array (rgb = rho * E_ground) }]
+  m.userData.setPuffs = (list) => {
+    for (let i = 0; i < PUFF_SLOTS; i++) {
+      const b = list[i];
+      if (!b) { uPuff.value[i].w = -1; continue; }
+      uPuff.value[i].set(b.pos.x, b.pos.y, b.pos.z, b.age);
+      uPuffD.value[i].set(b.fwd.x, b.fwd.y * 0.3 - 0.15, b.fwd.z, 0).normalize();
+      // scattered light ~ local illuminance (E_ground = probe / rho) x a small single-scattering albedo-thickness
+      const L = b.light, k = L && L[3] > 0.5 ? PUFF_SCATTER / 0.07 : 0;
+      uPuffC.value[i].setRGB(0.002 + (L ? L[0] : 0) * k, 0.002 + (L ? L[1] : 0) * k, 0.002 + (L ? L[2] : 0) * k);
+    }
   };
   m.frustumCulled = false;
   m.layers.set(3);

@@ -14,6 +14,7 @@ import { createSoldier, poseSoldier } from './characters/squad.js';
 import { loadSoldierBody } from './characters/body.js';
 import { loadViewmodelArms } from './viewmodel/arms.js';
 import { createContactShadows } from './characters/contact.js';
+import { computeProbe, blendProbe } from './characters/probe.js';
 
 installFog(); // must run before any material compiles
 
@@ -103,7 +104,7 @@ async function boot() {
   ];
   attachFogUniforms(scene);
   let fogTick = 0;
-  const bodySpots = [];
+  const bodySpots = [], puffs = [], probeTmp = new Float32Array(12);
 
   // exposure tuned for the night scene (physically based light units)
   renderer.toneMappingExposure = 0.9;
@@ -153,6 +154,39 @@ async function boot() {
     rain.material.uniforms.uCam.value.copy(pipe.camera.position);
     splashes.material.uniforms.uCam.value.copy(pipe.camera.position);
     contact.update(pipe.camera.position);
+    // per-soldier light probe (characters/probe.js): ground bounce and the lamps mirrored in the wet quay, from the
+    // scene's lights with the collision boxes as occluders; each soldier within 70 m is refreshed every 6th frame
+    // (staggered) and eased, new soldiers immediately
+    { const cp = pipe.camera.position; let k = 0;
+      for (const o of scene.children) {
+        const t = o.userData && o.userData.tbSoldier;
+        if (!t || !t.probe || !o.visible) continue;
+        k++;
+        if ((o.position.x - cp.x) ** 2 + (o.position.z - cp.z) ** 2 > 70 * 70 && t.probe[3] > 0.5) continue;
+        if (t.probe[3] > 0.5 && ((fogTick + k) % 6) !== 0) continue;
+        computeProbe(probeTmp, o.position.x, o.position.z, lights, game.blockers);
+        blendProbe(t.probe, probeTmp, 0.5);
+      }
+    }
+    // breath vapour of the nearest soldiers (same splash draw call): mouth position, heading, age of the current puff
+    // and the local light colour (from the probe: what the quay round him is lit with)
+    { const cp = pipe.camera.position; puffs.length = 0;
+      for (const o of scene.children) {
+        const t = o.userData && o.userData.tbSoldier;
+        if (!t || !o.visible || !t.state || !t.state.f || !t.body.visible) continue;
+        const d2 = (o.position.x - cp.x) ** 2 + (o.position.z - cp.z) ** 2;
+        if (d2 > 14 * 14) continue;
+        const f = t.state.f, age = t.state.time - f.puffAt;
+        if (!(age >= 0 && age < 1.8)) continue;
+        const hb = t.body.skeleton.bones[4];
+        hb.updateWorldMatrix(true, false);
+        const pos = new THREE.Vector3().copy(t.mouth).applyMatrix4(hb.matrixWorld);
+        const fwd = new THREE.Vector3(0, 0, -1).transformDirection(hb.matrixWorld);
+        puffs.push({ d2, pos, fwd, age, light: t.probe });
+      }
+      puffs.sort((a, b) => a.d2 - b.d2);
+      splashes.userData.setPuffs(puffs);
+    }
     // rain bursting on the shoulders / heads of the nearest soldiers (same splash draw call; presentation only)
     if ((fogTick % 3) === 0) {
       const cp = pipe.camera.position; bodySpots.length = 0;
@@ -237,7 +271,9 @@ async function boot() {
         enemyList: () => game.enemies.filter(e => e.alive).map(e => ({ x: e.x, z: e.z, los: game.wallHit(e.x, e.z, game.player.x, game.player.z) === null })),
         squadState: () => game.squad.members.map(m => ({ x: m.x, z: m.z, mag: m.mag, target: !!m.target })),
         peaceful: () => { for (const e of game.enemies) { e.alive = false; e.deathAt = -1e9; } },
-        perf: () => ({ fps: perf.fps, ms: perf.ms, quality: quality.name, renderer: glInfo, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }),
+        perf: () => ({ fps: perf.fps, ms: perf.ms, quality: quality.name, renderer: glInfo, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, exposure: +renderer.toneMappingExposure.toFixed(3) }),
+        // the per-soldier light probe of the QA soldiers (characters/probe.js): [rho * E_ground rgb, mirror light rgb]
+        probes: () => (window.__qaSoldiers || []).map(g => { const P = g.root.userData.tbSoldier.probe; return [P[0], P[1], P[2], P[8], P[9], P[10]].map(v => +v.toFixed(4)); }),
         quality: quality.name,
         shaderTier: () => ({ lite: SHADER.lite, failures: shaderFailures }),
         // capture mode: stop the realtime loop and render single frames on demand (slow software GPUs)
@@ -252,7 +288,7 @@ async function boot() {
         pick: (x, y) => { const rc = new THREE.Raycaster(); rc.layers.enableAll(); rc.setFromCamera(new THREE.Vector2(x, y), pipe.camera); return rc.intersectObjects(scene.children, true).slice(0, 4).map(h => [h.object.type, h.object.material?.type, h.object.material?.name || '', h.distance.toFixed(2), h.point.toArray().map(v => v.toFixed(2)).join(','), h.object.parent?.type]); },
         state2: () => ({ flashT: weapon.flashT, flashVis: weapon.flash.visible, fx: game.fx.items.length, fxLight: game.fx.light.intensity, decals: game.fx.decals.length, keys: Object.keys(game.keys).filter(k => game.keys[k]), touch: game.touch }),
         debug: () => { const out = []; pipe.weaponScene.traverse(o => { if (o.isMesh && o.visible) { const m = o.material; out.push([o.geometry.type, m.type, m.map ? 'map' : 'nomap', m.color && m.color.getHexString(), o.getWorldPosition(new THREE.Vector3()).toArray().map(v => v.toFixed(2)).join(',')]); } }); return out; },
-        // QA close-up helper: place one posed soldier at a fixed spot (replaces the previous one). o: {side, weapon, helmet, x, z, yaw, aim, walk, speed, dead, seed, time, clear, look, light, lightColor, lx, ly, lz}
+        // QA close-up helper: place one posed soldier at a fixed spot (replaces the previous one). o: {side, weapon, helmet, x, z, yaw, aim, walk, speed, dead, seed, time, clear, look, light, lightColor, lx, ly, lz, blink, jaw, brow, gaze, puff}
         // add: true keeps the soldiers placed before (several soldiers in one scene, e.g. gameplay-range surveys);
         // flash > 0: muzzle flash / fire event this frame; fallDir, hitX / hitZ: as the game passes them (death direction)
         soldier: (o = {}) => {
@@ -264,6 +300,10 @@ async function boot() {
           const SETTLE = 1.5, DT = 1 / 30, N = Math.round(SETTLE / DT);
           g.s.seed = o.seed ?? 3.1; g.s.time = (o.time ?? 5) - SETTLE;
           const st = { walk: o.walk || 0, speed: o.speed || 0, aim: o.aim || 0, flash: 0, hit: 0, dead: 0, fallDir: o.fallDir ?? 1, hitX: o.hitX, hitZ: o.hitZ };
+          // face (presentation only): blink / jaw / brow 0..1 overrides, gaze = world point to look at
+          // (stills: eyes open unless a blink is asked for; o.natural keeps the soldier's own blinks)
+          st.face = { blink: o.natural ? o.blink : (o.blink ?? 0), jaw: o.jaw, brow: o.brow };
+          if (o.gaze) st.lookAt = o.gaze;
           // settle the pose springs (aim raise, rifle lag, gait) over 1.5 s of simulated 30 Hz frames; walking advances
           // the gait phase at 7 rad/s so the feet plant with a real cadence (poseSoldier takes dt from the clock, so the
           // previous-pose time is set back by one frame before each call)
@@ -274,6 +314,8 @@ async function boot() {
           }
           for (let i = 0; i < 2; i++) { g.s.t = performance.now() / 1000 - DT; poseSoldier(g, st); }
           if (o.flash) { g.s.t = performance.now() / 1000 - DT; poseSoldier(g, { ...st, flash: o.flash }); }
+          // breath vapour: puff = age (s) of the current exhalation at the render time (default: none in view)
+          if (g.s.f) g.s.f.puffAt = o.puff !== undefined ? g.s.time - o.puff : -99;
           if (o.light) { const L = new THREE.PointLight(o.lightColor ?? 0xffe2bd, o.light, 14, 2); L.position.set((o.x || 0) + (o.lx ?? 1.6), o.ly ?? 2.6, (o.z || 0) + (o.lz ?? 2.4)); scene.add(L); g.qaLight = L; }
           scene.add(g.root); window.__qaSoldier = g; qs.push(g);
           return g.mesh.geometry.index.count / 3;

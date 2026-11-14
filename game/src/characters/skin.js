@@ -7,7 +7,10 @@
 //         metric UVs (skin_detail_normal: texgen, 24 mm tile) with micro-occlusion, plus procedural forehead lines,
 //         crow's feet, under-eye and nasolabial creases (bump from bind-space height); a subtle wrap term with a red
 //         shift past the terminator as a cheap subsurface stand-in
-//  eye  : sclera, limbal ring, iris with radial fibres and pupil, upper-lid shadow, glossy cornea (eyeball vertices)
+//  eye  : sclera, limbal ring, iris with radial fibres and pupil, upper-lid shadow, glossy cornea (eyeball vertices);
+//         upper lash line along the lid margin (rides down with the lid in a blink: bind-space position)
+//  mouth: teeth (MakeHuman teeth helpers, uv.y >= 3000), dark mouth cavity behind the lips (seen when the jaw opens)
+//  rain : water film (smoother, F0 ~ water) and beads on the face, wet darker clumped hair (WET.uWetness)
 //  hair : short military cut. The scalp itself carries the hair colour with a soft density fade (front hairline,
 //         faded sides and nape), so the thin hair shell above it only needs a smooth, noise-broken coverage contour
 //         (no per-texel stochastic cut-out, no dotted seam). Strand detail is band-limited by the pixel footprint and
@@ -37,6 +40,20 @@ float skHairLine(float th) {
 // temple notch, where the raw table steps 5 cm in height over ~1 cm and read as a hard vertical edge
 float skHairLineS(float th) {
   return (skHairLine(abs(th - 0.12)) + skHairLine(abs(th - 0.06)) + skHairLine(th) + skHairLine(th + 0.06) + skHairLine(th + 0.12)) * 0.2;
+}
+// A rain bead as a spherical cap (contact angle ~60 deg): its normal tilts toward the offset from the bead's centre. The
+// bind-space offset is carried into view space through the pixel's own position derivatives (exact for the surface's
+// linear map, smooth per pixel; a height bump through dFdx would be blocky at a bead's few-pixel size).
+vec3 skBeadNormal(vec3 n, vec4 b, vec3 pb) {
+  vec3 bx = dFdx(pb), by = dFdy(pb), vx = dFdx(-vViewPosition), vy = dFdy(-vViewPosition);
+  float a = dot(bx, bx), c = dot(bx, by), d = dot(by, by), det = a * d - c * c;
+  if (abs(det) < 1e-24) return n;
+  vec2 k = vec2(d * dot(b.xyz, bx) - c * dot(b.xyz, by), a * dot(b.xyz, by) - c * dot(b.xyz, bx)) / det;
+  vec3 o = vx * k.x + vy * k.y;                 // offset in view space (units of the bead radius)
+  o -= n * dot(o, n);
+  float q = min(length(o), 1.0) * 0.87;          // sin of the tilt (0.87 at the contact line)
+  vec3 t = length(o) > 1e-6 ? normalize(o) : n;
+  return normalize(mix(n, normalize(n * sqrt(1.0 - q * q) + t * q), b.w));
 }
 vec3 skBump(vec3 p, vec3 n, float h, float fd) {
   vec3 dx = dFdx(p), dy = dFdy(p);
@@ -126,6 +143,7 @@ uniform vec3 uEyeR, uEyeL, uIris, uHair, uHeadC;
 uniform sampler2D tSkinDet;
 #endif
 float skOil = 0.0, skStub = 0.0, skWrap = 1.0, skRough = -1.0, skDet = 0.0, skHgt = 0.0, skHairK = 0.0, skCav = 1.0, skF0 = 0.028;
+vec4 skBead = vec4(0.0);     // rain bead: xyz = offset from its centre / its radius (bind space), w = coverage
 vec3 skHairTint = vec3(1.0);
 ${NOISE}`)
       .replace('#include <lights_physical_pars_fragment>', lp)
@@ -176,7 +194,13 @@ ${NOISE}`)
         vec3 hairC = uHair * (0.5 + 0.9 * strands) * (0.9 + 0.2 * n3);
         // hair coverage seen on the surface, identical on the scalp and on the shell so the shell edge has no seam
         float hmix = clamp(hd * 1.1 + 0.3 * (tuft - 0.5) * (1.0 - hd), 0.0, 1.0);
-        if (vSkUv.y > 1500.0) {
+        if (vSkUv.y > 2500.0) {
+          // teeth (MakeHuman teeth helpers): enamel, darker deeper in the mouth, which the lips shade; glossy (wet)
+          float deep = smoothstep(frontZ - 0.012, frontZ + 0.02, p.z);
+          col = vec3(0.36, 0.33, 0.27) * (0.92 + 0.08 * skN(p * 600.0)) * 0.6;   // in the lips' shadow
+          col *= mix(1.0, 0.12, deep);
+          skWrap = 0.3; skRough = 0.25; skF0 = 0.04;
+        } else if (vSkUv.y > 1500.0) {
           // eyeball: sclera, limbal ring, iris with radial fibres, pupil (angle from the eye's forward axis, -Z)
           vec3 d = normalize(e);
           float rr = acos(clamp(-d.z, -1.0, 1.0)) / 0.5;      // iris edge at ~29 degrees
@@ -205,6 +229,10 @@ ${NOISE}`)
           // as dark as the hair (previously normalised to the brightest channel, which gave dark-brown and black hair
           // the same strong orange glow as auburn hair and made every look render as light brown)
           skHairTint = min(uHair * 2.4, vec3(1.0));
+          // rain-soaked short hair: darker (water fills the gaps between the strands), clumped, glossier
+          col *= 1.0 - 0.3 * uWetness * hmix;
+          skRough = mix(skRough, skRough * 0.62, uWetness * hmix);
+          skHairK *= 1.0 + 0.8 * uWetness;
         } else {
           // haemoglobin: cheeks, nose, ears (subtle, no orange push)
           float cheek = exp(-pow(length((p.xy - vec2(sx * 0.042, eyeY - 0.035)) / vec2(0.022, 0.02)), 2.0));
@@ -225,6 +253,11 @@ ${NOISE}`)
           float mole = step(0.992, mh) * (1.0 - smoothstep(0.08, 0.16 + fwP * 140.0, length(p * 140.0 - mo)));
           col = mix(col, col * vec3(0.62, 0.52, 0.48), mole * 0.7 * (1.0 - hd));
           col = mix(col, base * vec3(0.78, 0.55, 0.55) * (0.9 + 0.15 * n2), lips * 0.65);
+          // mouth cavity (inside the lips, seen when the jaw opens): dark, red, unlit by the face's wrap
+          vec2 mq = vec2(p.x / 0.024, (p.y - (eyeY - 0.086)) / 0.014);
+          float lipZ = frontZ - 0.012 + 0.03 * mq.x * mq.x;           // lip surface depth across the mouth
+          float cav = (1.0 - smoothstep(0.8, 1.0, length(mq))) * smoothstep(0.003, 0.012, p.z - lipZ);
+          col = mix(col, vec3(0.09, 0.025, 0.022), cav);
           // eye region: slightly darker, cooler sockets, upper-lid crease, lash line, pink inner corners
           float sock = exp(-dot(e.xy / vec2(0.024, 0.017), e.xy / vec2(0.024, 0.017)));
           col *= 1.0 - 0.16 * sock;
@@ -234,6 +267,13 @@ ${NOISE}`)
           col *= 1.0 - 0.38 * crease;
           float lidLine = exp(-pow(e.x / 0.013, 2.0) - pow((e.y + 0.0072) / 0.0018, 2.0));
           col *= 1.0 - 0.3 * lidLine;
+          // upper lash line along the lid margin (MakeHuman margin ~1.7 mm above the eye centre, dropping ~4 mm to the
+          // corners): the lashes and their shadow are the darkest line of an open eye; it rides down with the lid in a
+          // blink (bind-space position)
+          float ux = e.x / 0.0145;
+          float um = 0.0017 - 0.0042 * ux * ux;
+          float lash = exp(-0.5 * ux * ux * ux * ux - pow((e.y - um - 0.0005) / 0.0012, 2.0)) * step(p.z, frontZ + 0.01);
+          col *= 1.0 - 0.62 * lash;
           float canthus = exp(-pow((abs(p.x) - 0.016) / 0.004, 2.0) - pow(e.y / 0.004, 2.0));
           col = mix(col, base * vec3(0.8, 0.52, 0.52), 0.45 * canthus);
           // shaved stubble on the jaw, chin and upper lip; visibility follows the hair colour (dark hair: blue-grey shadow)
@@ -285,6 +325,26 @@ ${NOISE}`)
           col *= 1.0 - 0.18 * clamp(fl * 0.6 + crow * 0.4 + ue * 0.5 + nl * 0.6 + neck * 0.3, 0.0, 1.0);
           #endif
           skRough = clamp(mix(0.55, 0.42, skOil) + 0.1 * skStub + 0.12 * brow - 0.08 * lips + 0.06 * (n2 - 0.5) + 0.1 * hd, 0.3, 0.75);
+          skWrap = mix(skWrap, 0.0, cav);
+          // rain on the bare face: a water film (smoother, F0 ~ water) on the brow, nose, cheekbones and anything facing
+          // up, and beads (0.6-1.5 mm, on a ~5 mm grid, more on the oily T-zone) that catch the lamps
+          {
+            float up = clamp(normalize(vWetN).y * 0.5 + 0.5, 0.0, 1.0);
+            float film = uWetness * clamp(0.3 + 0.7 * up, 0.0, 1.0) * (1.0 - hd) * (1.0 - cav) * (0.55 + 0.45 * skN(p * 70.0 + 9.0));
+            skRough = mix(skRough, 0.26, 0.7 * film);
+            #ifndef SK_LITE
+            vec3 dc = floor(p * 200.0);
+            vec3 dctr = (dc + 0.25 + 0.5 * vec3(skH(dc + 1.0), skH(dc + 2.0), skH(dc + 3.0))) / 200.0;
+            float rad = 0.0006 + 0.0009 * skH(dc + 5.0);
+            float dd = length(p - dctr) / rad;
+            float has = step(skH(dc + 41.0), 0.3 * uWetness * (0.55 + 0.6 * skOil + 0.3 * up)) * (1.0 - lips) * (1.0 - hd) * (1.0 - cav);
+            float vis = 1.0 - smoothstep(0.5, 1.2, fwP / rad);         // a bead under ~a pixel fades into the film
+            float bead = has * (1.0 - smoothstep(0.85, 1.0, dd)) * vis;
+            skBead = vec4((p - dctr) / rad, bead);
+            skRough = mix(skRough, 0.05, bead);
+            col *= 1.0 - 0.06 * bead;
+            #endif
+          }
         }
         #ifdef SK_DETAIL
         {
@@ -319,11 +379,12 @@ ${NOISE}`)
       #endif
       #ifndef SK_LITE
       normal = skBump(-vViewPosition, normal, skHgt, faceDirection);
+      if (skBead.w > 0.001) normal = skBeadNormal(normal, skBead, vSkP);
       #endif`)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
       material.specularColor = vec3(skF0) * mix(1.0, skCav, 0.5);
       material.specularF90 = 1.0;`);
   };
-  m.customProgramCacheKey = () => 'skin3' + (det ? 'd' : '') + (SHADER.lite ? 'L' : '');
+  m.customProgramCacheKey = () => 'skin4' + (det ? 'd' : '') + (SHADER.lite ? 'L' : '');
   return m;
 }

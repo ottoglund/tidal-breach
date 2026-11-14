@@ -51,7 +51,7 @@ Soldier materials reuse the sets above; the only texture added for the people is
 
 Soldier insignia (Swedish flag, generic dark "HV" shield) are drawn at runtime on a canvas in `game/src/enemies.js` (original simple graphics, no copied artwork).
 
-The soldiers' muzzle flash (side-view flame with ragged streaks and an end-on petalled star) is also drawn at runtime on a canvas in `game/src/enemies.js` (`flashParts`, own work, no image data). The rifle sling (webbing strap over the left shoulder, `slingGeometry` in `game/src/characters/soldier.js`), the rain-water film / run-off streaks on wet cloth (`game/src/characters/cloth.js`), the rain bursts on soldiers' shoulders and heads (`createSplashes` in `game/src/world/atmosphere.js`) and the soft ground contact shadows under soldiers (`game/src/characters/contact.js`) are procedural geometry / shader code (own work, no image data).
+The soldiers' muzzle flash (side-view flame with ragged streaks and an end-on petalled star) is also drawn at runtime on a canvas in `game/src/enemies.js` (`flashParts`, own work, no image data). The rifle sling (webbing strap over the left shoulder, `slingGeometry` in `game/src/characters/soldier.js`), the rain-water film / run-off streaks on wet cloth (`game/src/characters/cloth.js`), the rain bursts on soldiers' shoulders and heads (`createSplashes` in `game/src/world/atmosphere.js`) and the soft ground contact shadows under soldiers (`game/src/characters/contact.js`) are procedural geometry / shader code (own work, no image data). Also own code, no image data: the sling's rope simulation (`updateSling`, `game/src/enemies.js`), the face animation (`updateFace`: blinks, gaze, speech-driven jaw / brows; rotation sizes from the CC0 MakeHuman face pose units, see the Models section), the breath vapour puffs (extra instances in the splash draw call, `game/src/world/atmosphere.js`), wet skin / hair / teeth shading (`game/src/characters/skin.js`), rain beads and fibre sheen on cloth (`cloth.js`) and the per-soldier ground-bounce light probe (`game/src/characters/probe.js`).
 | water | normal | harbour water ripples |
 | puddles | mask | world-scale puddle / wetness distribution |
 | marking | mask | worn road-paint alpha |
@@ -70,12 +70,12 @@ CC0 MakeHuman base mesh (below); the old procedural first-person hands
 |---|---|
 | File | `game/assets/models/soldier_body.bin` (custom binary, format in `game/src/characters/body.js`), loaded same-origin with `THREE.FileLoader` during the loading screen |
 | Built by | `tools/mh/build_soldier.py` (own code; Python 3 + numpy): `python3 tools/mh/build_soldier.py` |
-| Derived from | MakeHuman hm08 base mesh `base.obj`, skeleton `default.mhskel`, weights `default_weights.mhw`, macro targets (caucasian young male, muscle / weight / ideal-proportion targets) |
+| Derived from | MakeHuman hm08 base mesh `base.obj` (body, eyeball and teeth helpers), skeleton `default.mhskel`, weights `default_weights.mhw` (incl. the face bones), macro targets (caucasian young male, muscle / weight / ideal-proportion targets); face pose units `face-poseunits.bvh` / `.json` (read offline by `tools/mh/poseunits.py` for the lid / eye / jaw rotation sizes; not shipped) |
 | Author | MakeHuman team; copyright holders at the CC0 release: Data Collection AB, Joel Palmius, Jonas Hauquier |
 | Licence | CC0 1.0 Universal (stated in every source file header, in `default_weights.mhw` (`"license": "CC0"`) and in the repository's `LICENSE.ASSETS.md`) |
 | Source | https://github.com/makehumancommunity/makehuman (files fetched from `https://raw.githubusercontent.com/makehumancommunity/makehuman/master/...`, exact paths and SHA-256 hashes in `tools/mh/sources/SOURCES.md`) |
 | Committed copies | `tools/mh/sources/` (+ `LICENSE.ASSETS.md`, `LICENSE.makehuman.md`); `tools/mh/fetch_sources.sh` re-downloads and verifies them |
-| Not used | any MakeHuman program code (AGPL), skins / photographic textures, proxies, clothes |
+| Not used | any MakeHuman program code (AGPL), skins / photographic textures, proxies, clothes, expression modifiers (the face pose units are only read for rotation sizes) |
 
 What the build does to the CC0 data (all own processing): applies the targets
 (adult male, muscle 0.70, weight 0.40, 50 % ideal proportions), drops the helper
@@ -88,9 +88,10 @@ smooth contour: the faces the cut line crosses are split along it, and a
 half-round rolled hem strip is added from the knit surface down to the skin),
 adds a second,
 bare head (the undressed MakeHuman face and neck plus a short-hair shell) for
-the Swedish soldiers, keeps the MakeHuman eyeballs, adds fold displacement,
+the Swedish soldiers, keeps the MakeHuman eyeballs and upper / lower teeth, adds fold displacement,
 maps the MakeHuman weights onto the game's 19-bone skeleton (with a longer
-hand / forearm blend at the wrist), triangulates and decimates (close LOD
+hand / forearm blend at the wrist) plus a 9-bone face rig (jaw, eyes, upper / lower lids, brows: each the sum of
+the MakeHuman face bones below it, pivots at the MakeHuman joints; the balaclava keeps only the jaw), triangulates and decimates (close LOD
 23.6 k triangles holding both heads, ~18.3 k (balaclava) / ~19.0 k (bare head)
 used per soldier; far LOD ~2.6 k). The uniform, knit, glove and boot
 surfaces use the original procedural textures listed above; no MakeHuman texture

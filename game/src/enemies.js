@@ -10,7 +10,8 @@ import * as THREE from 'three';
 import { box, rcyl, cyl, xform } from './geo.js';
 import { mat, plainMat } from './materials.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG, slingAnchors } from './characters/soldier.js';
+import { createSoldierMesh, BONE_DEFS, BI, LEN, RIG, slingAnchors, SLING_NODES, FI } from './characters/soldier.js';
+import { probeShading } from './characters/probe.js';
 import { fabricShading, ripstop } from './characters/cloth.js';
 import { skinShading, LOOKS } from './characters/skin.js';
 import { soldierBody } from './characters/body.js';
@@ -74,13 +75,14 @@ function materials() {
   shared = {
     // uniforms: ripstop yarn / twill relief aligned with the texture's grid, joint-driven folds, seams, panel
     // dye lots and high-point wear (characters/cloth.js `body`)
-    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x9ea6a3 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.4, 0.42) }),
-    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0xaab2a6 }), { dirt: 0.6, sheen: 0.12, soak: 0.35, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.45, 0.45) }),
+    uniform: fabricShading(mat('camo_emr', { tile: 0.42, color: 0x9ea6a3 }), { dirt: 0.6, sheen: 0.12, soak: 0.55, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.4, 0.42) }),
+    // (the M90 helmet cover is in this material: beads above head height)
+    uniformHV: fabricShading(mat('camo_m90', { tile: 0.45, color: 0xaab2a6 }), { dirt: 0.6, sheen: 0.12, soak: 0.55, rough: 0.3, wetTop: 0.4, body: true, weave: ripstop(0.45, 0.45), beads: 0.35, beadsAbove: 1.6 }),
     // rig / pouches: nylon cordura, a little smoother and shinier than the cotton-blend uniform, worn at the edges
-    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0xc2cbb8, roughness: 0.86 }), { dirt: 0.45, sheen: 0.14, soak: 0.25, wrinkle: 0.3, rough: 0.2, wetTop: 0.5, gear: true }),
+    vest: fabricShading(mat('ratnik_green', { tile: 0.35, color: 0xc2cbb8, roughness: 0.86 }), { dirt: 0.45, sheen: 0.14, soak: 0.3, wrinkle: 0.3, rough: 0.2, wetTop: 0.5, gear: true, beads: 0.45 }),
     // knit: fine rib (7 cm tile) with a strong normal map and a fuzzy sheen so the balaclava reads as wool over the
     // MakeHuman face shape, not as skin
-    knit: fabricShading(mat('olive_knit', { tile: 0.07, color: 0xb2b8a2, normalScale: 1.8 }), { dirt: 0.2, sheen: 0.32, soak: 0.25, wrinkle: 0.35, rough: 0.15, wetTop: 0.55, mudGloss: 0.2, rib: 0.0032 }),
+    knit: fabricShading(mat('olive_knit', { tile: 0.07, color: 0xb2b8a2, normalScale: 1.8 }), { dirt: 0.2, sheen: 0.32, soak: 0.35, wrinkle: 0.35, rough: 0.15, wetTop: 0.55, mudGloss: 0.2, rib: 0.0032 }),
     // satin nylon / polymer hardware (buckles, soles, glove shells, strap tails): smoother than cloth, scuffed at the bottom
     glove: fabricShading(mat('polymer', { tile: 0.25, color: 0x4a4c50, roughness: 0.85 }), { dirt: 0.7, sheen: 0.0, soak: 0.2, wrinkle: 0.0, rough: 0.35, wetTop: 0.3, mudGloss: 0.5 }),
     metal: mat('gunmetal', { tile: 0.25, color: 0xc4c4c0, roughness: 0.75 }),   // buckles, snaps, D-rings, slides, eyelets
@@ -88,7 +90,7 @@ function materials() {
     // shader program): characters/skin.js
     skins: LOOKS.map(l => skinShading(plainMat(l.skin, 0.5), { ...eyes, hair: l.hair, iris: l.iris })),
     gloveFab: fabricShading(mat('glove_green', { tile: 0.12, color: 0xaeb4a2 }), { dirt: 0.5, sheen: 0.05, soak: 0.3, wrinkle: 0.2 }),
-    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3, boot: true }),
+    boot: fabricShading(mat('boot_leather', { tile: 0.25, color: 0x433d38, roughness: 1.2 }), { dirt: 0.4, sheen: 0.0, soak: 0.25, wrinkle: 0.2, rough: 0.2, wetTop: 0.25, mudGloss: 0.3, boot: true, beads: 0.3 }),
     gun: mat('gunmetal'),
     wood: mat('ak_wood', { tile: 0.3, color: 0xa39c96 }),
     poly: mat('polymer', { tile: 0.25 }),
@@ -97,6 +99,10 @@ function materials() {
     // tinted, semi-mirrored lenses; see-through enough to show the eyes behind them
     visor: lensShading(new THREE.MeshPhysicalMaterial({ color: 0x0d0e10, roughness: 0.04, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 3.0, transparent: true, opacity: 0.78, depthWrite: false })),
   };
+  // every skinned soldier material also takes the per-soldier light probe (ground bounce + lamps mirrored in the wet
+  // quay, characters/probe.js); the lenses are left as they are (stylised reflection, transparent)
+  for (const k of ['uniform', 'uniformHV', 'vest', 'knit', 'glove', 'metal', 'gloveFab', 'boot', 'patch']) probeShading(shared[k]);
+  shared.skins.forEach(probeShading);
   return shared;
 }
 
@@ -342,7 +348,7 @@ export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
   weapon = weapon || (hv ? 'ak4c' : 'ak74');
   const kind = !hv ? 'opfor' : ((helmet ?? Math.random() < 0.4) ? 'hv_helmet' : 'hv');
   const root = new THREE.Group();
-  const { mesh, bones, rest, sling } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[(look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length], metal: S.metal }, kind);
+  const { mesh, bones, rest, sling, face } = createSoldierMesh({ camo: hv ? S.uniformHV : S.uniform, knit: S.knit, black: S.glove, boot: S.boot, web: S.vest, lens: S.visor, glove: S.gloveFab, patch: S.patch, skin: S.skins[(look ?? Math.floor(Math.random() * S.skins.length)) % S.skins.length], metal: S.metal }, kind);
   root.add(mesh);
   const rifle = buildRifle(S, weapon);
   root.add(rifle);
@@ -351,12 +357,15 @@ export function createSoldier({ side = 'opfor', weapon, helmet, look } = {}) {
   const fl = new THREE.Mesh(...flashParts());
   fl.position.set(0, 0.0, mz); fl.visible = false; fl.renderOrder = 6; rifle.add(fl);
   root.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
-  root.userData.tbSoldier = { body: mesh, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')], geo: mesh.geometry, far: mesh.geometry.userData.far || null }; // distance policies for shadow / reflection passes: world/props/lod.js
+  root.userData.tbSoldier = { body: mesh, probe: mesh.userData.probe, rifle, flashMesh: fl, mats: mesh.material, single: mesh.material[mesh.geometry.userData.names.indexOf('camo')], geo: mesh.geometry, far: mesh.geometry.userData.far || null }; // distance policies for shadow / reflection passes: world/props/lod.js
   const seed = Math.random() * 100;
   const g = {
-    root, rifle, flash, flashMesh: fl, mesh, bones, rest, sling, side, weapon, kind,
+    root, rifle, flash, flashMesh: fl, mesh, bones, rest, sling, face, side, weapon, kind,
     s: { t: 0, time: seed, ph: null, rate: 0, seed, hitSide: 1, lastHit: 0, death: null, mm: bones.map(() => new THREE.Matrix4()), mq: bones.map(() => new THREE.Quaternion()) },
   };
+  // breath vapour source (main.js): between the lips, head-bone space
+  syncRig();
+  Object.assign(root.userData.tbSoldier, { state: g.s, mouth: new THREE.Vector3(0, RIG.eye[1] - 0.088, RIG.eye[2] - 0.018) });
   poseGuard(g, { walk: 0, speed: 0, aim: 0, flash: 0, hit: 0, dead: 0, fallDir: 1 });
   return g;
 }
@@ -716,6 +725,7 @@ const _qy = new THREE.Quaternion(), _Y = new THREE.Vector3(0, 1, 0), _ankT = new
 function poseDeath(g, st) {
   const s = g.s, B = g.bones, D = s.death;
   const T = st.dead * 0.9; // seconds since death
+  s.deathT = T;
   // timing: hit snap (ease-out), collapse under gravity (ease-in), topple to the ground (ease-in), impact + settle
   const w1 = 1 - (1 - sstep(0, 0.16, T)) ** 2;
   const c2 = clamp((T - 0.1) / 0.42, 0, 1), w2 = c2 * c2 * (1.4 - 0.4 * c2);
@@ -982,37 +992,297 @@ function startDeath(g, st) {
 }
 
 // ------------------------------------------------------------------ sling
-// Pose the six sling bones (soldier.js slingGeometry) in model space: segment 1 from the rifle's front swivel to the top
-// of the left shoulder, segment 2 from the right side of the back to the rifle's rear loop. The middle bone of each
-// segment is the Bezier control point: the slack the strap does not need hangs down (gravity), a little out from the
-// body. Bones are oriented so the strap's width lies across its run, roughly level.
-const _sA = new THREE.Vector3(), _sB = new THREE.Vector3(), _sC = new THREE.Vector3(), _sD = new THREE.Vector3(), _sX = new THREE.Vector3(), _sY = new THREE.Vector3();
-const _sM = new THREE.Matrix4(), _sQ = new THREE.Quaternion();
+// The two free segments of the sling (soldier.js slingGeometry) are short ropes of SLING_NODES nodes, simulated in model
+// space every frame (Verlet, ~60 Hz substeps): the ends are pinned (segment 1: rifle front swivel -> top of the left
+// shoulder; segment 2: right side of the back -> rear sling loop), the links are inextensible but may go slack, so the
+// strap sags in a catenary-like curve under gravity and swings with the body (the root's own motion is fed back as
+// inertia); nodes and link midpoints are pushed out of capsules round the torso / rig, upper arms, forearms and hands,
+// so the strap drapes over the body instead of cutting through it. On death both straps are released from the rifle
+// (it is dropped away from the body; a pinned strap would stretch to it) and fall onto the body / ground.
+// Node bones: position = node, orientation = strap frame (z along the strap, y away from the body, x across).
+// strap length of each free segment (m): the front run is ~0.8-0.9 m from swivel to shoulder in the carry / aim poses, so
+// ~0.2 m of slack hangs in a loop; the rear run (back -> stock) is ~0.3 m apart and hangs in a short loop
+const SLING_LEN = [1.05, 0.52];
+const SL_N = SLING_NODES, SL_G = 9.81, SL_DAMP = 0.985;
+const _sA = new THREE.Vector3(), _sB = new THREE.Vector3(), _sT = new THREE.Vector3(), _sX = new THREE.Vector3(), _sY = new THREE.Vector3();
+const _sM = new THREE.Matrix4(), _sR = new THREE.Matrix4(), _sQ = new THREE.Quaternion(), _sP = new THREE.Vector3(), _sC = new THREE.Vector3();
 let SLING_A = null;
-const SLING_LEN = [0.78, 0.62];      // strap length of each free segment (m)
-function updateSling(g) {
-  const sl = g.sling, ud = g.rifle.userData;
+// collision capsules: [bone of end a, offset a, bone of end b, offset b, radius]; offsets in the bone's frame (m)
+const SL_CAPS = (() => {
+  const c = [];
+  // torso + chest rig + belt pouches: two side-by-side capsules (hips -> top of the chest), a little forward of the spine
+  for (const x of [-0.065, 0.065]) c.push([BI.hips, [x, 0.04, -0.035], BI.chest, [x, 0.14, -0.03], 0.155]);
+  for (const s of ['R', 'L']) {
+    c.push([BI['uarm' + s], [0, 0, 0], BI['farm' + s], [0, 0, 0], 0.062]);
+    c.push([BI['farm' + s], [0, 0, 0], BI['hand' + s], [0, 0, 0], 0.05]);
+    c.push([BI['hand' + s], [0, 0, 0], BI['hand' + s], [0, -0.09, 0], 0.045]);
+  }
+  c.push([BI.neck, [0, 0, 0], BI.head, [0, 0.12, -0.02], 0.1]);
+  return c;
+})();
+const _capA = SL_CAPS.map(() => new THREE.Vector3()), _capB = SL_CAPS.map(() => new THREE.Vector3());
+function capsulesNow(g) {
+  for (let k = 0; k < SL_CAPS.length; k++) {
+    const [ia, oa, ib, ob] = SL_CAPS[k];
+    _capA[k].set(oa[0], oa[1], oa[2]).applyMatrix4(g.s.mm[ia]);
+    _capB[k].set(ob[0], ob[1], ob[2]).applyMatrix4(g.s.mm[ib]);
+  }
+}
+/** Push point p (array offset o) out of every capsule; returns the outward normal of the deepest contact in _sC. */
+function pushOut(P, o) {
+  _sP.set(P[o], P[o + 1], P[o + 2]);
+  let hit = false;
+  for (let k = 0; k < SL_CAPS.length; k++) {
+    const a = _capA[k], b = _capB[k], r = SL_CAPS[k][4];
+    _sT.subVectors(b, a);
+    const l2 = _sT.lengthSq();
+    const t = l2 > 1e-9 ? clamp(_sX.subVectors(_sP, a).dot(_sT) / l2, 0, 1) : 0;
+    _sY.copy(a).addScaledVector(_sT, t);
+    _sX.subVectors(_sP, _sY);
+    const d = _sX.length();
+    if (d < r) {
+      if (d < 1e-6) _sX.set(0, 0, -1); else _sX.multiplyScalar(1 / d);
+      _sP.copy(_sY).addScaledVector(_sX, r);
+      hit = true;
+    }
+  }
+  if (hit) { P[o] = _sP.x; P[o + 1] = _sP.y; P[o + 2] = _sP.z; }
+  return hit;
+}
+function slingInit(g, k, A, B) {
+  const R = g.s.sl, P = R.p[k], Q = R.q[k];
+  const d = A.distanceTo(B), slack = Math.max(0, SLING_LEN[k] - d);
+  for (let i = 0; i < SL_N; i++) {
+    const t = i / (SL_N - 1);
+    P[i * 3] = lerp(A.x, B.x, t); P[i * 3 + 1] = lerp(A.y, B.y, t) - slack * 0.6 * 4 * t * (1 - t); P[i * 3 + 2] = lerp(A.z, B.z, t);
+  }
+  Q.set(P);
+}
+function updateSling(g, dt) {
+  const sl = g.sling, ud = g.rifle.userData, s = g.s;
   if (!sl || !ud.slingF) return;
   if (!SLING_A) SLING_A = slingAnchors();
   g.rifle.updateMatrix();
-  const ch = g.s.mm[BI.chest];
+  const ch = s.mm[BI.chest];
+  let R = s.sl;
+  if (!R) R = s.sl = { p: [new Float32Array(SL_N * 3), new Float32Array(SL_N * 3)], q: [new Float32Array(SL_N * 3), new Float32Array(SL_N * 3)], init: false, root: new THREE.Matrix4(), x: [new THREE.Vector3(1, 0, 0), new THREE.Vector3(1, 0, 0)] };
+  const free = !!s.death;                      // released from the rifle on death
+  const ends = (k, A, B) => {
+    if (k === 0) { A.copy(ud.slingF).applyMatrix4(g.rifle.matrix); B.copy(SLING_A[0]).applyMatrix4(ch); }
+    else { A.copy(SLING_A[1]).applyMatrix4(ch); B.copy(ud.slingR).applyMatrix4(g.rifle.matrix); }
+  };
+  capsulesNow(g);
+  // root motion since the last frame -> inertia (the rope stays where it was in the world, the constraints drag it)
+  g.root.updateMatrix();
+  if (R.init) {
+    _sR.copy(g.root.matrix).invert().multiply(R.root);
+    for (let k = 0; k < 2; k++) for (const Ar of [R.p[k], R.q[k]]) for (let i = 0; i < SL_N; i++) {
+      _sP.set(Ar[i * 3], Ar[i * 3 + 1], Ar[i * 3 + 2]).applyMatrix4(_sR); Ar[i * 3] = _sP.x; Ar[i * 3 + 1] = _sP.y; Ar[i * 3 + 2] = _sP.z;
+    }
+  }
+  R.root.copy(g.root.matrix);
+  // QA jumps (a soldier placed already dead) settle the released strap over ~2 s of simulated time
+  const settle = !R.init || (free && !R.freeSeen && (s.deathT ?? 0) > 1.2);
+  const steps = settle ? 120 : Math.max(1, Math.ceil(Math.min(dt, 0.1) * 60));
+  const h = settle ? 1 / 60 : Math.min(dt, 0.1) / steps;
   for (let k = 0; k < 2; k++) {
-    if (k === 0) { _sA.copy(ud.slingF).applyMatrix4(g.rifle.matrix); _sB.copy(SLING_A[0]).applyMatrix4(ch); }
-    else { _sA.copy(SLING_A[1]).applyMatrix4(ch); _sB.copy(ud.slingR).applyMatrix4(g.rifle.matrix); }
-    const d = _sA.distanceTo(_sB), slack = Math.max(0, SLING_LEN[k] - d);
-    // control point: midpoint, dropped by the slack (a Bezier sags by half its control offset), pushed off the body
-    _sC.addVectors(_sA, _sB).multiplyScalar(0.5);
-    _sD.copy(_sC).sub(_sX.setFromMatrixPosition(ch)); _sD.y = 0;
-    if (_sD.lengthSq() > 1e-6) _sD.normalize();
-    _sC.y -= Math.min(0.5, slack * 1.1); _sC.addScaledVector(_sD, 0.03 + slack * 0.15);
-    // orientation: z along the run, x level across it
-    _sD.subVectors(_sB, _sA).normalize();
-    _sX.crossVectors(_sY.set(0, 1, 0), _sD); if (_sX.lengthSq() < 1e-6) _sX.set(1, 0, 0); _sX.normalize();
-    _sY.crossVectors(_sD, _sX);
-    _sQ.setFromRotationMatrix(_sM.makeBasis(_sX, _sY, _sD));
-    const b0 = sl[3 * k], b1 = sl[3 * k + 1], b2 = sl[3 * k + 2];
-    b0.position.copy(_sA); b1.position.copy(_sC); b2.position.copy(_sB);
-    b0.quaternion.copy(_sQ); b1.quaternion.copy(_sQ); b2.quaternion.copy(_sQ);
+    ends(k, _sA, _sB);
+    if (!R.init) slingInit(g, k, _sA, _sB);
+    const P = R.p[k], Q = R.q[k], rest = SLING_LEN[k] / (SL_N - 1);
+    const pinA = !(free && k === 0), pinB = !(free && k === 1);   // the rifle ends are released on death
+    for (let it = 0; it < steps; it++) {
+      // integrate
+      for (let i = 0; i < SL_N; i++) {
+        const o = i * 3;
+        if ((i === 0 && pinA) || (i === SL_N - 1 && pinB)) continue;
+        for (let c = 0; c < 3; c++) { const v = (P[o + c] - Q[o + c]) * SL_DAMP; Q[o + c] = P[o + c]; P[o + c] += v; }
+        P[o + 1] -= SL_G * h * h;
+      }
+      if (pinA) { P[0] = _sA.x; P[1] = _sA.y; P[2] = _sA.z; }
+      if (pinB) { const o = (SL_N - 1) * 3; P[o] = _sB.x; P[o + 1] = _sB.y; P[o + 2] = _sB.z; }
+      // the body-side end stays on the body even when released from the rifle
+      if (free) { if (k === 0) { const o = (SL_N - 1) * 3; P[o] = _sB.x; P[o + 1] = _sB.y; P[o + 2] = _sB.z; } else { P[0] = _sA.x; P[1] = _sA.y; P[2] = _sA.z; } }
+      const fixedA = pinA || (free && k === 1), fixedB = pinB || (free && k === 0);
+      for (let pass = 0; pass < 6; pass++) {
+        // inextensible links (a rope: only stretching is corrected)
+        for (let i = 0; i < SL_N - 1; i++) {
+          const a = i * 3, b = a + 3;
+          const dx = P[b] - P[a], dy = P[b + 1] - P[a + 1], dz = P[b + 2] - P[a + 2], d = Math.hypot(dx, dy, dz);
+          if (d <= rest || d < 1e-9) continue;
+          const wa = (i === 0 && fixedA) ? 0 : 1, wb = (i + 1 === SL_N - 1 && fixedB) ? 0 : 1;
+          if (wa + wb === 0) continue;
+          const c = (d - rest) / d / (wa + wb);
+          P[a] += dx * c * wa; P[a + 1] += dy * c * wa; P[a + 2] += dz * c * wa;
+          P[b] -= dx * c * wb; P[b + 1] -= dy * c * wb; P[b + 2] -= dz * c * wb;
+        }
+        // body capsules (free nodes) and the ground
+        for (let i = 0; i < SL_N; i++) {
+          if ((i === 0 && fixedA) || (i === SL_N - 1 && fixedB)) continue;
+          pushOut(P, i * 3);
+          if (P[i * 3 + 1] < 0.012) P[i * 3 + 1] = 0.012;
+        }
+      }
+      // link midpoints: a link must not cut through a forearm between two nodes that are outside it
+      for (let i = 0; i < SL_N - 1; i++) {
+        const a = i * 3, b = a + 3;
+        const m = [(P[a] + P[b]) / 2, (P[a + 1] + P[b + 1]) / 2, (P[a + 2] + P[b + 2]) / 2], m0 = m.slice();
+        if (!pushOut(m, 0)) continue;
+        const dx = m[0] - m0[0], dy = m[1] - m0[1], dz = m[2] - m0[2];
+        if (!(i === 0 && fixedA)) { P[a] += dx; P[a + 1] += dy; P[a + 2] += dz; }
+        if (!(i + 1 === SL_N - 1 && fixedB)) { P[b] += dx; P[b + 1] += dy; P[b + 2] += dz; }
+      }
+    }
+    // node frames: z along the strap, y away from the torso (lying flat on the body / ground), x across
+    const X = R.x[k];
+    for (let i = 0; i < SL_N; i++) {
+      const i0 = Math.max(0, i - 1), i1 = Math.min(SL_N - 1, i + 1);
+      _sT.set(P[i1 * 3] - P[i0 * 3], P[i1 * 3 + 1] - P[i0 * 3 + 1], P[i1 * 3 + 2] - P[i0 * 3 + 2]);
+      if (_sT.lengthSq() < 1e-10) _sT.set(0, -1, 0);
+      _sT.normalize();
+      _sP.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+      // away from the nearest torso axis point (the chest capsules' midline)
+      _sC.lerpVectors(_capA[0], _capA[1], 0.5); _sY.lerpVectors(_capB[0], _capB[1], 0.5);
+      _sX.subVectors(_sY, _sC); const l2 = _sX.lengthSq();
+      const tt = l2 > 1e-9 ? clamp(_sB.subVectors(_sP, _sC).dot(_sX) / l2, 0, 1) : 0;
+      _sY.subVectors(_sP, _sC.addScaledVector(_sX, tt));
+      if (_sP.y < 0.06) _sY.set(0, 1, 0);                      // lying on the ground: flat
+      _sX.crossVectors(_sY, _sT);
+      if (_sX.lengthSq() < 1e-8) _sX.copy(X); else _sX.normalize();
+      if (_sX.dot(X) < 0) _sX.negate();                         // no flips along the strap
+      X.copy(_sX);
+      _sY.crossVectors(_sT, _sX);
+      _sQ.setFromRotationMatrix(_sM.makeBasis(_sX, _sY, _sT));
+      const b = sl[k * SL_N + i];
+      b.position.copy(_sP); b.quaternion.copy(_sQ);
+    }
+  }
+  if (free && s.death) R.freeSeen = true;
+  R.init = true;
+}
+
+// ------------------------------------------------------------------ face
+// Face rig (soldier.js FACE_NAMES, weights from the MakeHuman face bones). Rotation sizes from MakeHuman's face pose
+// units (tools/mh/sources/face-poseunits.bvh): upper lid closed 33.2 deg, lower lid up 16.3 deg, eye up / down
+// ~20 deg with the upper lid following 29 % (up) / 56 % (down) and the lower lid 37 % (down), jaw drop 20.2 deg.
+//  - blinks: every 2-7 s (fewer while aiming, a reflex blink on a hit or on the soldier's own shot), ~70 ms closing,
+//    ~150 ms opening
+//  - gaze: fixations with fast saccades (~25 ms) and microsaccades; toward st.lookAt (world point: the player for an
+//    engaged guard, the target / the player for a comrade) when it is within reach of the eyes, else short glances
+//  - speech: jaw opening from the text of the line being spoken (vowels open, m / b / p close), louder lines raise the
+//    brows; cries open the mouth and draw the brows down (speak() is called by game.js / friendlies.js when a bark is
+//    actually voiced)
+//  - dead: lids two-thirds closed, eyes rolled slightly up and still, jaw slack
+// QA / tools: st.face = { blink, jaw, brow } (0..1) overrides, st.lookAt = [x, y, z].
+const RAD = Math.PI / 180;
+const LID_CLOSE = -33.2 * RAD, LIDL_UP = 16.3 * RAD * 0.45, JAW_MAX = 20.2 * RAD;
+// relaxed, awake lids: the MakeHuman rest pose has the upper lid margin ~2 mm above the pupil (a sleepy look, half the
+// iris covered); a living eye shows the iris almost to its top: open the upper lid by 7 deg (UpperLidOpen is 17.6)
+const LID_REST = 7 * RAD;
+const VOWEL = /[аеёиоуыэюяaeiouyåäö]/i, WIDE = /[аоaoåä]/i, CLOSED = /[мбпmbpвфvf]/i;
+const _fM = new THREE.Matrix4(), _fV = new THREE.Vector3(), _fQ = new THREE.Quaternion();
+const hash1 = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+
+/** Start a spoken line on a soldier (presentation only). o: { dur (s), loud 0..1, cry } */
+export function speak(g, text, o = {}) {
+  if (!g || !g.s) return;
+  const f = faceState(g);
+  f.speech = { t0: g.s.time, dur: Math.max(0.3, o.dur ?? (0.2 + String(text).length * 0.06)), text: String(text || ''), loud: clamp(o.loud ?? 0.7, 0, 1), cry: !!o.cry };
+  f.puffAt = g.s.time;                       // a line is an exhalation
+}
+function faceState(g) {
+  const s = g.s;
+  if (!s.f) s.f = { next: 1 + hash1(s.seed, 1) * 3, bt: -1, blink: 0, ey: 0, ep: 0, ty: 0, tp: 0, fix: 0, micro: 0, mx: 0, my: 0, jaw: sp(), brow: 0, speech: null, puffAt: -99, lastHit: -99, lastShot: 0, exh: false };
+  return s.f;
+}
+function updateFace(g, st, dt) {
+  const F = g.face; if (!F) return;
+  const s = g.s, f = faceState(g), t = s.time, ov = st.face || null;
+  const dead = !!s.death, A = s.x ? clamp(s.x.aim.x, 0, 1) : 0;
+  // ---- blinks
+  if (s.hitAt > f.lastHit + 1e-6) { f.lastHit = s.hitAt; if (f.bt < 0) f.bt = 0; }
+  if (s.lastFlash > 0 && st.flash > 0 && t - f.lastShot > 0.4) { f.lastShot = t; if (f.bt < 0 && hash1(t, s.seed) < 0.35) f.bt = 0; }
+  f.next -= dt;
+  if (f.next <= 0 && f.bt < 0) { f.bt = 0; const r = hash1(t * 3.1, s.seed); f.next = (A > 0.6 ? 3.5 : 2.0) + 5.0 * r * r; }
+  let blink = 0;
+  if (f.bt >= 0) {
+    f.bt += dt;
+    const b = f.bt;
+    blink = b < 0.07 ? sstep(0, 0.07, b) : b < 0.1 ? 1 : 1 - sstep(0.1, 0.25, b);
+    if (b > 0.25) f.bt = -1;
+  }
+  // ---- gaze: fixation target (yaw, pitch in head space, rad)
+  f.fix -= dt; f.micro -= dt;
+  let want = null;
+  if (st.lookAt && !dead) {
+    const la = st.lookAt;
+    // world -> model (root: position + yaw only) -> head space, from the eye centre
+    _fV.set(la[0] ?? la.x, la[1] ?? la.y, la[2] ?? la.z).sub(g.root.position).applyAxisAngle(_Y, -g.root.rotation.y);
+    _fV.applyMatrix4(_fM.copy(s.mm[BI.head]).invert());
+    _fV.x -= (F[FI.eyeR].position.x + F[FI.eyeL].position.x) / 2; _fV.y -= F[FI.eyeR].position.y; _fV.z -= F[FI.eyeR].position.z;
+    const yaw = Math.atan2(_fV.x, -_fV.z), pitch = Math.atan2(_fV.y, Math.hypot(_fV.x, _fV.z));
+    if (Math.abs(yaw) < 0.75 && pitch > -0.6 && pitch < 0.5) want = [clamp(yaw, -0.5, 0.5), clamp(pitch, -0.4, 0.3)];
+  }
+  if (f.fix <= 0) {
+    const r1 = hash1(t, s.seed + 1), r2 = hash1(t, s.seed + 2), r3 = hash1(t, s.seed + 3);
+    if (want && r3 < 0.8) { f.ty = want[0]; f.tp = want[1]; f.fix = 0.6 + 1.6 * r1; f.onT = true; }
+    else {
+      // glance: small while aiming (down the sights), wider while patrolling / idle
+      const k = A > 0.6 ? 0.06 : 0.3;
+      f.ty = (r1 * 2 - 1) * k; f.tp = (r2 * 2 - 1) * k * 0.4 - 0.03; f.fix = 0.4 + 1.8 * r3; f.onT = false;
+    }
+    // a large saccade usually comes with a blink
+    if (Math.abs(f.ty - f.ey) > 0.25 && f.bt < 0 && r2 < 0.5) f.bt = 0;
+  } else if (want && f.onT) { f.ty = want[0]; f.tp = want[1]; }        // smooth pursuit of a moving target
+  if (f.micro <= 0) { f.micro = 0.25 + 0.6 * hash1(t, s.seed + 5); f.mx = (hash1(t, s.seed + 6) - 0.5) * 0.02; f.my = (hash1(t, s.seed + 7) - 0.5) * 0.015; }
+  const ks = 1 - Math.exp(-dt * 45);               // saccade: ~25 ms to land
+  f.ey += (f.ty + f.mx - f.ey) * ks; f.ep += (f.tp + f.my - f.ep) * ks;
+  let ey = f.ey, ep = f.ep, lids = 0;
+  // ---- speech -> jaw / brows
+  let jawT = 0, brow = 0;
+  const S = f.speech;
+  if (S) {
+    const u = (t - S.t0) / S.dur;
+    if (u >= 1) f.speech = null;
+    else if (u >= 0) {
+      const txt = S.text, n = Math.max(1, txt.length), ci = Math.min(n - 1, Math.floor(u * n)), c = txt[ci] || ' ';
+      jawT = S.cry ? 0.85 : VOWEL.test(c) ? (WIDE.test(c) ? 0.8 : 0.5) : CLOSED.test(c) ? 0.0 : /[\s.,!?…-]/.test(c) ? 0.05 : 0.22;
+      jawT *= 0.45 + 0.55 * S.loud;
+      const env = sstep(0, 0.08, u * S.dur) * (1 - sstep(S.dur - 0.12, S.dur, u * S.dur));
+      brow = (S.cry ? -0.9 : S.loud * 0.9) * env;
+      lids = S.cry ? 0.35 : 0;                       // cries squeeze the eyes
+    }
+  }
+  // ---- breathing (same phase as the chest in poseAlive): exhalation starts a vapour puff (main.js / atmosphere.js)
+  const bp = t * 1.65 + s.seed + 0.5 * Math.sin(t * 0.23 + s.seed * 2.0);
+  const exh = Math.cos(bp) < 0;
+  if (exh && !f.exh && !dead && !(f.speech)) f.puffAt = t;
+  f.exh = exh;
+  if (!dead) jawT += 0.03 * (exh ? 1 : 0) + 0.02;   // lips just parted, a little more on the out-breath
+  const jaw = spring(f.jaw, jawT, 34, 0.9, dt);
+  // ---- dead face
+  let wDead = 0;
+  if (dead) {
+    wDead = sstep(0.2, 1.2, s.deathT ?? 1);
+    ey *= 1 - wDead; ep = lerp(ep, 0.12, wDead);
+    blink = lerp(blink, 0.62, wDead);
+  }
+  if (ov) {
+    if (ov.blink !== undefined) blink = ov.blink;
+    if (ov.brow !== undefined) brow = ov.brow;
+  }
+  const jawV = ov && ov.jaw !== undefined ? ov.jaw : (dead ? lerp(clamp(jaw, 0, 1), 0.3, wDead) : clamp(jaw, 0, 1));
+  f.blink = blink; f.brow = brow;
+  // ---- apply (local rotations relative to the head; +x rotation lifts the front of a bone)
+  for (const [ie, il, iu] of [[FI.eyeR, FI.lidLR, FI.lidUR], [FI.eyeL, FI.lidLL, FI.lidUL]]) {
+    F[ie].quaternion.setFromEuler(_e.set(ep, -ey, 0, 'YXZ'));
+    const close = clamp(blink + lids * (1 - blink), 0, 1);
+    F[iu].rotation.set((ep < 0 ? 0.56 : 0.29) * ep + LID_REST * (1 - close) + LID_CLOSE * close, -0.45 * ey, 0);
+    F[il].rotation.set((ep < 0 ? 0.37 : 0.1) * ep + LIDL_UP * close, -0.45 * ey, 0);
+  }
+  F[FI.jaw].rotation.set(-JAW_MAX * 0.75 * jawV, 0, 0);
+  for (const ib of [FI.browR, FI.browL]) {
+    const b = F[ib], p0 = b.userData.p0 || (b.userData.p0 = b.position.clone());
+    b.position.copy(p0); b.position.y += 0.0032 * brow; b.position.z -= 0.0008 * Math.max(0, brow);
   }
 }
 
@@ -1046,7 +1316,8 @@ export function poseGuard(g, st) {
 
   reactions(g, st, dt, g.root);
   if (!(st.dead > 0)) {
-    s.death = null;
+    s.death = null; s.deathT = 0;
+    if (s.sl) s.sl.freeSeen = false;
     poseAlive(g, st, dt);
   } else {
     if (!s.death) startDeath(g, st);
@@ -1055,5 +1326,6 @@ export function poseGuard(g, st) {
   }
   g.root.rotation.x = 0; g.root.rotation.z = 0;
   g.rifle.visible = true;
-  updateSling(g);
+  updateFace(g, st, dt);
+  updateSling(g, dt);
 }

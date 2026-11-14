@@ -5,7 +5,9 @@
 //    out of the weave) and gets a little glossier; `wetTop` adds a darker, glossier band on up-facing surfaces
 //    (shoulders, hood, rig top) that the rain hits first
 //  - roughness variation: low-frequency noise so cloth is not uniformly matte (worn/polished patches)
-//  - fabric sheen: grazing-angle lift (velvet-like rim) so cloth reads soft, not plastic
+//  - fabric sheen: a Charlie sheen lobe per light (fibre retro / grazing scattering: the soft rim of cloth against a
+//    lamp behind it) plus the same lobe under the ambient / bounce light; no fixed rim term
+//  - rain film: thin everywhere exposed, continuous on tops, running streaks; beads on water-repellent gear (`beads`)
 //  - drape: a soft ~5 cm rumple bump (replaces the old 1.2 cm cross-hatch, which read as a printed pattern)
 // Optional layers (all procedural, no extra textures, no extra draw calls):
 //  - weave: { cells, tile } analytic yarn relief that sharpens the ripstop grid of the texture set (same grid:
@@ -126,6 +128,9 @@ varying vec4 vFabJ; varying vec4 vFabS; varying vec4 vFabT;
 export function fabricShading(m, o = {}) {
   const dirt = o.dirt ?? 0.5, sheen = o.sheen ?? 0.12, soak = o.soak ?? 0.35, wrinkle = o.wrinkle ?? 0.5;
   const rough = o.rough ?? 0.25, wetTop = o.wetTop ?? 0.3, mudGloss = o.mudGloss ?? 0.45;
+  // beads: water drops standing on water-repellent surfaces (cordura rig, waxed leather, wool knit, the helmet cover):
+  // density (0..1) and the bind-space height above which they appear (helmet cover on the uniform material)
+  const beads = o.beads ?? 0, beadsAbove = o.beadsAbove ?? -1;
   // rib: knitted rib relief (balaclava / gaiter): vertical wales of this period (m) around the head, with stitch loops
   const ribFull = o.rib ?? 0;
   const weaveFull = o.weave || null, gearFull = !!o.gear, bootFull = !!o.boot;
@@ -154,7 +159,25 @@ varying vec3 vFabP;
 #ifdef FAB_BODY
 ${BODY_FS_DECL}
 #endif
-float fabMud = 0.0, fabWet = 0.0, fabFilm = 0.0, fabRib = 0.0, fabHgt = 0.0, fabRoughK = 1.0, fabSheenK = 1.0;
+float fabMud = 0.0, fabWet = 0.0, fabFilm = 0.0, fabRib = 0.0, fabHgt = 0.0, fabRoughK = 1.0, fabSheenK = 1.0, fabBead = 0.0, fabFilmR = 1.0;
+vec3 fabBeadO = vec3(0.0);
+// rain bead normal: spherical cap, offset carried from rest-pose space to view space through the pixel derivatives
+vec3 fabBeadNormal(vec3 n, vec3 ob, float w, vec3 pb) {
+  vec3 bx = dFdx(pb), by = dFdy(pb), vx = dFdx(-vViewPosition), vy = dFdy(-vViewPosition);
+  float a = dot(bx, bx), c = dot(bx, by), d = dot(by, by), det = a * d - c * c;
+  if (abs(det) < 1e-24) return n;
+  vec2 k = vec2(d * dot(ob, bx) - c * dot(ob, by), a * dot(ob, by) - c * dot(ob, bx)) / det;
+  vec3 o = vx * k.x + vy * k.y;
+  o -= n * dot(o, n);
+  float q = min(length(o), 1.0) * 0.87;
+  vec3 t = length(o) > 1e-6 ? normalize(o) : n;
+  return normalize(mix(n, normalize(n * sqrt(1.0 - q * q) + t * q), w));
+}
+vec3 fabSheenC = vec3(0.0);
+// Charlie sheen (Estevez & Kulla 2017) with Neubelt's visibility: the retro / grazing scattering of fibres; with a lamp
+// behind the soldier it gives the soft rim of cloth seen against the light (no fixed rim term)
+float fabDCharlie(float a, float NoH) { float ia = 1.0 / a; float s2 = max(1.0 - NoH * NoH, 0.0078125); return (2.0 + ia) * pow(s2, ia * 0.5) / 6.2831853; }
+float fabVNeubelt(float NoV, float NoL) { return clamp(1.0 / (4.0 * (NoL + NoV - NoL * NoV)), 0.0, 1.0); }
 float fabH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float fabN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(fabH(i), fabH(i + vec2(1.0, 0.0)), f.x), mix(fabH(i + vec2(0.0, 1.0)), fabH(i + vec2(1.0, 1.0)), f.x), f.y); }
@@ -283,21 +306,41 @@ ${weaveGLSL(weave)}
         #endif
         diffuseColor.rgb = mix(diffuseColor.rgb, mudCol, fabMud);
         // rain soak: water fills the yarn gaps, so the cloth scatters less light back out: darker and more saturated
+        // (a soaked cotton / poly ripstop drops to ~55-65 % of its dry reflectance). Exposed surfaces (facing up or out,
+        // world normal) soak first; the rest is damp
         float up = clamp(vWetN.y * 0.5 + 0.5, 0.0, 1.0);
         float top = pow(clamp(vWetN.y, 0.0, 1.0), 2.2);
-        float wk = clamp(${soak.toFixed(3)} * uWetness * (0.45 + 0.55 * up) * (0.6 + 0.4 * nz), 0.0, 1.0);
+        float wk = clamp(${soak.toFixed(3)} * uWetness * (0.5 + 0.5 * up) * (0.65 + 0.35 * nz), 0.0, 1.0);
         float wl = dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15));
-        diffuseColor.rgb = max(mix(vec3(wl), diffuseColor.rgb, 1.0 + 0.6 * wk), 0.0) * (1.0 - 1.1 * wk);
+        diffuseColor.rgb = max(mix(vec3(wl), diffuseColor.rgb, 1.0 + 0.9 * wk), 0.0) * (1.0 - 0.95 * wk);
         // shoulders / crown / rig top are visibly wetter: darker and saturated, with a few run-off streaks
         fabWet = top * (0.55 + 0.45 * nz) * ${wetTop.toFixed(3)} * (0.4 + 0.6 * uWetness) * 2.0;
-        diffuseColor.rgb *= 1.0 - 0.42 * clamp(fabWet, 0.0, 1.0);
-        // water film: the soaked weave itself stays matte, but a film of water sits on the shoulders / crown / rig top
-        // and runs down the sides in streaks (rest-pose space, so they stay on the cloth): lower roughness there ->
-        // the sodium / LED lamps draw soft specular highlights and a wet rim along the silhouette
-        float streak = smoothstep(0.56, 0.86, fabN(vec2((vFabP.x + vFabP.z) * 46.0, vFabP.y * 2.4 + nz)));
-        fabFilm = clamp(uWetness * (0.8 * clamp(fabWet, 0.0, 1.0) + 0.5 * streak * (1.0 - top) * (0.45 + 0.55 * nz)), 0.0, 1.0);
+        diffuseColor.rgb *= 1.0 - 0.35 * clamp(fabWet, 0.0, 1.0);
+        // water film over the soaked weave: everywhere exposed a thin film (the weave's micro-roughness is filled in),
+        // a continuous film on the shoulders / crown / rig top, and running water in streaks down the sides (rest-pose
+        // space, so they stay on the cloth). It is what makes wet cloth catch the lamps: broad specular sheets on the
+        // tops, bright streaks on the sides, Fresnel-bright edges when the lamp is behind
+        float streak = smoothstep(0.5, 0.85, fabN(vec2((vFabP.x + vFabP.z) * 46.0, vFabP.y * 2.4 + nz)));
+        fabFilm = clamp(uWetness * (0.35 * (0.6 + 0.4 * up) + 0.65 * clamp(fabWet, 0.0, 1.0) + 0.55 * streak * (1.0 - top) * (0.45 + 0.55 * nz)), 0.0, 1.0);
+        fabFilmR = mix(0.5, 0.2, smoothstep(0.3, 0.9, fabFilm));      // film roughness: thin film -> sheet of water
         diffuseColor.rgb *= 1.0 - 0.14 * streak * uWetness * (1.0 - top);
-        fabSheenK += 0.9 * fabFilm + 0.35 * uWetness;
+        ${beads > 0 ? `
+        #ifndef FAB_LITE
+        // beads on water-repellent surfaces: 1-2.5 mm drops on a ~6 mm grid, more on surfaces facing up; each is a
+        // smooth dome (bump) with a near-mirror surface, faded out once smaller than ~a pixel
+        if (vFabP.y > ${beadsAbove.toFixed(3)}) {
+          vec3 dq = floor(vFabP * 165.0);
+          vec3 dctr = (dq + 0.25 + 0.5 * vec3(fabH(dq.xy + dq.z * 7.1), fabH(dq.yz + 3.3), fabH(dq.zx + 9.7))) / 165.0;
+          float rad = 0.0006 + 0.0008 * fabH(dq.xy * 1.7 + dq.z);
+          float dd = length(vFabP - dctr) / rad;
+          float has = step(fabH(dq.xz * 0.37 + dq.y * 1.3), ${beads.toFixed(3)} * uWetness * (0.35 + 0.65 * up));
+          float vis = 1.0 - smoothstep(0.5, 1.2, fwP / rad);
+          fabBead = has * vis * (1.0 - smoothstep(0.85, 1.0, dd));
+          fabBeadO = (vFabP - dctr) / rad;
+        }
+        #endif` : ''}
+        // fibre sheen colour: dye-tinted, stronger where the fibres are abraded / fuzzy
+        fabSheenC = mix(diffuseColor.rgb * 2.2, vec3(dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15)) * 2.2), 0.4) * ${sheen.toFixed(3)} * fabSheenK;
       }`)
       .replace('normal = normalize( tbn * mapN );', `
       #ifdef FAB_WEAVE
@@ -313,28 +356,38 @@ ${weaveGLSL(weave)}
         float det = dot(dpx, r1) * faceDirection;
         vec3 g = sign(det) * (dFdx(fabHgt) * r1 + dFdy(fabHgt) * r2);
         normal = normalize(abs(det) * normal - g);
+        if (fabBead > 0.001) normal = fabBeadNormal(normal, fabBeadO, fabBead, vFabP);
         // roughness: patchy wear, wet mud and soaked cloth are glossier (not mirror-like)
         float rv = fabN(vFabP.xy * 17.0 + vFabP.z * 9.0) * 0.6 + fabN(vFabP.zy * 61.0) * 0.4 - 0.5;
         #else
         float rv = fabN(vFabP.xy * 17.0 + vFabP.z * 9.0) - 0.5;
         #endif
         roughnessFactor = clamp(roughnessFactor * fabRoughK * (1.0 + ${rough.toFixed(3)} * 2.0 * rv) * (1.0 - ${mudGloss.toFixed(3)} * fabMud), 0.18, 1.0);
-        // water film over the soaked weave: a smooth layer (roughness ~0.3) where it collects
-        roughnessFactor = mix(roughnessFactor, min(roughnessFactor, 0.3), 0.85 * fabFilm);
+        // water film over the soaked weave: smoother where it collects; beads are near-mirror domes
+        roughnessFactor = mix(roughnessFactor, min(roughnessFactor, fabFilmR), clamp(fabFilm * 1.4, 0.0, 0.92));
+        roughnessFactor = mix(roughnessFactor, 0.05, fabBead);
       }`)
+      .replace('#include <lights_physical_pars_fragment>', THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+        'reflectedLight.directSpecular += irradiance * BRDF_GGX( directLight.direction, geometryViewDir, geometryNormal, material );',
+        `reflectedLight.directSpecular += irradiance * BRDF_GGX( directLight.direction, geometryViewDir, geometryNormal, material );
+        #ifndef FAB_LITE
+        {
+          vec3 shH = normalize( directLight.direction + geometryViewDir );
+          float shNoL = saturate( dot( geometryNormal, directLight.direction ) ), shNoV = saturate( dot( geometryNormal, geometryViewDir ) );
+          reflectedLight.directSpecular += irradiance * fabSheenC * fabDCharlie( 0.36, saturate( dot( geometryNormal, shH ) ) ) * fabVNeubelt( shNoV, shNoL );
+        }
+        #endif`))
       .replace('#include <opaque_fragment>', `
       {
+        // ambient sheen: the same lobe under the sky / bounce light (its directional albedo grows toward grazing)
         float nv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
-        float rim = pow(1.0 - nv, 3.0);
-        vec3 sh = mix(diffuseColor.rgb, vec3(0.6), 0.35) * rim * ${sheen.toFixed(3)} * fabSheenK;
-        // lit by the sky / scene light: scale by luminance of what already reached the surface
-        float lum = dot(outgoingLight, vec3(0.3, 0.55, 0.15));
-        outgoingLight += sh * (0.5 + 3.0 * lum);
+        vec3 ambL = reflectedLight.indirectDiffuse / max(diffuseColor.rgb, vec3(0.02));
+        outgoingLight += fabSheenC * ambL * (0.12 + 0.45 * pow(1.0 - nv, 3.0));
       }
       #include <opaque_fragment>`);
     shareMapUv(shader, m);
   };
-  m.customProgramCacheKey = () => 'fab4' + (SHADER.lite ? 'L' : '') + uvShareKey(m) + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss + ribFull + (weaveFull ? weaveFull.cells + '/' + weaveFull.tile : '') + (o.body ? 'B' : '') + (gearFull ? 'G' : '') + (bootFull ? 'T' : '');
+  m.customProgramCacheKey = () => 'fab5' + (SHADER.lite ? 'L' : '') + 'b' + beads + '/' + beadsAbove + uvShareKey(m) + dirt + sheen + soak + wrinkle + rough + wetTop + mudGloss + ribFull + (weaveFull ? weaveFull.cells + '/' + weaveFull.tile : '') + (o.body ? 'B' : '') + (gearFull ? 'G' : '') + (bootFull ? 'T' : '');
   return m;
 }
 
